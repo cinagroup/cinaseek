@@ -183,6 +183,13 @@ CinaSeek's production release pipeline lives in `scripts/release/`. It bundles a
 
 The upstream [Cloudflare OS deployment wizard](https://os.cloudflare.app/deploy) and [deployment starter](https://github.com/cloudflare/cloudflare-os-starter) remain useful architectural references, but they deploy the upstream distribution rather than this CinaSeek fork.
 
+For a standalone deployment that does not use the external deployment service, authenticate Wrangler and run:
+
+    node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --dry-run
+    node scripts/deploy-cloudflare.mjs --domain cinaseek.ai
+
+The standalone path deploys the public router, backend, and the credential-free Context and Scheduler Gatekeepers. It keeps internal Workers off `workers.dev`, attaches the router as the custom-domain origin, and stores account-specific generated configuration under the gitignored `.wrangler/production/` directory. Password sign-in remains enabled by default. To grant an existing username deployment-admin access, add `--admin <username>` on a subsequent deploy; do not reserve a guessable admin name before its account exists. Third-party Gatekeepers should be added only after their OAuth credentials are provisioned.
+
 ### Run locally
 
 To quickly run CinaSeek locally, [install pnpm](https://pnpm.io/), then do:

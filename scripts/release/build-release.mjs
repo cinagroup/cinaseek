@@ -42,7 +42,13 @@ function parseArgs(argv) {
 
 function run(command, argv, options = {}) {
   console.log(`running: ${command} ${argv.join(" ")} ${options.cwd ? `(in ${options.cwd})` : ""}`);
-  execFileSync(command, argv, { stdio: "inherit", cwd: ROOT, ...options });
+  // Windows exposes pnpm through a .cmd shim, which execFileSync cannot launch directly
+  // (spawnSync returns ENOENT/EINVAL). Keep the command and arguments fixed and route only this
+  // known package-manager invocation through cmd.exe, matching scripts/run-local.mjs.
+  const isWindowsPnpm = process.platform === "win32" && command === "pnpm";
+  const executable = isWindowsPnpm ? process.env.ComSpec ?? "cmd.exe" : command;
+  const executableArgs = isWindowsPnpm ? ["/d", "/s", "/c", "pnpm.cmd", ...argv] : argv;
+  execFileSync(executable, executableArgs, { stdio: "inherit", cwd: ROOT, ...options });
 }
 
 function gitCommit() {
