@@ -194,6 +194,20 @@ If the hostname already has an A, AAAA, or CNAME record in the Cloudflare zone, 
 
 The standalone path deploys the public router, backend, and the credential-free Context and Scheduler Gatekeepers. It keeps internal Workers off `workers.dev`, attaches the router either as the custom-domain origin or as an existing-zone route, and stores account-specific generated configuration under the gitignored `.wrangler/production/` directory. Password sign-in remains enabled by default. To grant an existing username deployment-admin access, add `--admin <username>` on a subsequent deploy; do not reserve a guessable admin name before its account exists. Third-party Gatekeepers should be added only after their OAuth credentials are provisioned.
 
+To use Cloudflare Access, create and test the Access application and its Allow policies before switching the deployment. Then provide the application's team issuer and Audience (AUD) tag together:
+
+    node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --zone-route \
+      --access-issuer https://<team-name>.cloudflareaccess.com \
+      --access-audience <application-aud-tag>
+
+This builds the frontend without password login or signup and configures the backend to verify `Cf-Access-Jwt-Assertion` against the team's rotating JWKS, issuer, and application audience. The issuer and AUD identify the Access application but are not client secrets. Identity-provider client secrets remain in Cloudflare Zero Trust and must never be committed to this repository.
+
+To route deployment-managed models through Cloudflare AI Gateway, create or select an authenticated Gateway, configure its stored provider keys or Unified Billing, and give the deployment an API token with AI Gateway Run and Read permissions. Supply that token only through the deployment environment variable `CINASEEK_AI_GATEWAY_API_TOKEN`; the script consumes it through stdin for `wrangler secret put`, removes it before build subprocesses start, and never writes it to generated configuration:
+
+    node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --zone-route --ai-gateway cinaseek --ai-gateway-account-id <cloudflare-account-id> --ai-gateway-providers openai,anthropic,google,cloudflare,openai-compatible
+
+The token environment variable is required on the first Gateway-enabled deployment and when rotating the secret. Later deployments reuse the existing Worker secret. On a completely new account, deploy the base Worker once without the Gateway flags first; Gateway deployment fails closed if it cannot verify the remote secret state. `openai-compatible` accepts a Cloudflare Custom Provider path such as `custom-internal/v1` plus its real model ID, avoiding the deprecated Gateway `/compat` API; outside Gateway mode it exposes any directly reachable OpenAI Chat Completions-compatible base URL. Use `--workers-ai-gateway <gateway>` to route Workers AI through a different Gateway, or `--workers-ai-direct` to call Workers AI directly with the same account and token.
+
 ### Run locally
 
 To quickly run CinaSeek locally, [install pnpm](https://pnpm.io/), then do:

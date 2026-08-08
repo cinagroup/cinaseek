@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { accessRateLimitKey, verifyCfAccessJwt } from "../src/access.js";
+import {
+  accessRateLimitKey,
+  getCfAccessIdentity,
+  verifyCfAccessJwt,
+} from "../src/access.js";
 
 const joseMocks = vi.hoisted(() => ({
   createRemoteJWKSet: vi.fn(() => vi.fn()),
@@ -72,5 +76,20 @@ describe("accessRateLimitKey", () => {
     const emailKey = await accessRateLimitKey({ email: "person@example.com" });
     expect(emailKey).toMatch(/^access-email:[0-9a-f]{64}$/);
     expect(emailKey).not.toContain("person@example.com");
+  });
+});
+
+describe("getCfAccessIdentity", () => {
+  it("normalizes the verified email and retains the Access subject", () => {
+    expect(getCfAccessIdentity({ email: " Person@Example.COM ", sub: " user-1 " })).toEqual({
+      email: "person@example.com",
+      subject: "user-1",
+    });
+  });
+
+  it("rejects assertions without a usable email identity", () => {
+    expect(getCfAccessIdentity({ sub: "user-1" })).toBeNull();
+    expect(getCfAccessIdentity({ email: "   " })).toBeNull();
+    expect(getCfAccessIdentity({ email: ["person@example.com"] })).toBeNull();
   });
 });

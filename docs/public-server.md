@@ -38,7 +38,7 @@ CLOUDFLARE_OAUTH_CLIENT_SECRET=...
 
 # Platform AI Gateway used for the free tier:
 CF_AI_GATEWAY=your-gateway
-CF_AI_GATEWAY_PROVIDERS=anthropic,openai,google
+CF_AI_GATEWAY_PROVIDERS=anthropic,openai,openai-compatible,google
 
 # Required whenever CF_AI_GATEWAY is set (all inference goes over HTTPS with tokens):
 CF_AI_GATEWAY_ACCOUNT_ID=...
@@ -54,6 +54,13 @@ needs AI Gateway Run and Read permissions so Gadgets can execute models and repo
 same Gateway ID; set `CF_AI_GATEWAY_WAI` to route it through a different Gateway in the same
 account, or `CF_AI_GATEWAY_WAI_DIRECT=true` to bypass gateways and call the Workers AI REST
 endpoint directly (using the same account/token pair; such requests produce no cost logs).
+
+`openai-compatible` uses a provider-specific Gateway path instead of the deprecated `/compat` API.
+Configure a model with a Custom Provider path such as `custom-internal/v1` and the upstream's real
+model ID; CinaSeek appends `/chat/completions`. This lets an account-level Cloudflare Custom
+Provider participate without storing its endpoint or provider key in CinaSeek. Outside Gateway
+mode, the same provider type accepts a direct OpenAI Chat Completions-compatible base URL and an
+optional bearer token.
 
 When using `CF_AI_GATEWAY*` in local development, start the server with
 `pnpm run dev-server -- --use-workers-ai-binding` so the webFetch tool's document-to-Markdown

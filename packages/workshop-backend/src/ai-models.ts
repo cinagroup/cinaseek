@@ -121,6 +121,7 @@ function catalogModel(provider: AiModelConfig["provider"], modelId: string): Mod
   switch (provider) {
     case "anthropic": return (ANTHROPIC_MODELS as Record<string, Model<Api>>)[modelId];
     case "openai": return (OPENAI_MODELS as Record<string, Model<Api>>)[modelId];
+    case "openai-compatible": return undefined;
     case "google": return (GOOGLE_MODELS as Record<string, Model<Api>>)[modelId];
     case "cloudflare": return (CLOUDFLARE_WORKERS_AI_MODELS as Record<string, Model<Api>>)[modelId];
     case "ollama": return undefined;
@@ -199,6 +200,33 @@ function gatewayNativeModel(config: AiModelConfig, gatewayUrl: string): Model<Ap
         thinkingLevelMap: catalog?.thinkingLevelMap,
         compat: catalog?.compat,
       };
+    case "openai-compatible": {
+      const providerPath = config.apiUrl?.trim().replace(/^\/+|\/+$/g, "");
+      if (!providerPath) {
+        throw new Error(
+            "This AI Gateway custom model has no provider path. Re-add it with a path such as " +
+            '"custom-internal/v1".');
+      }
+      // Cloudflare appends everything after custom-{slug}/ to the Custom Provider base URL. Keep
+      // this strictly path-only: the SDK adds /chat/completions and Cloudflare owns the host.
+      if (!/^custom-[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9][a-z0-9._~:@!$&'()*+,;=-]*)*$/i
+          .test(providerPath)) {
+        throw new Error(
+            "The AI Gateway Custom Provider path must start with custom-<slug> and contain only " +
+            "safe path segments (for example, custom-internal/v1).");
+      }
+      return {
+        id: config.model,
+        name: config.model,
+        api: "openai-completions",
+        provider: "openai-compatible",
+        baseUrl: `${gatewayUrl}/${providerPath}`,
+        reasoning: false,
+        input: ["text", "image"],
+        cost: ZERO_COST,
+        ...window,
+      };
+    }
     case "google":
       // pi's own gateway catalog skips Google, but the gateway's google-ai-studio passthrough +
       // pi's google API impl work; we construct the model ourselves. The @google/genai SDK
@@ -409,6 +437,13 @@ function getModelViaGateway(
   initiator: AiChatAuthorInfo,
   options: ModelRoutingOptions,
 ): ModelHandle {
+  // Workers AI is always available to Gateway mode for the deployment-owned quick model, even
+  // when it is omitted from the user-facing provider picker.
+  if (config.provider !== "cloudflare" && !gwConfig.providers.has(config.provider)) {
+    throw new Error(
+        `Provider "${config.provider}" is not enabled for this AI Gateway deployment. ` +
+        `Configured providers: ${[...gwConfig.providers].join(", ")}`);
+  }
   const metadata = buildMetadata(initiator, options.metadata);
   const gatewayAuthHeaders: ProviderHeaders = {
     // pi's API impls explicitly recognize cf-aig-authorization and skip SDK auth; the null
@@ -587,6 +622,43 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
         apiKey: config.apiToken,
         sessionAffinity,
       });
+    case "openai-compatible": {
+      if (!config.apiUrl?.trim()) {
+        throw new Error(
+            "This OpenAI-compatible model has no API URL. Re-add it with the endpoint base URL.");
+      }
+      let baseUrl: URL;
+      try {
+        baseUrl = new URL(config.apiUrl.trim());
+      } catch {
+        throw new Error("The OpenAI-compatible API URL is invalid.");
+      }
+      if (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:") {
+        throw new Error("The OpenAI-compatible API URL must use HTTP or HTTPS.");
+      }
+      if (baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {
+        throw new Error(
+            "The OpenAI-compatible API URL must not contain credentials, a query, or a fragment.");
+      }
+      return makeHandle({
+        model: {
+          id: config.model,
+          name: config.model,
+          api: "openai-completions",
+          provider: "openai-compatible",
+          // Keep any version prefix supplied by the user; the SDK appends /chat/completions.
+          baseUrl: stripTrailingSlashes(baseUrl.toString()),
+          reasoning: false,
+          input: ["text", "image"],
+          cost: ZERO_COST,
+          ...window,
+        },
+        ...(config.apiToken.trim() === ""
+            ? { apiKey: "unused", headers: { Authorization: null } }
+            : { apiKey: config.apiToken }),
+        sessionAffinity,
+      });
+    }
     default:
       config.provider satisfies never;
       throw new Error(`Unknown provider "${config.provider}".`);

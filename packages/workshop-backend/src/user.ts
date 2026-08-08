@@ -539,7 +539,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let gwConfig = getAiGatewayConfig(this.env);
     if (gwConfig) {
       for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
-        if (gwConfig.providers.has(provider) && id in models) {
+        if (gwConfig.providers.has(provider as AiModelConfig["provider"]) && id in models) {
           throw new Error(`Cannot delete built-in model "${models[id].name}".`);
         }
       }

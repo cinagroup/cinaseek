@@ -52,7 +52,7 @@ CLOUDFLARE_OAUTH_CLIENT_SECRET=...
 
 # Platform AI Gateway used for the free tier (see existing AI Gateway docs):
 CF_AI_GATEWAY=your-gateway
-CF_AI_GATEWAY_PROVIDERS=anthropic,openai,google
+CF_AI_GATEWAY_PROVIDERS=anthropic,openai,openai-compatible,google
 
 # Required whenever CF_AI_GATEWAY is set (all inference goes over HTTPS with tokens):
 CF_AI_GATEWAY_ACCOUNT_ID=...
@@ -67,6 +67,11 @@ Read permissions; Read access lets Gadgets retrieve each log's cost for user-vis
 Workers AI uses `CF_AI_GATEWAY` as its Gateway ID by default; set `CF_AI_GATEWAY_WAI` to select
 another Gateway, or `CF_AI_GATEWAY_WAI_DIRECT=true` to call the Workers AI REST endpoint directly
 (same credentials, no gateway cost logs).
+
+The optional `openai-compatible` provider routes a model through a provider-specific Gateway path,
+for example `custom-internal/v1`, and appends `/chat/completions`. Configure the corresponding
+Custom Provider and its stored key in Cloudflare; CinaSeek stores only the route path and model ID,
+and does not depend on the deprecated Gateway `/compat` endpoint.
 
 The Cloudflare dashboard OAuth endpoints and scopes are **hardcoded** in the Cloudflare gatekeeper
 (`packages/gatekeeper-cloudflare/src/oauth.ts`):

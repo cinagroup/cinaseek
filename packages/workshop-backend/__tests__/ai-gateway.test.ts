@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AiGatewayLogRetryableError,
   getAiGatewayLogCost,
+  getAiGatewayConfig,
 } from "../src/ai-gateway.js";
 
 function env(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
@@ -12,6 +13,25 @@ function env(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
     ...overrides,
   } as Cloudflare.Env;
 }
+
+describe("AI Gateway configuration", () => {
+  it("accepts the supported OpenAI-compatible adapter", () => {
+    const config = getAiGatewayConfig(env({
+      CF_AI_GATEWAY_ACCOUNT_ID: "account-id",
+      CF_AI_GATEWAY_API_TOKEN: "token",
+      CF_AI_GATEWAY_PROVIDERS: "anthropic,openai-compatible",
+    }));
+    expect(config?.providers).toEqual(new Set(["anthropic", "openai-compatible"]));
+  });
+
+  it("rejects unsupported provider names", () => {
+    expect(() => getAiGatewayConfig(env({
+      CF_AI_GATEWAY_ACCOUNT_ID: "account-id",
+      CF_AI_GATEWAY_API_TOKEN: "token",
+      CF_AI_GATEWAY_PROVIDERS: "anthropic,ollama",
+    }))).toThrow("Unsupported CF_AI_GATEWAY_PROVIDERS entry: ollama.");
+  });
+});
 
 describe("getAiGatewayLogCost", () => {
   afterEach(() => vi.unstubAllGlobals());

@@ -772,7 +772,7 @@ const SHOWCASE_FEATURES: ShowcaseFeature[] = [
     iconBg: 'bg-kumo-warning-tint',
     title: 'Bring your own models',
     description:
-      'Plug in personal API tokens from any provider to use the models you love.',
+      'Plug in personal API tokens from supported providers or an OpenAI-compatible endpoint.',
   },
   {
     icon: Plugs,

@@ -124,6 +124,62 @@ describe("getModel AI Gateway routing", () => {
     });
   });
 
+  it("routes an OpenAI-compatible model through a gateway Custom Provider path", async () => {
+    const handle = getModel(env({
+      CF_AI_GATEWAY_PROVIDERS: "anthropic,openai,google,openai-compatible",
+    }), {
+      provider: "openai-compatible",
+      model: "code-model",
+      apiToken: "ignored-in-gateway-mode",
+      apiUrl: "custom-internal/v1",
+    }, INITIATOR);
+
+    expect(handle.model.api).toBe("openai-completions");
+    expect(handle.model.baseUrl).toBe(
+        "https://gateway.ai.cloudflare.com/v1/gateway-account-id/platform-gateway/" +
+        "custom-internal/v1");
+
+    const request = await captureRequest(handle);
+    expect(request.url).toBe(
+        "https://gateway.ai.cloudflare.com/v1/gateway-account-id/platform-gateway/" +
+        "custom-internal/v1/" +
+        "chat/completions");
+    expect(request.headers.get("cf-aig-authorization")).toBe("Bearer gateway-token");
+    expect(request.headers.get("authorization")).toBeNull();
+    expect(JSON.parse(request.body).model).toBe("code-model");
+  }, 15000);
+
+  it("rejects a missing or unsafe gateway Custom Provider path", () => {
+    const customProviderEnv = env({
+      CF_AI_GATEWAY_PROVIDERS: "anthropic,openai-compatible",
+    });
+    const base = {
+      provider: "openai-compatible" as const,
+      model: "code-model",
+      apiToken: "",
+    };
+    expect(() => getModel(customProviderEnv, base, INITIATOR)).toThrow("has no provider path");
+    expect(() => getModel(customProviderEnv, {
+      ...base,
+      apiUrl: "https://models.example.com/v1",
+    }, INITIATOR))
+        .toThrow("must start with custom-<slug>");
+    expect(() => getModel(customProviderEnv, {
+      ...base,
+      apiUrl: "custom-internal/../openai",
+    }, INITIATOR))
+        .toThrow("must start with custom-<slug>");
+  });
+
+  it("rejects a saved model whose provider is disabled by the deployment", () => {
+    expect(() => getModel(env({ CF_AI_GATEWAY_PROVIDERS: "anthropic" }), {
+      provider: "openai-compatible",
+      model: "custom-internal/code-model",
+      apiToken: "",
+    }, INITIATOR)).toThrow(
+        'Provider "openai-compatible" is not enabled for this AI Gateway deployment.');
+  });
+
   it("preserves gadget automation metadata", async () => {
     const handle = getModel(env(), ANTHROPIC_CONFIG, GADGET_INITIATOR, {
       metadata: { source: "thread-title", gadgetId: "gadget-456", chatId: 8 },
@@ -351,6 +407,41 @@ describe("getModel direct routing (no gateway)", () => {
     const request = await captureRequest(handle);
     expect(request.headers.get("authorization")).toBe("Bearer ollama-token");
   }, 15000);
+
+  it("calls an OpenAI-compatible endpoint without inventing credentials", async () => {
+    const handle = getModel(env({ CF_AI_GATEWAY: undefined }), {
+      provider: "openai-compatible",
+      model: "code-model",
+      apiToken: "",
+      apiUrl: "https://models.example.com/v1/",
+    }, INITIATOR);
+
+    expect(handle.model.api).toBe("openai-completions");
+    expect(handle.model.baseUrl).toBe("https://models.example.com/v1");
+
+    const request = await captureRequest(handle);
+    expect(request.url).toBe("https://models.example.com/v1/chat/completions");
+    expect(request.headers.get("authorization")).toBeNull();
+    expect(JSON.parse(request.body).model).toBe("code-model");
+  }, 15000);
+
+  it("requires a valid HTTP(S) URL for a direct OpenAI-compatible endpoint", () => {
+    const base = {
+      provider: "openai-compatible" as const,
+      model: "code-model",
+      apiToken: "",
+    };
+    expect(() => getModel(env({ CF_AI_GATEWAY: undefined }), base, INITIATOR))
+        .toThrow("has no API URL");
+    expect(() => getModel(env({ CF_AI_GATEWAY: undefined }), {
+      ...base,
+      apiUrl: "file:///tmp/model",
+    }, INITIATOR)).toThrow("must use HTTP or HTTPS");
+    expect(() => getModel(env({ CF_AI_GATEWAY: undefined }), {
+      ...base,
+      apiUrl: "https://models.example.com/v1?token=secret",
+    }, INITIATOR)).toThrow("must not contain credentials, a query, or a fragment");
+  });
 
   it("strips a legacy /api (or /v1) suffix from an Ollama base URL", () => {
     // Configs saved before the pi migration store the native-API base (".../api").

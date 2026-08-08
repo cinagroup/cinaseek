@@ -22,6 +22,16 @@ const CORE_PACKAGES = [
   "router",
 ];
 
+const AI_GATEWAY_SECRET_NAME = "CF_AI_GATEWAY_API_TOKEN";
+const AI_GATEWAY_TOKEN_INPUT_ENV = "CINASEEK_AI_GATEWAY_API_TOKEN";
+const AI_GATEWAY_PROVIDERS = new Set([
+  "anthropic",
+  "openai",
+  "openai-compatible",
+  "google",
+  "cloudflare",
+]);
+
 function portablePath(path) {
   return path.replaceAll("\\", "/");
 }
@@ -41,6 +51,86 @@ export function normalizeDomain(value) {
 
 export function instanceSlug(domain) {
   return normalizeDomain(domain).replaceAll(".", "-");
+}
+
+export function normalizeAccessIssuer(value) {
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error(`invalid Cloudflare Access issuer: ${value}`);
+  }
+  const isTeamDomain = url.hostname.endsWith(".cloudflareaccess.com");
+  if (url.protocol !== "https:" || !isTeamDomain || url.username || url.password ||
+      url.pathname !== "/" || url.search || url.hash) {
+    throw new Error(`invalid Cloudflare Access issuer: ${value}`);
+  }
+  return url.origin;
+}
+
+export function normalizeAccessAudience(value) {
+  const audience = value.trim();
+  if (!audience || audience.length > 512 || /\s/.test(audience)) {
+    throw new Error("invalid Cloudflare Access audience");
+  }
+  return audience;
+}
+
+function normalizeAiGatewayName(value, optionName) {
+  const name = value.trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) {
+    throw new Error(`${optionName} must be 1-64 letters, digits, hyphens, or underscores`);
+  }
+  return name;
+}
+
+export function normalizeAiGatewayOptions({
+  gateway,
+  accountId,
+  providers,
+  workersAiGateway,
+  workersAiDirect = false,
+} = {}) {
+  const configured = gateway !== undefined || accountId !== undefined || providers !== undefined ||
+      workersAiGateway !== undefined || workersAiDirect;
+  if (!configured) return undefined;
+  if (gateway === undefined || accountId === undefined || providers === undefined) {
+    throw new Error(
+        "--ai-gateway, --ai-gateway-account-id, and --ai-gateway-providers are required together");
+  }
+  if (workersAiGateway !== undefined && workersAiDirect) {
+    throw new Error("--workers-ai-gateway and --workers-ai-direct cannot be used together");
+  }
+
+  const normalizedAccountId = accountId.trim().toLowerCase();
+  if (!/^[a-f0-9]{32}$/.test(normalizedAccountId)) {
+    throw new Error("--ai-gateway-account-id must be a 32-character Cloudflare account ID");
+  }
+
+  const providerList = [...new Set(
+      (Array.isArray(providers) ? providers : providers.split(","))
+          .map((provider) => provider.trim().toLowerCase())
+          .filter(Boolean),
+  )];
+  if (providerList.length === 0) {
+    throw new Error("--ai-gateway-providers must include at least one provider");
+  }
+  const invalidProvider = providerList.find((provider) => !AI_GATEWAY_PROVIDERS.has(provider));
+  if (invalidProvider) {
+    throw new Error(
+        `unsupported AI Gateway provider: ${invalidProvider}; expected one of ` +
+        [...AI_GATEWAY_PROVIDERS].join(", "));
+  }
+
+  return {
+    gateway: normalizeAiGatewayName(gateway, "--ai-gateway"),
+    accountId: normalizedAccountId,
+    providers: providerList,
+    workersAiGateway: workersAiGateway === undefined
+      ? undefined
+      : normalizeAiGatewayName(workersAiGateway, "--workers-ai-gateway"),
+    workersAiDirect: Boolean(workersAiDirect),
+  };
 }
 
 function readJsonc(path) {
@@ -106,10 +196,35 @@ export function createInstanceConfigs({
   root = ROOT,
   domain: domainInput,
   admin,
+  accessIssuer,
+  accessAudience,
+  aiGateway,
+  aiGatewayAccountId,
+  aiGatewayProviders,
+  workersAiGateway,
+  workersAiDirect = false,
   zoneRoute = false,
   stateDir: stateDirInput,
 } = {}) {
   const domain = normalizeDomain(domainInput);
+  const hasAccessIssuer = accessIssuer !== undefined;
+  const hasAccessAudience = accessAudience !== undefined;
+  if (hasAccessIssuer !== hasAccessAudience) {
+    throw new Error("--access-issuer and --access-audience must be provided together");
+  }
+  const access = hasAccessIssuer
+    ? {
+        issuer: normalizeAccessIssuer(accessIssuer),
+        audience: normalizeAccessAudience(accessAudience),
+      }
+    : undefined;
+  const gateway = normalizeAiGatewayOptions({
+    gateway: aiGateway,
+    accountId: aiGatewayAccountId,
+    providers: aiGatewayProviders,
+    workersAiGateway,
+    workersAiDirect,
+  });
   const slug = instanceSlug(domain);
   const publicBaseUrl = `https://${domain}`;
   const stateDir = stateDirInput ?? join(root, ".wrangler", "production", slug);
@@ -148,6 +263,15 @@ export function createInstanceConfigs({
     ...backend.vars,
     PUBLIC_BASE_URL: publicBaseUrl,
     ...(admin ? { ADMINS: [admin] } : {}),
+    // These mode vars are always emitted because deploy uses --keep-vars for unrelated,
+    // externally managed settings. Empty values explicitly clear a previous deployment's mode.
+    CF_ACCESS_ISS: access?.issuer ?? "",
+    CF_ACCESS_AUD: access?.audience ?? "",
+    CF_AI_GATEWAY: gateway?.gateway ?? "",
+    CF_AI_GATEWAY_ACCOUNT_ID: gateway?.accountId ?? "",
+    CF_AI_GATEWAY_PROVIDERS: gateway?.providers.join(",") ?? "",
+    CF_AI_GATEWAY_WAI: gateway?.workersAiGateway ?? "",
+    CF_AI_GATEWAY_WAI_DIRECT: gateway?.workersAiDirect ? "true" : "",
   };
   backend.ai = { binding: "WORKERS_AI" };
   backend.services = [
@@ -186,6 +310,8 @@ export function createInstanceConfigs({
   return {
     domain,
     publicBaseUrl,
+    accessEnabled: Boolean(access),
+    aiGatewayEnabled: Boolean(gateway),
     slug,
     stateDir,
     names,
@@ -218,11 +344,81 @@ function runWrangler(args) {
   run(process.execPath, [WRANGLER_CLI, ...args]);
 }
 
-function parseArgs(argv) {
-  const args = { domain: undefined, admin: undefined, dryRun: false, zoneRoute: false };
+function readRemoteSecretNames(configPath) {
+  try {
+    const output = execFileSync(
+        process.execPath,
+        [WRANGLER_CLI, "secret", "list", "--config", configPath],
+        { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const secrets = JSON.parse(output);
+    return new Set(secrets.map((secret) => secret.name));
+  } catch {
+    return null;
+  }
+}
+
+export function planAiGatewaySecret(remoteSecrets, tokenProvided) {
+  if (remoteSecrets === null) {
+    throw new Error(
+        `Unable to verify the remote ${AI_GATEWAY_SECRET_NAME} Worker secret. ` +
+        "Deploy the Worker once without AI Gateway mode (if it does not exist yet), then retry. " +
+        "No Gateway-enabled version was uploaded.");
+  }
+  if (tokenProvided) return "rotate";
+  if (!remoteSecrets.has(AI_GATEWAY_SECRET_NAME)) {
+    throw new Error(
+        `AI Gateway mode requires the ${AI_GATEWAY_SECRET_NAME} Worker secret. Set ` +
+        `${AI_GATEWAY_TOKEN_INPUT_ENV} in the deployment environment or provision the secret ` +
+        "with Wrangler before deploying.");
+  }
+  return "reuse";
+}
+
+function putRemoteSecret(configPath, name, value) {
+  console.log(`\n> wrangler secret put ${name} --config ${configPath} (value via stdin)`);
+  execFileSync(
+      process.execPath,
+      [WRANGLER_CLI, "secret", "put", name, "--config", configPath],
+      { cwd: ROOT, input: `${value}\n`, stdio: ["pipe", "inherit", "inherit"] },
+  );
+}
+
+export function parseArgs(argv) {
+  const args = {
+    domain: undefined,
+    admin: undefined,
+    accessIssuer: undefined,
+    accessAudience: undefined,
+    aiGateway: undefined,
+    aiGatewayAccountId: undefined,
+    aiGatewayProviders: undefined,
+    workersAiGateway: undefined,
+    workersAiDirect: false,
+    dryRun: false,
+    zoneRoute: false,
+  };
+  const readValue = (option, index) => {
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`${option} requires a value`);
+    }
+    return value;
+  };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--domain") args.domain = argv[++i];
-    else if (argv[i] === "--admin") args.admin = argv[++i];
+    if (argv[i] === "--domain") args.domain = readValue(argv[i], i++);
+    else if (argv[i] === "--admin") args.admin = readValue(argv[i], i++);
+    else if (argv[i] === "--access-issuer") args.accessIssuer = readValue(argv[i], i++);
+    else if (argv[i] === "--access-audience") args.accessAudience = readValue(argv[i], i++);
+    else if (argv[i] === "--ai-gateway") args.aiGateway = readValue(argv[i], i++);
+    else if (argv[i] === "--ai-gateway-account-id") {
+      args.aiGatewayAccountId = readValue(argv[i], i++);
+    } else if (argv[i] === "--ai-gateway-providers") {
+      args.aiGatewayProviders = readValue(argv[i], i++);
+    } else if (argv[i] === "--workers-ai-gateway") {
+      args.workersAiGateway = readValue(argv[i], i++);
+    }
+    else if (argv[i] === "--workers-ai-direct") args.workersAiDirect = true;
     else if (argv[i] === "--dry-run") args.dryRun = true;
     else if (argv[i] === "--zone-route") args.zoneRoute = true;
     else throw new Error(`unknown argument: ${argv[i]}`);
@@ -236,9 +432,20 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // Consume the deployment-only secret before launching build subprocesses. It is never written to
+  // generated Wrangler config and is passed only to `wrangler secret put` over stdin.
+  const aiGatewayToken = process.env[AI_GATEWAY_TOKEN_INPUT_ENV]?.trim();
+  delete process.env[AI_GATEWAY_TOKEN_INPUT_ENV];
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
+    accessIssuer: args.accessIssuer,
+    accessAudience: args.accessAudience,
+    aiGateway: args.aiGateway,
+    aiGatewayAccountId: args.aiGatewayAccountId,
+    aiGatewayProviders: args.aiGatewayProviders,
+    workersAiGateway: args.workersAiGateway,
+    workersAiDirect: args.workersAiDirect,
     zoneRoute: args.zoneRoute,
   });
   writeInstanceConfigs(instance);
@@ -255,15 +462,27 @@ async function main() {
     cwd: backendDir,
   });
 
-  // Password authentication is the safe standalone default when Cloudflare Access is not
-  // configured. Set the build-time flag explicitly so an inherited shell value cannot change it.
+  // Select authentication mode explicitly so an inherited shell value cannot change the build.
+  // Access must already protect the public hostname before an Access-mode build is deployed.
   run(process.execPath, [TYPESCRIPT_CLI], { cwd: frontendDir });
   run(process.execPath, [VITE_CLI, "build"], {
     cwd: frontendDir,
-    env: { ...process.env, VITE_CF_ACCESS_MODE: "false" },
+    env: { ...process.env, VITE_CF_ACCESS_MODE: String(instance.accessEnabled) },
   });
 
   if (!args.dryRun) runWrangler(["whoami"]);
+
+  const backendConfigPath = instance.configPaths["workshop-backend"];
+  if (!args.dryRun && instance.aiGatewayEnabled) {
+    const remoteSecrets = readRemoteSecretNames(backendConfigPath);
+    const secretAction = planAiGatewaySecret(remoteSecrets, Boolean(aiGatewayToken));
+    if (secretAction === "rotate") {
+      // Rotate before uploading the Gateway-enabled version so no live version lacks its secret.
+      putRemoteSecret(backendConfigPath, AI_GATEWAY_SECRET_NAME, aiGatewayToken);
+    }
+  } else if (aiGatewayToken && !instance.aiGatewayEnabled) {
+    throw new Error(`${AI_GATEWAY_TOKEN_INPUT_ENV} was provided without --ai-gateway configuration.`);
+  }
 
   for (const packageName of CORE_PACKAGES) {
     const deployArgs = [

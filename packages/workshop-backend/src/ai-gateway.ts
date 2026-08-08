@@ -1,5 +1,18 @@
-import { AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS } from "@gadgets/workshop-shared/api";
+import {
+  AiChatAuthorInfo,
+  AiModelConfig,
+  type AiModelProvider,
+  SUGGESTED_MODELS,
+} from "@gadgets/workshop-shared/api";
 import { UserAiModelRecord } from "./user.js";
+
+const SUPPORTED_GATEWAY_PROVIDERS = new Set<AiModelProvider>([
+  "anthropic",
+  "openai",
+  "openai-compatible",
+  "google",
+  "cloudflare",
+]);
 
 // The model used for quick tasks like title generation when AI Gateway mode is active.
 //
@@ -12,7 +25,7 @@ export class AiGatewayConfig {
   readonly workersAiGateway?: string;
   readonly accountId: string;
   readonly apiToken: string;
-  readonly providers: Set<string>;
+  readonly providers: Set<AiModelProvider>;
 
   constructor(env: Cloudflare.Env) {
     this.gateway = env.CF_AI_GATEWAY!;
@@ -33,9 +46,16 @@ export class AiGatewayConfig {
     this.workersAiGateway = env.CF_AI_GATEWAY_WAI_DIRECT === "true"
       ? undefined
       : env.CF_AI_GATEWAY_WAI || this.gateway;
-    this.providers = new Set(
-      (env.CF_AI_GATEWAY_PROVIDERS || "").split(",").map(s => s.trim()).filter(s => s !== "")
-    );
+    let providers = (env.CF_AI_GATEWAY_PROVIDERS || "")
+        .split(",")
+        .map(s => s.trim())
+        .filter(s => s !== "");
+    let unsupported = providers.find(
+        (provider) => !SUPPORTED_GATEWAY_PROVIDERS.has(provider as AiModelProvider));
+    if (unsupported) {
+      throw new Error(`Unsupported CF_AI_GATEWAY_PROVIDERS entry: ${unsupported}.`);
+    }
+    this.providers = new Set(providers as AiModelProvider[]);
   }
 
   /**
@@ -44,7 +64,7 @@ export class AiGatewayConfig {
   getModelList(): AiChatAuthorInfo[] {
     let result: AiChatAuthorInfo[] = [];
     for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
-      if (this.providers.has(provider)) {
+      if (this.providers.has(provider as AiModelProvider)) {
         for (let [id, model] of Object.entries(models)) {
           result.push({ type: "agent", id, name: model.name });
         }
@@ -59,7 +79,7 @@ export class AiGatewayConfig {
    */
   resolveModel(modelId: string): UserAiModelRecord | undefined {
     for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
-      if (this.providers.has(provider) && modelId in models) {
+      if (this.providers.has(provider as AiModelProvider) && modelId in models) {
         return {
           profile: { type: "agent", id: modelId, name: models[modelId].name },
           config: {

@@ -6,6 +6,12 @@ export type CfAccessEnv = Readonly<{
   CF_ACCESS_ISS?: string;
 }>;
 
+/** Business identity derived only from a verified Cloudflare Access assertion. */
+export type CfAccessIdentity = Readonly<{
+  email: string;
+  subject?: string;
+}>;
+
 type AccessTokenVerifier = (token: string, env: CfAccessEnv) => Promise<JWTPayload>;
 
 const remoteJwkSets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -37,6 +43,16 @@ export async function verifyCfAccessJwt(
   } catch {
     return null;
   }
+}
+
+/** Extracts the canonical CinaSeek identity after JWT verification has succeeded. */
+export function getCfAccessIdentity(payload: JWTPayload): CfAccessIdentity | null {
+  if (typeof payload.email !== "string") return null;
+  const email = payload.email.trim().toLowerCase();
+  if (!email) return null;
+
+  const subject = typeof payload.sub === "string" ? payload.sub.trim() : "";
+  return { email, ...(subject ? { subject } : {}) };
 }
 
 /** Returns a privacy-preserving limiter key derived only from verified Access claims. */

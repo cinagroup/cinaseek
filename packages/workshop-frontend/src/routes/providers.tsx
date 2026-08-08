@@ -245,8 +245,8 @@ function ProvidersPage() {
                 <Lightning size={15} className="mt-px shrink-0 text-kumo-brand" />
                 <span>
                   <strong className="font-medium text-kumo-default">AI Gateway mode:</strong> built-in
-                  models are managed by your deployment. You can still add custom models with your own
-                  API tokens.
+                  models and credentials are managed by your deployment. You can add custom model IDs
+                  for the enabled providers; those requests still use the deployment Gateway.
                 </span>
               </Notice>
             )}
