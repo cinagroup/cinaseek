@@ -322,7 +322,8 @@ if (backendHost) {
 console.log(`\nStarting: wrangler dev ${args.join(" ")}\n`);
 
 try {
-  execFileSync("pnpm", ["exec", "wrangler", "dev", ...args],
+  const wranglerCli = join(ROOT, "node_modules", "wrangler", "bin", "wrangler.js");
+  execFileSync(process.execPath, [wranglerCli, "dev", ...args],
       { stdio: "inherit", cwd: ROOT });
 } catch (e) {
   // wrangler was killed or exited with an error; the output was already shown

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Single command to try out the Gadgets Workshop locally:
+// Single command to try out CinaSeek locally:
 //
 //   1. Installs dependencies (if needed).
 //   2. Builds only what's required to *run* the app:
@@ -115,7 +115,10 @@ const needsInstall = needsBuild || !existsSync(NODE_MODULES);
 
 function run(cmd, args) {
   console.log(`\n> ${cmd} ${args.join(" ")}`);
-  execFileSync(cmd, args, { stdio: "inherit", cwd: ROOT });
+  const isWindowsPnpm = process.platform === "win32" && cmd === "pnpm";
+  const executable = isWindowsPnpm ? process.env.ComSpec ?? "cmd.exe" : cmd;
+  const executableArgs = isWindowsPnpm ? ["/d", "/s", "/c", "pnpm.cmd", ...args] : args;
+  execFileSync(executable, executableArgs, { stdio: "inherit", cwd: ROOT });
 }
 
 if (needsInstall) {

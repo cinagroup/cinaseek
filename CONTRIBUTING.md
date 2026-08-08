@@ -1,4 +1,4 @@
-# Contributing to Cloudflare OS
+# Contributing to CinaSeek
 
 At this time, we are not seeking outside contribution.
 
@@ -6,6 +6,6 @@ AI has made writing code easy. The hard part, today, is not writing the code, bu
 
 With that said, we are happy to accept small, trivially-verified PRs that fix a problem. However, we ask that you refrain from submitting low-value PRs (e.g. typo fixes) or PRs that are more than a dozen or so lines. Such PRs will be closed with a reference to this guideline.
 
-If you have a big idea you'd like us to consider, feel free to [open a discussion](https://github.com/cloudflare/cloudflare-os/discussions) about it.
+If you have a big idea you'd like us to consider, feel free to [open a discussion](https://github.com/cinagroup/cinaseek/discussions) about it.
 
 This policy may change in the future as the project matures. Until then, thank you for your understanding.

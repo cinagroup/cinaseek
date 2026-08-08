@@ -1,6 +1,6 @@
-# Gadgets Workshop Frontend
+# CinaSeek Frontend
 
-Single-page app for the Gadgets Workshop UI. Built with React, Kumo, and Vite.
+Single-page app for the CinaSeek UI. Built with React, Kumo, and Vite.
 
 ## Development
 

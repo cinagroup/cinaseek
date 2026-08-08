@@ -20,7 +20,7 @@
   --text-lg--line-height: 1.75rem;
 
   /* ===== KUMO SEMANTIC COLOR OVERRIDES =====
-     Near-neutral, barely-warm greys for every surface, border, and neutral text. The brand orange
+     Near-neutral, barely-warm greys for every surface, border, and neutral text. The brand cyan
      is reserved for *intent only* (active item, links, primary action, focus) so it actually pops.
      This is the single biggest lever between a "consumer/playground" feel and an enterprise one. */
 
@@ -36,9 +36,9 @@
   --color-kumo-fill-hover: #dededb;
   --color-kumo-interact: #cac8c3;
 
-  /* Brand — warm orange accent (intent only) */
-  --color-kumo-brand: #ff4801;
-  --color-kumo-brand-hover: #e03f00;
+  /* Brand — accessible CinaSeek cyan accent (intent only) */
+  --color-kumo-brand: #007ca8;
+  --color-kumo-brand-hover: #006a90;
 
   /* Border / line tokens — neutral hairlines */
   --color-kumo-line: #1411100f;
@@ -68,15 +68,15 @@
   --text-color-kumo-strong: #100f0d;
   --text-color-kumo-subtle: oklch(52% 0.006 60);
   --text-color-kumo-inactive: oklch(66% 0.005 60);
-  --text-color-kumo-brand: #ff4801;
-  --text-color-kumo-link: #ff4801;
+  --text-color-kumo-brand: #00779f;
+  --text-color-kumo-link: #00779f;
   --text-color-kumo-success: oklch(72.3% 0.219 149.579);
   --text-color-kumo-danger: oklch(63.7% 0.237 25.331);
   --text-color-kumo-warning: oklch(47.6% 0.114 61.907);
 
   /* ===== CUSTOM BRAND TOKENS (for direct use alongside Kumo tokens) ===== */
-  --color-accent-100: #ff4801;
-  --color-accent-200: #ff7038;
+  --color-accent-100: #007ca8;
+  --color-accent-200: #19b5e6;
   --color-background-100: #fcfcfb;
   --color-background-200: #f8f8f7;
   --color-background-300: #f3f3f1;
@@ -85,10 +85,10 @@
   --color-foreground-300: #1c1a18;
   --color-border-100: #e8e7e4;
   --color-border-100-50: #e8e7e480;
-  --color-selection-bg: #ffe9e0;
-  --color-selection-text: #ff500a;
-  --color-shadow-accent-light: #ffa683;
-  --color-shadow-accent-dark: #b13200;
+  --color-selection-bg: #d6f4fc;
+  --color-selection-text: #006a90;
+  --color-shadow-accent-light: #73d5f0;
+  --color-shadow-accent-dark: #004d68;
 
   /* Category colors */
   --color-compute-100: #0a95ff;
@@ -157,8 +157,8 @@
   --color-kumo-ring: oklch(0.52 0.065 285);
   --color-kumo-bubble-user: oklch(0.225 0.025 285);
 
-  --color-kumo-brand: #b84e00;
-  --color-kumo-brand-hover: #a54200;
+  --color-kumo-brand: #00779f;
+  --color-kumo-brand-hover: #006a8e;
 
   --color-kumo-info: oklch(62.3% 0.214 259.815);
   --color-kumo-info-tint: oklch(0.25 0.065 259.815);
@@ -178,14 +178,14 @@
   --text-color-kumo-strong: oklch(0.92 0.01 285);
   --text-color-kumo-subtle: oklch(0.66 0.02 285);
   --text-color-kumo-inactive: oklch(0.58 0.025 285);
-  --text-color-kumo-brand: #ff8a5c;
-  --text-color-kumo-link: #ff8a5c;
+  --text-color-kumo-brand: #65d7f5;
+  --text-color-kumo-link: #65d7f5;
   --text-color-kumo-success: oklch(79.2% 0.209 151.711);
   --text-color-kumo-danger: oklch(70.4% 0.191 22.216);
   --text-color-kumo-warning: oklch(82.8% 0.189 84.429);
 
-  --color-accent-100: #b84e00;
-  --color-accent-200: #ff8a5c;
+  --color-accent-100: #00779f;
+  --color-accent-200: #65d7f5;
   --color-background-100: oklch(0.115 0.012 285);
   --color-background-200: oklch(0.155 0.011 285);
   --color-background-300: oklch(0.225 0.025 285);
@@ -196,7 +196,7 @@
   --color-border-100-50: oklch(0.34 0.022 285 / 0.5);
   --color-selection-bg: color-mix(in srgb, var(--color-kumo-brand) 28%, transparent);
   --color-selection-text: oklch(0.97 0.006 285);
-  --color-shadow-accent-light: #ff663355;
+  --color-shadow-accent-light: #0ba8dd55;
   --color-shadow-accent-dark: #00000080;
 
   --color-compute-100: oklch(74% 0.16 250);

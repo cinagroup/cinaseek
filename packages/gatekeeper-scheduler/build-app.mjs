@@ -4,9 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const packageDirectory = resolve(fileURLToPath(import.meta.url), "..");
 const watch = process.argv.includes("--watch");
+const viteCli = resolve(packageDirectory, "node_modules", "vite", "bin", "vite.js");
 
 execFileSync(
-  "pnpm",
-  ["exec", "vite", "build", "-c", "vite.config.ts", ...(watch ? ["--watch"] : [])],
+  process.execPath,
+  [viteCli, "build", "-c", "vite.config.ts", ...(watch ? ["--watch"] : [])],
   { cwd: packageDirectory, stdio: "inherit" },
 );

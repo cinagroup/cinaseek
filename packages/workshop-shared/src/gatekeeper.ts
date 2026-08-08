@@ -1,6 +1,6 @@
-// This file defines the API that the AI Gadgets Workshop uses to talk to Adapters. Each Adapter
+// This file defines the API that CinaSeek uses to talk to Adapters. Each Adapter
 // provides connectivity to some external service which AI Gadgets can then manipulate. Each
-// installation of the Gadgets Workshop may have access to different adapters, typically based on
+// installation of CinaSeek may have access to different adapters, typically based on
 // the set of internal services used at the particular company.
 //
 // For instance, there might be adapters for Google Workspace, GitHub, Jira, etc.
@@ -8,7 +8,7 @@
 // Adapters provide access to resources. For instance, a Google Workspace adapter might provide
 // access to Google Docs, Spreadsheets, Gmail mailboxes, etc. Each Google Doc, for example, is a
 // separate "resource". Adapters are designed to provide object-oriented, capability-based access
-// to such resources, enabling the Gadget Workshop to grant a particular Gadget fine-grained
+// to such resources, enabling CinaSeek to grant a particular Gadget fine-grained
 // access to just the things the user wants that Gadget to access.
 //
 // Each adapter is deployed as a completely independent Workers application from the Gadgets
@@ -369,9 +369,9 @@ export type GatekeeperUiFrame = {
 // referenced by every gatekeeper implementation. Kept to avoid a repo-wide rename.
 export type ResourceConfiguratorFrame = GatekeeperUiFrame;
 
-// The root interface of an Adapter, as provided to the Gadget Workshop.
+// The root interface of an Adapter, as provided to CinaSeek.
 //
-// An installation of the Gadget Workshop is provided with a set of Adapters to allow it to
+// An installation of CinaSeek is provided with a set of Adapters to allow it to
 // interface with other services.
 // Options for GatekeeperVendor.connectAccount(). `scopes` selects the access tier (see that
 // method). `resourceUrlPatterns`, if given, limits the connection to the authorization needed for
@@ -425,7 +425,7 @@ export interface GatekeeperVendor extends WorkerEntrypoint {
   // TODO: Providing the user ID here is a temporary hack to enable a hidden internal gatekeeper.
   //   Later on we should come up with a better way to manage which users see which gatekeepers.
   //
-  // TODO: How does the Gadget Workshop know when the supported URLs have changed, without polling?
+  // TODO: How does CinaSeek know when the supported URLs have changed, without polling?
   getSupportedResources(options?: {userId?: string}): Promise<SupportedResource[]>;
 
   // Returns TypeScript source code defining all types covering APIs defined by this Gatekeeper.
@@ -438,7 +438,7 @@ export interface GatekeeperVendor extends WorkerEntrypoint {
   //
   // TODO: Define exactly what global types and imports are available. I suppose capnweb should be
   // importable, but is anything else needed?
-  // TODO: How does the Gadget Workshop know when the types have changed, without polling?
+  // TODO: How does CinaSeek know when the types have changed, without polling?
   // TODO: Should we somehow distinguish stable vs. unstable types? Unstable are safe to use in
   //   one-off situations only.
   getTypeScriptTypes(): Promise<string>;
@@ -479,10 +479,10 @@ export interface GatekeeperConnectCallback extends WorkerEntrypoint {
   credentialsRestored(expiresAt?: Date): Promise<void>;
 }
 
-// RPC interface to an Adapter. This is a privileged interface exposed to the Gadget Workshop UI
+// RPC interface to an Adapter. This is a privileged interface exposed to the CinaSeek UI
 // itself, not to Gadgets nor AI agents.
 //
-// The Adapter is already specialized for a particular human user of the Gadget Workshop. The
+// The Adapter is already specialized for a particular human user of CinaSeek. The
 // Adapter capability itself represents permission to access all of the user's data that is
 // available through it, so needs to be guarded carefully. Hence, only the Workshop itself should
 // ever have direct access to an Adapter object.

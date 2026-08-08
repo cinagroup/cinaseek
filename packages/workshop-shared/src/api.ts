@@ -1,4 +1,4 @@
-// This file defines the API spoken between the Gadgets Workshop service and the front-end UI.
+// This file defines the API spoken between the CinaSeek service and the front-end UI.
 //
 // The UI is a good old "fat client" SPA. Why not use SSR? Because:
 // - Users of this UI are likely to have it open often, maybe even all the time. Startup time is
@@ -671,7 +671,7 @@ export const MAX_SITE_NAME_LENGTH = 40;
 
 // What this deployment calls itself when the admin has not set a custom `siteName`. Also the
 // product's own name, so it appears in prose the server and UI address to the user.
-export const DEFAULT_SITE_NAME = "Cloudflare OS";
+export const DEFAULT_SITE_NAME = "CinaSeek";
 
 // The name to display for this deployment. Accepts an unset or not-yet-loaded `siteName` so both
 // the server (reading admin config) and the client (reading ServerConfig) resolve it identically.
@@ -691,7 +691,7 @@ export type AdminSettingsView = {
   signupsEnabled: boolean;
   // Site name shown next to the top-bar logo ("" falls back to DEFAULT_SITE_NAME).
   siteName: string;
-  /** Custom deployment logo, or undefined to use the default Cloudflare OS mark. */
+  /** Custom deployment logo, or undefined to use the default CinaSeek mark. */
   siteLogo?: AvatarImage;
   // Agent system-prompt instructions ("" when unset).
   instanceInstructions: string;
@@ -759,7 +759,7 @@ export interface AdminApi {
   setSiteName(name: string): Promise<void>;
 
   /** Set the deployment logo from browser-rasterized PNG bytes and return its canonical public
-   * image, or undefined after reset. Pass null to restore the default Cloudflare OS mark. The
+   * image, or undefined after reset. Pass null to restore the default CinaSeek mark. The
    * caller must supply decodable PNG data; the server enforces its header, size, and dimensions. */
   setSiteLogo(data: Uint8Array | null): Promise<AvatarImage | undefined>;
 
@@ -869,7 +869,7 @@ export type ServerConfig = {
   // DEFAULT_SITE_NAME.
   siteName: string;
 
-  /** Custom deployment logo, or undefined to use the default Cloudflare OS mark. */
+  /** Custom deployment logo, or undefined to use the default CinaSeek mark. */
   siteLogo?: AvatarImage;
 
   // Deployment-wide top-bar notice (centered text in the top navigation bar). Empty when none is set.
@@ -1287,7 +1287,7 @@ export type AgentSpawnerConfig = {
   env: Record<string, WorkpieceId>,
 };
 
-// Interface to a workspace's Overseer, used to display the Gadget Workshop shell UI around that
+// Interface to a workspace's Overseer, used to display the CinaSeek shell UI around that
 // workspace. Workspace-level concerns live here: the gadget registry, code sync (one Yjs doc for
 // the whole workspace), chats, actions/hooks, sharing, and blueprint listing. Per-gadget
 // operations live on the GadgetClient sub-capability (see createGadget()/getGadget()).

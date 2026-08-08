@@ -1,25 +1,31 @@
-# Cloudflare OS: An AI productivity environment
+<p align="center">
+  <img src="./assets/logo.png" alt="CinaSeek logo" width="168" />
+</p>
 
-Cloudflare OS is an "operating system" for AI productivity originally developed for use inside Cloudflare. A large portion of Cloudflare's workforce -- from engineering to sales and everything in between -- uses Cloudflare OS every day to help them do their jobs.
+<h1 align="center">CinaSeek</h1>
 
-![A Q3 planning workspace in Cloudflare OS, with an AI-generated slide deck](docs/images/q3-planning-workspace.png)
+<p align="center"><strong>An AI productivity environment for secure personal apps and agents.</strong></p>
+
+CinaSeek is an independently branded distribution of the open-source Cloudflare OS v2 foundation. It provides an "operating system" for AI productivity in which people can build, run, and share personal applications and agents inside strong capability-based sandboxes.
+
+![A Q3 planning workspace in CinaSeek, with an AI-generated slide deck](docs/images/q3-planning-workspace.png)
 
 This is not a traditional computer operating system. We use the term "operating system" in two senses:
 
 * An operating system for *the company* to be productive with AI, in a way that is safe, so that the security team can sleep at night.
 * An operating system for AI workloads, analogous to the sense in which a traditional operating system manages compute workloads.
 
-Cloudflare OS provides three things in particular:
+CinaSeek provides three things in particular:
 
 1. An agent chat UI where you can ask agents to do tasks, preloaded with knowledge about how your company operates.
 2. Sandboxed application development, so that you can ask agents to build "gadgets" (small personal apps) and safely share what you've built with others.
 3. A security framework, called Gatekeepers, that applies guardrails to both agents and apps such that non-technical users can safely "go nuts" and nothing bad will happen.
 
-We are making Cloudflare OS open source so that others can copy it and customize it for their own company. The idea is not that your company uses Cloudflare OS, but rather that you make it "*Your Company* OS".
+CinaSeek keeps that foundation open and customizable while establishing its own product name, visual identity, deployment defaults, and user-facing integration copy. The original Apache-2.0 license and upstream attribution remain intact.
 
 ## Quick Start
 
-To quickly run Cloudflare OS locally, [install pnpm](https://pnpm.io/), then do:
+To quickly run CinaSeek locally, [install pnpm](https://pnpm.io/), then do:
 
     pnpm run-local
 
@@ -27,7 +33,7 @@ Then visit: http://localhost:8787
 
 This runs the whole stack locally on wrangler and workerd. This is not meant for production use, but is a quick way to see what the product does.
 
-Alternatively, you can [deploy to your Cloudflare account](https://os.cloudflare.app/deploy).
+Production releases are assembled with the included `scripts/release/` pipeline and the checked-in Wrangler configurations.
 
 (More options at the end of this readme.)
 
@@ -43,20 +49,20 @@ Try prompts like:
 
 ### WARNING: Early access
 
-Cloudflare OS is in a state of heavy development. This repository is actually version 2, a complete rewrite taking what we learned from version 1 and putting it on a new foundation.
+CinaSeek is in a state of heavy development. Its upstream v2 foundation is a complete rewrite built from the lessons of the first-generation system.
 
-As of the August 2026 release, Cloudflare OS v2 is very capable, but still has many rough edges. We know, and we're working on it. For now, consider this an "early access" release.
+As of the August 2026 release, the v2 foundation is very capable but still has rough edges. For now, consider CinaSeek an "early access" release.
 
-## Overview: What is Cloudflare OS really?
+## Overview: What is CinaSeek really?
 
 ### Gadgets: A new way of thinking about software
 
-Cloudflare OS is more than just another chatbox with connectors. The system revolves around a new approach to software, where every user runs their own copy of the productivity apps they use.
+CinaSeek is more than just another chatbox with connectors. The system revolves around a new approach to software, where every user runs their own copy of the productivity apps they use.
 
-When you create a slide deck in Cloudflare OS, you are not calling out to some SaaS software running in the cloud. The system creates a *private instance* of the slide deck software *just for you*. We call this a "gadget". This instance runs in a separate sandbox from everyone else's slide decks.
+When you create a slide deck in CinaSeek, you are not calling out to some SaaS software running in the cloud. The system creates a *private instance* of the slide deck software *just for you*. We call this a "gadget". This instance runs in a separate sandbox from everyone else's slide decks.
 
 This has two profound effects:
-1. It's impossible for the slide deck app to have a security bug that leaks your slides to an attacker. The Cloudflare OS sandbox controls all access to your private instance of the app.
+1. The CinaSeek sandbox controls all access to your private app instance, sharply reducing the blast radius of application bugs.
 2. If you want, you can freely modify the code. If the slide deck app is missing a feature you need, you can just ask your agent to add it. And because of point 1, it's totally safe to do so.
 
 This is a big departure from the last 25 years of cloud architecture and "Software as a Service", but we think AI has changed the equation. When any user is capable of prompting an agent to add the features they need, the centralized model of software stops making sense.
@@ -80,7 +86,7 @@ Logistically, each Gatekeeper is implemented as a separate Worker. In the future
 
 ### Think of an office suite
 
-The basic user experience of Cloudflare OS is something like an online office suite, like Google Docs or MS Office. But, imagine that instead of a fixed set of file types (document, spreadsheet, slide deck), each file -- or "Gadget" -- is potentially its own custom application, written by AI to serve exactly your needs.
+The basic user experience of CinaSeek is something like an online office suite, like Google Docs or MS Office. But, imagine that instead of a fixed set of file types (document, spreadsheet, slide deck), each file -- or "Gadget" -- is potentially its own custom application, written by AI to serve exactly your needs.
 
 Just like office docs, each gadget is private by default, but can be shared -- securely -- in order to collaborate with your team or your friends.
 
@@ -92,9 +98,9 @@ Like office docs, you can create new templates (blueprints) from your own docs (
 
 ### It kind of is an Operating System
 
-The OS terminology isn't *entirely* marketing. Cloudflare OS is actually analogous to an operating system on a technical level.
+The OS terminology isn't *entirely* marketing. CinaSeek is analogous to an operating system on a technical level.
 
-| Normal OS      | Cloudflare OS              |
+| Normal OS      | CinaSeek                   |
 |----------------|----------------------------|
 | kernel         | packages/workshop-backend  |
 | device drivers | packages/gatekeeper-*      |
@@ -109,33 +115,33 @@ Our "kernel" is in the workshop-backend package. The backend legitimately does a
 
 In this analogy, Gatekeepers -- which connect users and agents to external services -- are like drivers -- which connect users and programs to external devices.
 
-There is one thing that traditional OSes don't really manage today, but Cloudflare OS does: AI agents. If you think about it, this is really a missing feature in traditional OSes. We believe that AI agents cannot simply be treated as users. They must be accountable to a human user, while at the same time having their own restricted permissions. Agents do work by writing snippets of code and executing them on the fly. The ideal security model for all of this is capability-based security, not access control lists. See what I mean? Perhaps traditional OSes ought to give AI agents special treatment, too.
+There is one thing that traditional OSes don't really manage today, but CinaSeek does: AI agents. AI agents cannot simply be treated as users. They must be accountable to a human user while retaining their own restricted permissions. Agents do work by writing snippets of code and executing them on the fly. The ideal security model for this is capability-based security, not ambient access.
 
-### Built on Workers, by the Workers team
+### Built on Cloudflare Workers
 
-Cloudflare OS is built on [Cloudflare Workers](https://workers.cloudflare.com), making heavy use of [Durable Objects](https://developers.cloudflare.com/durable-objects/), [Dynamic Workers](https://blog.cloudflare.com/dynamic-workers/), and [Facets](https://blog.cloudflare.com/durable-object-facets-dynamic-workers/) in particular. Every workspace is its own Durable Object, every Gadget runs in a Dynamic Worker Facet, and Gatekeepers also install facets into each workspace to manage access to remote services.
+CinaSeek is built on [Cloudflare Workers](https://workers.cloudflare.com), making heavy use of [Durable Objects](https://developers.cloudflare.com/durable-objects/), [Dynamic Workers](https://blog.cloudflare.com/dynamic-workers/), and [Facets](https://blog.cloudflare.com/durable-object-facets-dynamic-workers/) in particular. Every workspace is its own Durable Object, every Gadget runs in a Dynamic Worker Facet, and Gatekeepers also install facets into each workspace to manage access to remote services.
 
-Cloudflare OS is, in fact, built by the very people who built Workers itself. It uses cutting-edge features of the Workers Runtime -- in fact, Dynamic Workers, Facets, and several other features were added to the runtime specifically to support Cloudflare OS, with more to come. Studying the Cloudflare OS source code is a great way to understand how the Workers Runtime team thinks Workers should be used.
+The upstream Cloudflare OS foundation was created by members of the Workers team and uses cutting-edge Workers Runtime features. CinaSeek preserves that architecture while maintaining an independent product identity.
 
-Being built on Workers does not mean that Cloudflare OS can only run on Cloudflare. In fact, [`workerd`, the Cloudflare Workers Runtime, is itself open source](https://github.com/cloudflare/workerd), and Cloudflare OS can run entirely on top of it on your own servers.
+Being built on Workers does not mean that CinaSeek can only run on Cloudflare. [`workerd`, the Cloudflare Workers Runtime, is open source](https://github.com/cloudflare/workerd), and the platform can run entirely on top of it on your own servers.
 
 ## Features
 
 ### General multi-purpose agent
 
-The Cloudflare OS coding agent is actually a fully multi-purpose agent that can perform arbitrary tasks; like other popular coding agents, you don't have to code with it. You can use it to build Gadgets, but you can also skip the Gadget and just have the agent perform tasks directly. The Cloudflare OS agent is a [Code Mode](https://blog.cloudflare.com/code-mode/) agent -- it performs tasks by writing and immediately executing snippets of code. It can be connected to external resources using Gatekeepers (like MCP -- see below).
+The CinaSeek coding agent is a multi-purpose agent that can perform arbitrary tasks; you do not have to code with it. You can use it to build Gadgets, or skip the Gadget and have the agent perform tasks directly. The agent uses [Code Mode](https://blog.cloudflare.com/code-mode/) and can connect to external resources through Gatekeepers such as MCP.
 
 ### Build apps with AI
 
-While you can code a Gadget by hand if you want, the expectation is that AI writes the code for you. Cloudflare OS features a built-in coding agent that will build whatever you ask it, test it for you, and debug errors.
+While you can code a Gadget by hand, the expectation is that AI writes the code for you. CinaSeek includes a coding agent that builds, tests, and debugs the applications you request.
 
-You can choose your LLM. Cloudflare OS works with many major AI model providers and self-hosted models, with more providers being added all the time.
+You can choose your LLM. CinaSeek works with major AI model providers and self-hosted models.
 
-Because of the tightly-integrated and simplified nature of the platform, even when using the same underlying AI models, the Cloudflare OS coding agent often performs better and faster with fewer tokens than a general-purpose coding agent would.
+Because the platform tightly integrates the agent, sandbox, application runtime, and capability system, its coding agent can work with less glue code than a general-purpose agent.
 
 ### Collaborate with AI
 
-Every app built with Cloudflare OS automatically has an agent-friendly API. That means, after you've asked AI to build the app, you can also ask AI to collaborate with you *inside* the app. No need to build an MCP server nor integrate a custom agent loop. It's just there by default.
+Every app built with CinaSeek automatically has an agent-friendly API. After asking AI to build an app, you can also ask AI to collaborate with you *inside* it. There is no need to build a separate MCP server or integrate a custom agent loop.
 
 This works because the client and server portions of a Gadget are required to communicate via [Cap'n Web RPC](https://github.com/cloudflare/capnweb). This is a win-win:
 1. Cap'n Web is extremely low-boilerplate, which makes it easy for agents to work with. You basically just define a method on your server, then call it from your client, as if it were a local call.
@@ -163,7 +169,7 @@ Each Gadget runs in a secure sandbox that prevents it from talking to the intern
 
 ### Capability-based access control
 
-Each agent, and each Gadget, by default has access to nothing. Even if you've configured the Gadget Workshop with access to external accounts, agents and Gadgets do NOT automatically get to use them.
+Each agent, and each Gadget, starts with access to nothing. Even if you've configured CinaSeek with external accounts, agents and Gadgets do NOT automatically get to use them.
 
 Instead, you must *introduce* each agent (or Gadget) to any particular resources you want it to access. For instance, you may introduce a GitHub repository by pasting a link to it, or clicking "add resource" and selecting it via the UI. An agent can also request an introduction to a resource it thinks it needs, which you can then provide or deny.
 
@@ -171,25 +177,21 @@ This differs from most agent harnesses, where MCP servers are configured upfront
 
 ## Get Started
 
-### Deploy to your Cloudflare account
+### Deploy to Cloudflare
 
-We've built an online flow that helps you deploy to your own Cloudflare account:
+CinaSeek's production release pipeline lives in `scripts/release/`. It bundles all deployable Workers, produces a content-addressed release manifest, uploads a candidate to R2, and promotes that candidate only after verification. Instance-specific worker names, resource IDs, public URLs, and secrets are injected by the deployment service rather than committed to this repository.
 
-https://os.cloudflare.app/deploy
-
-Or, for more sophisticated deployment, with your gatekeepers and potentially code changes, check out our deployment starter repo:
-
-https://github.com/cloudflare/cloudflare-os-starter
+The upstream [Cloudflare OS deployment wizard](https://os.cloudflare.app/deploy) and [deployment starter](https://github.com/cloudflare/cloudflare-os-starter) remain useful architectural references, but they deploy the upstream distribution rather than this CinaSeek fork.
 
 ### Run locally
 
-To quickly run Cloudflare OS locally, [install pnpm](https://pnpm.io/), then do:
+To quickly run CinaSeek locally, [install pnpm](https://pnpm.io/), then do:
 
     pnpm run-local
 
 Then visit: http://localhost:8787
 
-This runs Cloudflare OS using `wrangler`, the Workers developer tooling CLI. This is not the right way to run the OS on a production server, but it works fine for trying it out on your local machine.
+This runs CinaSeek using `wrangler`, the Workers developer tooling CLI. It is intended for local evaluation rather than production hosting.
 
 Your data will be stored in a subdirectory named `.wrangler`.
 
@@ -197,7 +199,7 @@ Your data will be stored in a subdirectory named `.wrangler`.
 
 **COMING SOON**
 
-Cloudflare OS can run entirely on `workerd`, Cloudflare's open source runtime for Workers. In fact, the "run locally" instructions above use `workerd` under the hood. We are still working on documentation and tooling to help you smoothly deploy the OS on top of `workerd` on your own servers. If you are feeling adventurous, [read the low-level documentation for workerd config](https://github.com/cloudflare/workerd/blob/main/src/workerd/server/workerd.capnp) (or point your agent at it) and have a go.
+CinaSeek can run entirely on `workerd`, Cloudflare's open-source runtime for Workers. The local instructions above already use `workerd` under the hood. Self-hosted production tooling is still evolving; see the [low-level workerd configuration documentation](https://github.com/cloudflare/workerd/blob/main/src/workerd/server/workerd.capnp) for the runtime model.
 
 #### Configuring external services
 
@@ -234,13 +236,13 @@ AI has made writing code easy. The hard part, today, is not writing the code, bu
 
 With that said, we are happy to accept small, trivially-verified PRs that fix a problem. However, we ask that you refrain from submitting low-value PRs (e.g. typo fixes) or PRs that are more than a dozen or so lines. Such PRs will be closed with a reference to this guideline.
 
-If you have a big idea you'd like us to consider, feel free to [open a discussion](https://github.com/cloudflare/cloudflare-os/discussions) about it.
+If you have a big idea you'd like us to consider, feel free to [open a discussion](https://github.com/cinagroup/cinaseek/discussions) about it.
 
 This policy may change in the future as the project matures. Until then, thank you for your understanding.
 
 ## Credits
 
-Cloudflare OS has far too many open source dependencies to list here. But, we'd like to highlight a few that do particularly heavy lifting:
+CinaSeek builds on Cloudflare OS and many other open-source dependencies. A few projects do particularly heavy lifting:
 
 * [Pi](https://pi.dev/) (specifically, `pi-agent-core`), which made it easy to support every LLM provider with one API.
 * [Monaco](https://microsoft.github.io/monaco-editor/) which makes it too easy to embed a beautiful text editor -- for those of us who still look at the code.
