@@ -188,7 +188,11 @@ For a standalone deployment that does not use the external deployment service, a
     node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --dry-run
     node scripts/deploy-cloudflare.mjs --domain cinaseek.ai
 
-The standalone path deploys the public router, backend, and the credential-free Context and Scheduler Gatekeepers. It keeps internal Workers off `workers.dev`, attaches the router as the custom-domain origin, and stores account-specific generated configuration under the gitignored `.wrangler/production/` directory. Password sign-in remains enabled by default. To grant an existing username deployment-admin access, add `--admin <username>` on a subsequent deploy; do not reserve a guessable admin name before its account exists. Third-party Gatekeepers should be added only after their OAuth credentials are provisioned.
+If the hostname already has an A, AAAA, or CNAME record in the Cloudflare zone, preserve that DNS record and attach the router as a Worker Route instead:
+
+    node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --zone-route
+
+The standalone path deploys the public router, backend, and the credential-free Context and Scheduler Gatekeepers. It keeps internal Workers off `workers.dev`, attaches the router either as the custom-domain origin or as an existing-zone route, and stores account-specific generated configuration under the gitignored `.wrangler/production/` directory. Password sign-in remains enabled by default. To grant an existing username deployment-admin access, add `--admin <username>` on a subsequent deploy; do not reserve a guessable admin name before its account exists. Third-party Gatekeepers should be added only after their OAuth credentials are provisioned.
 
 ### Run locally
 

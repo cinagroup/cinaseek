@@ -106,6 +106,7 @@ export function createInstanceConfigs({
   root = ROOT,
   domain: domainInput,
   admin,
+  zoneRoute = false,
   stateDir: stateDirInput,
 } = {}) {
   const domain = normalizeDomain(domainInput);
@@ -178,7 +179,9 @@ export function createInstanceConfigs({
     ...router.assets,
     directory: portablePath(join(root, "packages", "workshop-frontend", "dist")),
   };
-  router.routes = [{ pattern: domain, custom_domain: true }];
+  router.routes = zoneRoute
+    ? [{ pattern: `${domain}/*`, zone_name: domain }]
+    : [{ pattern: domain, custom_domain: true }];
 
   return {
     domain,
@@ -216,11 +219,12 @@ function runWrangler(args) {
 }
 
 function parseArgs(argv) {
-  const args = { domain: undefined, admin: undefined, dryRun: false };
+  const args = { domain: undefined, admin: undefined, dryRun: false, zoneRoute: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--domain") args.domain = argv[++i];
     else if (argv[i] === "--admin") args.admin = argv[++i];
     else if (argv[i] === "--dry-run") args.dryRun = true;
+    else if (argv[i] === "--zone-route") args.zoneRoute = true;
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
   if (!args.domain) throw new Error("--domain <hostname> is required");
@@ -235,6 +239,7 @@ async function main() {
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
+    zoneRoute: args.zoneRoute,
   });
   writeInstanceConfigs(instance);
 

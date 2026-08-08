@@ -78,3 +78,16 @@ test("adds an administrator only when explicitly requested", () => {
   });
   assert.deepEqual(instance.configs["workshop-backend"].vars.ADMINS, ["owner"]);
 });
+
+test("uses a zone route when the hostname already has DNS records", () => {
+  const instance = createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    zoneRoute: true,
+    stateDir: join(ROOT, ".wrangler", "test-config-does-not-exist"),
+  });
+
+  assert.deepEqual(instance.configs.router.routes, [
+    { pattern: "cinaseek.ai/*", zone_name: "cinaseek.ai" },
+  ]);
+});
