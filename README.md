@@ -202,6 +202,8 @@ To use Cloudflare Access, create and test the Access application and its Allow p
 
 This builds the frontend without password login or signup and configures the backend to verify `Cf-Access-Jwt-Assertion` against the team's rotating JWKS, issuer, and application audience. The issuer and AUD identify the Access application but are not client secrets. Identity-provider client secrets remain in Cloudflare Zero Trust and must never be committed to this repository.
 
+Access mode is exclusive: built-in password, session-token, and authentication-Gatekeeper entry points are disabled, and a partial issuer/AUD configuration fails closed. A live deployment verifies the edge challenge and team JWKS before uploading Workers. After deployment, run the read-only remote audit and complete the provider login matrix in [the Cloudflare Access production runbook](docs/cloudflare-access-production.md).
+
 To route deployment-managed models through Cloudflare AI Gateway, create or select an authenticated Gateway, configure its stored provider keys or Unified Billing, and give the deployment an API token with AI Gateway Run and Read permissions. Supply that token only through the deployment environment variable `CINASEEK_AI_GATEWAY_API_TOKEN`; the script consumes it through stdin for `wrangler secret put`, removes it before build subprocesses start, and never writes it to generated configuration:
 
     node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --zone-route --ai-gateway cinaseek --ai-gateway-account-id <cloudflare-account-id> --ai-gateway-providers openai,anthropic,google,cloudflare,openai-compatible

@@ -11,6 +11,7 @@ import {
   normalizeDomain,
   parseArgs,
   planAiGatewaySecret,
+  verifyAccessEdge,
 } from "./deploy-cloudflare.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -39,8 +40,90 @@ test("normalizes and validates Cloudflare Access settings", () => {
       /invalid Cloudflare Access issuer/);
   assert.throws(() => normalizeAccessIssuer("https://example.com"),
       /invalid Cloudflare Access issuer/);
+  assert.throws(() => normalizeAccessIssuer("https://team.cloudflareaccess.com:8443"),
+      /invalid Cloudflare Access issuer/);
   assert.throws(() => normalizeAccessAudience("two values"),
       /invalid Cloudflare Access audience/);
+  assert.throws(() => normalizeAccessAudience("x".repeat(65)),
+      /invalid Cloudflare Access audience/);
+});
+
+test("verifies the Access edge challenge and RS256 signing keys", async () => {
+  const requested = [];
+  const responses = [
+    new Response(null, {
+      status: 302,
+      headers: {
+        location: "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/login/cinaseek.ai",
+      },
+    }),
+    new Response(null, {
+      status: 302,
+      headers: {
+        location: "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/login/cinaseek.ai",
+      },
+    }),
+    new Response(JSON.stringify({ keys: [{ kty: "RSA", alg: "RS256" }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  ];
+  const fetchImpl = async (url) => {
+    requested.push(String(url));
+    return responses.shift();
+  };
+
+  await verifyAccessEdge({
+    domain: "cinaseek.ai",
+    issuer: "https://cinagroup.cloudflareaccess.com",
+    fetchImpl,
+  });
+  assert.deepEqual(requested, [
+    "https://cinaseek.ai/",
+    "https://cinaseek.ai/api",
+    "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/certs",
+  ]);
+});
+
+test("fails Access preflight before deploy when protection or keys are wrong", async () => {
+  await assert.rejects(() => verifyAccessEdge({
+    domain: "cinaseek.ai",
+    issuer: "https://cinagroup.cloudflareaccess.com",
+    fetchImpl: async () => new Response("public", { status: 200 }),
+  }), /is not challenging/);
+
+  const wrongIssuerResponses = [
+    new Response(null, {
+      status: 302,
+      headers: { location: "https://other.cloudflareaccess.com/cdn-cgi/access/login/cinaseek.ai" },
+    }),
+  ];
+  await assert.rejects(() => verifyAccessEdge({
+    domain: "cinaseek.ai",
+    issuer: "https://cinagroup.cloudflareaccess.com",
+    fetchImpl: async () => wrongIssuerResponses.shift(),
+  }), /does not use/);
+
+  const wrongKeyResponses = [
+    new Response(null, {
+      status: 302,
+      headers: {
+        location: "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/login/cinaseek.ai",
+      },
+    }),
+    new Response(null, {
+      status: 302,
+      headers: {
+        location: "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/login/cinaseek.ai",
+      },
+    }),
+    new Response(JSON.stringify({ keys: [{ kty: "EC", alg: "ES256" }] }), { status: 200 }),
+  ];
+  await assert.rejects(() => verifyAccessEdge({
+    domain: "cinaseek.ai",
+    issuer: "https://cinagroup.cloudflareaccess.com",
+    fetchImpl: async () => wrongKeyResponses.shift(),
+  }), /no RS256 signing key/);
 });
 
 test("normalizes and validates AI Gateway settings", () => {

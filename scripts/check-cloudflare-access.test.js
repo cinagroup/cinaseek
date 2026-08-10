@@ -1,0 +1,65 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { evaluateAccessResources } from "./check-cloudflare-access.mjs";
+
+const resources = () => ({
+  domain: "cinaseek.ai",
+  audience: "expected-aud",
+  requiredIdps: ["Google", "GitHub", "CinaAuth"],
+  requiredGroups: ["CinaSeek administrators"],
+  applications: [{
+    id: "app-id",
+    domain: "cinaseek.ai",
+    type: "self_hosted",
+    aud: "expected-aud",
+    http_only_cookie_attribute: true,
+    allowed_idps: ["google-id", "github-id", "cinaauth-id"],
+  }],
+  identityProviders: [
+    { id: "google-id", name: "Google" },
+    { id: "github-id", name: "GitHub" },
+    { id: "cinaauth-id", name: "CinaAuth" },
+  ],
+  groups: [{ id: "admins-id", name: "CinaSeek administrators" }],
+  policies: [{
+    decision: "allow",
+    include: [{ group: { id: "admins-id" } }],
+  }],
+});
+
+test("accepts a constrained application with all required identity providers", () => {
+  assert.deepEqual(evaluateAccessResources(resources()), []);
+});
+
+test("reports an AUD mismatch and a missing required identity provider", () => {
+  const input = resources();
+  input.applications[0].aud = "other-aud";
+  input.identityProviders = input.identityProviders.filter((provider) => provider.name !== "CinaAuth");
+  const failures = evaluateAccessResources(input);
+  assert(failures.some((failure) => failure.includes("AUD")));
+  assert(failures.some((failure) => failure.includes("CinaAuth")));
+});
+
+test("rejects bypass and Everyone policies", () => {
+  const input = resources();
+  input.policies.push({ decision: "bypass", include: [{ everyone: {} }] });
+  input.policies[0].include = [{ everyone: {} }];
+  const failures = evaluateAccessResources(input);
+  assert(failures.some((failure) => failure.includes("Bypass")));
+  assert(failures.some((failure) => failure.includes("Everyone")));
+  assert(failures.some((failure) => failure.includes("Every Allow policy include rule")));
+});
+
+test("rejects non-identity include rules even beside a valid group", () => {
+  const input = resources();
+  input.policies[0].include.push({ ip: { ip: "192.0.2.0/24" } });
+  const failures = evaluateAccessResources(input);
+  assert(failures.some((failure) => failure.includes("Every Allow policy include rule")));
+});
+
+test("requires named Access groups to be used by an Allow policy", () => {
+  const input = resources();
+  input.policies[0].include = [{ email: { email: "admin@example.com" } }];
+  const failures = evaluateAccessResources(input);
+  assert(failures.some((failure) => failure.includes("is not used")));
+});

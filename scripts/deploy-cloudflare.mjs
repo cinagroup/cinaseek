@@ -24,6 +24,7 @@ const CORE_PACKAGES = [
 
 const AI_GATEWAY_SECRET_NAME = "CF_AI_GATEWAY_API_TOKEN";
 const AI_GATEWAY_TOKEN_INPUT_ENV = "CINASEEK_AI_GATEWAY_API_TOKEN";
+const ACCESS_PREFLIGHT_TIMEOUT_MS = 15_000;
 const AI_GATEWAY_PROVIDERS = new Set([
   "anthropic",
   "openai",
@@ -61,7 +62,7 @@ export function normalizeAccessIssuer(value) {
     throw new Error(`invalid Cloudflare Access issuer: ${value}`);
   }
   const isTeamDomain = url.hostname.endsWith(".cloudflareaccess.com");
-  if (url.protocol !== "https:" || !isTeamDomain || url.username || url.password ||
+  if (url.protocol !== "https:" || !isTeamDomain || url.port || url.username || url.password ||
       url.pathname !== "/" || url.search || url.hash) {
     throw new Error(`invalid Cloudflare Access issuer: ${value}`);
   }
@@ -70,10 +71,85 @@ export function normalizeAccessIssuer(value) {
 
 export function normalizeAccessAudience(value) {
   const audience = value.trim();
-  if (!audience || audience.length > 512 || /\s/.test(audience)) {
+  if (!audience || audience.length > 64 || /\s/.test(audience)) {
     throw new Error("invalid Cloudflare Access audience");
   }
   return audience;
+}
+
+export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
+  const normalizedDomain = normalizeDomain(domain);
+  const normalizedIssuer = normalizeAccessIssuer(issuer);
+  const signal = AbortSignal.timeout(ACCESS_PREFLIGHT_TIMEOUT_MS);
+
+  for (const path of ["/", "/api"]) {
+    let challenge;
+    try {
+      challenge = await fetchImpl(`https://${normalizedDomain}${path}`, {
+        method: "GET",
+        redirect: "manual",
+        headers: { accept: "text/html" },
+        signal,
+      });
+    } catch (error) {
+      throw new Error(`Cloudflare Access preflight could not reach ${normalizedDomain}${path}`, {
+        cause: error,
+      });
+    }
+
+    if (![301, 302, 303, 307, 308].includes(challenge.status)) {
+      throw new Error(
+          `Cloudflare Access is not challenging ${normalizedDomain}${path} ` +
+          `(HTTP ${challenge.status})`);
+    }
+    const location = challenge.headers.get("location");
+    if (!location) {
+      throw new Error(`Cloudflare Access challenge for ${normalizedDomain}${path} has no redirect`);
+    }
+
+    let loginUrl;
+    try {
+      loginUrl = new URL(location, `https://${normalizedDomain}`);
+    } catch {
+      throw new Error(
+          `Cloudflare Access challenge for ${normalizedDomain}${path} has an invalid redirect`);
+    }
+    if (loginUrl.origin !== normalizedIssuer ||
+        !loginUrl.pathname.startsWith("/cdn-cgi/access/login/")) {
+      throw new Error(
+          `Cloudflare Access challenge for ${normalizedDomain}${path} ` +
+          `does not use ${normalizedIssuer}`);
+    }
+  }
+
+  let certs;
+  try {
+    certs = await fetchImpl(`${normalizedIssuer}/cdn-cgi/access/certs`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal,
+    });
+  } catch (error) {
+    throw new Error(`Cloudflare Access signing keys are unavailable for ${normalizedIssuer}`, {
+      cause: error,
+    });
+  }
+  if (!certs.ok) {
+    throw new Error(
+        `Cloudflare Access signing keys returned HTTP ${certs.status} for ${normalizedIssuer}`);
+  }
+
+  let jwks;
+  try {
+    jwks = await certs.json();
+  } catch {
+    throw new Error(`Cloudflare Access signing keys are not valid JSON for ${normalizedIssuer}`);
+  }
+  const keys = jwks && typeof jwks === "object" && Array.isArray(jwks.keys) ? jwks.keys : [];
+  if (!keys.some((key) => key && typeof key === "object" &&
+      key.kty === "RSA" && key.alg === "RS256")) {
+    throw new Error(`Cloudflare Access has no RS256 signing key for ${normalizedIssuer}`);
+  }
 }
 
 function normalizeAiGatewayName(value, optionName) {
@@ -470,7 +546,16 @@ async function main() {
     env: { ...process.env, VITE_CF_ACCESS_MODE: String(instance.accessEnabled) },
   });
 
-  if (!args.dryRun) runWrangler(["whoami"]);
+  if (!args.dryRun) {
+    runWrangler(["whoami"]);
+    if (instance.accessEnabled) {
+      await verifyAccessEdge({
+        domain: instance.domain,
+        issuer: instance.configs["workshop-backend"].vars.CF_ACCESS_ISS,
+      });
+      console.log(`\nCloudflare Access preflight passed for ${instance.publicBaseUrl}.`);
+    }
+  }
 
   const backendConfigPath = instance.configPaths["workshop-backend"];
   if (!args.dryRun && instance.aiGatewayEnabled) {
