@@ -5,7 +5,7 @@ import { evaluateAccessResources } from "./check-cloudflare-access.mjs";
 const resources = () => ({
   domain: "cinaseek.ai",
   audience: "expected-aud",
-  requiredIdps: ["Google", "GitHub", "CinaAuth"],
+  instantAuthIdp: "CinaAuth",
   requiredGroups: ["CinaSeek administrators"],
   applications: [{
     id: "app-id",
@@ -13,7 +13,8 @@ const resources = () => ({
     type: "self_hosted",
     aud: "expected-aud",
     http_only_cookie_attribute: true,
-    allowed_idps: ["google-id", "github-id", "cinaauth-id"],
+    allowed_idps: ["cinaauth-id"],
+    auto_redirect_to_identity: true,
   }],
   identityProviders: [
     { id: "google-id", name: "Google" },
@@ -27,17 +28,26 @@ const resources = () => ({
   }],
 });
 
-test("accepts a constrained application with all required identity providers", () => {
+test("accepts exclusive CinaAuth with instant authentication", () => {
   assert.deepEqual(evaluateAccessResources(resources()), []);
 });
 
-test("reports an AUD mismatch and a missing required identity provider", () => {
+test("reports an AUD mismatch and a missing instant authentication identity provider", () => {
   const input = resources();
   input.applications[0].aud = "other-aud";
   input.identityProviders = input.identityProviders.filter((provider) => provider.name !== "CinaAuth");
   const failures = evaluateAccessResources(input);
   assert(failures.some((failure) => failure.includes("AUD")));
   assert(failures.some((failure) => failure.includes("CinaAuth")));
+});
+
+test("rejects another allowed IdP or disabled instant authentication", () => {
+  const input = resources();
+  input.applications[0].allowed_idps.push("google-id");
+  input.applications[0].auto_redirect_to_identity = false;
+  const failures = evaluateAccessResources(input);
+  assert(failures.some((failure) => failure.includes("only allowed identity provider")));
+  assert(failures.some((failure) => failure.includes("enable instant authentication")));
 });
 
 test("rejects bypass and Everyone policies", () => {

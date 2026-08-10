@@ -80,7 +80,6 @@ export function normalizeAccessAudience(value) {
 export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
   const normalizedDomain = normalizeDomain(domain);
   const normalizedIssuer = normalizeAccessIssuer(issuer);
-  const signal = AbortSignal.timeout(ACCESS_PREFLIGHT_TIMEOUT_MS);
 
   for (const path of ["/", "/api"]) {
     let challenge;
@@ -89,7 +88,7 @@ export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
         method: "GET",
         redirect: "manual",
         headers: { accept: "text/html" },
-        signal,
+        signal: AbortSignal.timeout(ACCESS_PREFLIGHT_TIMEOUT_MS),
       });
     } catch (error) {
       throw new Error(`Cloudflare Access preflight could not reach ${normalizedDomain}${path}`, {
@@ -127,7 +126,7 @@ export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
     certs = await fetchImpl(`${normalizedIssuer}/cdn-cgi/access/certs`, {
       method: "GET",
       headers: { accept: "application/json" },
-      signal,
+      signal: AbortSignal.timeout(ACCESS_PREFLIGHT_TIMEOUT_MS),
     });
   } catch (error) {
     throw new Error(`Cloudflare Access signing keys are unavailable for ${normalizedIssuer}`, {

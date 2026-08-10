@@ -32,6 +32,7 @@ export function evaluateAccessResources({
   domain,
   audience,
   requiredIdps = [],
+  instantAuthIdp,
   requiredGroups = [],
   applications,
   identityProviders,
@@ -56,6 +57,21 @@ export function evaluateAccessResources({
       failures.push(`Required identity provider ${requiredName} does not exist.`);
     } else if (!allowedIdps.has(provider.id)) {
       failures.push(`Required identity provider ${requiredName} is not allowed by the application.`);
+    }
+  }
+
+  if (instantAuthIdp) {
+    const provider = identityProviders.find(
+        (candidate) => candidate.name?.toLowerCase() === instantAuthIdp.toLowerCase());
+    if (!provider) {
+      failures.push(`Instant authentication identity provider ${instantAuthIdp} does not exist.`);
+    } else if (allowedIdps.size !== 1 || !allowedIdps.has(provider.id)) {
+      failures.push(
+          `Instant authentication requires ${instantAuthIdp} to be the only allowed identity ` +
+          "provider.");
+    }
+    if (app.auto_redirect_to_identity !== true) {
+      failures.push("The Access application must enable instant authentication.");
     }
   }
 
@@ -103,6 +119,12 @@ function parseArgs(argv) {
     } else if (arg === "--require-idp" && value) {
       result.requiredIdps.push(value);
       index++;
+    } else if (arg === "--require-instant-auth-idp" && value) {
+      if (result.instantAuthIdp) {
+        throw new Error("--require-instant-auth-idp can only be specified once");
+      }
+      result.instantAuthIdp = value;
+      index++;
     } else if (arg === "--require-access-group" && value) {
       result.requiredGroups.push(value);
       index++;
@@ -122,6 +144,8 @@ function usage() {
     "Options:",
     "  --config <path>                 Generated workshop-backend Wrangler config",
     "  --require-idp <name>            Require and allow an identity provider (repeatable)",
+    "  --require-instant-auth-idp <name>",
+    "                                  Require one exclusive IdP and instant authentication",
     "  --require-access-group <name>   Require an Access group in an Allow policy (repeatable)",
   ].join("\n");
 }
@@ -182,6 +206,7 @@ async function main() {
     domain,
     audience,
     requiredIdps: args.requiredIdps,
+    instantAuthIdp: args.instantAuthIdp,
     requiredGroups: args.requiredGroups,
     applications,
     identityProviders,

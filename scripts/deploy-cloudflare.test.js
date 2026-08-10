@@ -50,6 +50,7 @@ test("normalizes and validates Cloudflare Access settings", () => {
 
 test("verifies the Access edge challenge and RS256 signing keys", async () => {
   const requested = [];
+  const signals = [];
   const responses = [
     new Response(null, {
       status: 302,
@@ -68,8 +69,9 @@ test("verifies the Access edge challenge and RS256 signing keys", async () => {
       headers: { "content-type": "application/json" },
     }),
   ];
-  const fetchImpl = async (url) => {
+  const fetchImpl = async (url, options) => {
     requested.push(String(url));
+    signals.push(options.signal);
     return responses.shift();
   };
 
@@ -83,6 +85,7 @@ test("verifies the Access edge challenge and RS256 signing keys", async () => {
     "https://cinaseek.ai/api",
     "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/certs",
   ]);
+  assert.equal(new Set(signals).size, 3);
 });
 
 test("fails Access preflight before deploy when protection or keys are wrong", async () => {
