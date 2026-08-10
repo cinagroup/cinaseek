@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   accessRateLimitKey,
+  getCfAccessConfig,
   getCfAccessIdentity,
+  hasCfAccessConfiguration,
   verifyCfAccessJwt,
 } from "../src/access.js";
 
@@ -38,6 +40,15 @@ describe("verifyCfAccessJwt", () => {
     expect(joseMocks.createRemoteJWKSet).toHaveBeenNthCalledWith(
       2, new URL("https://other-team.cloudflareaccess.com/cdn-cgi/access/certs"),
     );
+    expect(joseMocks.jwtVerify).toHaveBeenCalledWith(
+      "signed-token",
+      expect.any(Function),
+      {
+        issuer: "https://team.cloudflareaccess.com",
+        audience: "workshop-audience",
+        algorithms: ["RS256"],
+      },
+    );
   });
 
   it("rejects missing and invalid assertions", async () => {
@@ -67,6 +78,54 @@ describe("verifyCfAccessJwt", () => {
       sub: "user-1", email: "person@example.com",
     });
   });
+
+  it("rejects a partial or invalid runtime configuration before verification", async () => {
+    const request = new Request("https://workshop.example/api", {
+      headers: { "cf-access-jwt-assertion": "signed-token" },
+    });
+    const verifier = vi.fn();
+
+    await expect(verifyCfAccessJwt(request, {
+      CF_ACCESS_ISS: "https://team.cloudflareaccess.com",
+    }, verifier)).resolves.toBeNull();
+    await expect(verifyCfAccessJwt(request, {
+      CF_ACCESS_AUD: "workshop-audience",
+      CF_ACCESS_ISS: "https://metadata.example.com",
+    }, verifier)).resolves.toBeNull();
+    expect(verifier).not.toHaveBeenCalled();
+  });
+});
+
+describe("getCfAccessConfig", () => {
+  it("distinguishes disabled, partial, and complete Access settings", () => {
+    expect(hasCfAccessConfiguration({})).toBe(false);
+    expect(hasCfAccessConfiguration({ CF_ACCESS_AUD: "", CF_ACCESS_ISS: "" })).toBe(false);
+    expect(hasCfAccessConfiguration({ CF_ACCESS_AUD: "audience" })).toBe(true);
+    expect(getCfAccessConfig({})).toBeNull();
+    expect(() => getCfAccessConfig({ CF_ACCESS_AUD: "audience" })).toThrow(/both be configured/);
+    expect(getCfAccessConfig({
+      CF_ACCESS_AUD: " audience ",
+      CF_ACCESS_ISS: "https://TEAM.cloudflareaccess.com/",
+    })).toEqual({
+      audience: "audience",
+      issuer: "https://team.cloudflareaccess.com",
+    });
+  });
+
+  it("rejects unsafe issuer and audience values", () => {
+    expect(() => getCfAccessConfig({
+      CF_ACCESS_AUD: "two values",
+      CF_ACCESS_ISS: "https://team.cloudflareaccess.com",
+    })).toThrow(/audience is invalid/);
+    expect(() => getCfAccessConfig({
+      CF_ACCESS_AUD: "audience",
+      CF_ACCESS_ISS: "http://team.cloudflareaccess.com",
+    })).toThrow(/issuer is invalid/);
+    expect(() => getCfAccessConfig({
+      CF_ACCESS_AUD: "audience",
+      CF_ACCESS_ISS: "https://team.cloudflareaccess.com/tenant",
+    })).toThrow(/issuer is invalid/);
+  });
 });
 
 describe("accessRateLimitKey", () => {
@@ -81,15 +140,23 @@ describe("accessRateLimitKey", () => {
 
 describe("getCfAccessIdentity", () => {
   it("normalizes the verified email and retains the Access subject", () => {
-    expect(getCfAccessIdentity({ email: " Person@Example.COM ", sub: " user-1 " })).toEqual({
+    expect(getCfAccessIdentity({
+      type: "app", email: " Person@Example.COM ", sub: " user-1 ",
+    })).toEqual({
       email: "person@example.com",
       subject: "user-1",
     });
   });
 
-  it("rejects assertions without a usable email identity", () => {
-    expect(getCfAccessIdentity({ sub: "user-1" })).toBeNull();
-    expect(getCfAccessIdentity({ email: "   " })).toBeNull();
-    expect(getCfAccessIdentity({ email: ["person@example.com"] })).toBeNull();
+  it("rejects non-application assertions without a complete usable identity", () => {
+    expect(getCfAccessIdentity({ type: "app", sub: "user-1" })).toBeNull();
+    expect(getCfAccessIdentity({ type: "app", email: "person@example.com" })).toBeNull();
+    expect(getCfAccessIdentity({
+      type: "org", email: "person@example.com", sub: "user-1",
+    })).toBeNull();
+    expect(getCfAccessIdentity({ type: "app", email: "invalid", sub: "user-1" })).toBeNull();
+    expect(getCfAccessIdentity({
+      type: "app", email: ["person@example.com"], sub: "user-1",
+    })).toBeNull();
   });
 });

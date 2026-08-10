@@ -9,6 +9,7 @@ import { isCloudflareLimitsEnabled } from "./ai-gateway-billing/config.js";
 import { getAuthVendorBinding } from "./auth/auth-vendors.js";
 import { readAdminConfig } from "./admin-config.js";
 import { siteLogoImage } from "./site-logo.js";
+import { hasCfAccessConfiguration } from "./access.js";
 
 const logger = createWorkshopLogger("workshop.deployment.config");
 
@@ -43,7 +44,7 @@ export async function getServerConfig(env: Cloudflare.Env): Promise<ServerConfig
   // (Branding comes from admin-config; auth config is separate and env-driven.)
   let [config, authVendors] = await Promise.all([
     readAdminConfig(env),
-    getAuthVendors(env),
+    hasCfAccessConfiguration(env) ? Promise.resolve([]) : getAuthVendors(env),
   ]);
   return {
     authVendors,

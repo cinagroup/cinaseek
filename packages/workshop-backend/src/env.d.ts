@@ -57,8 +57,8 @@ declare global {
       // unaffected. OAuth app credentials live on the gatekeeper Workers, not here.
       // ---------------------------------------------------------------------------------------------
 
-      // Cloudflare Access configuration. When CF_ACCESS_AUD is set, the deployment authenticates via
-      // Cloudflare Access (SSO). (Also referenced via a local Env extension in server.ts.)
+      // Cloudflare Access configuration. Set both values to enable Access SSO; setting only one is
+      // treated as an invalid fail-closed production configuration.
       CF_ACCESS_AUD?: string;   // audience
       CF_ACCESS_ISS?: string;   // team URL, e.g. https://<team>.cloudflareaccess.com
 

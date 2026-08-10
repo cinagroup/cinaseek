@@ -24,7 +24,9 @@ import { RpcStub as NativeRpcStub } from "cloudflare:workers";
 import { recordAnalytics } from "./analytics";
 import { handleClientErrorRequest } from "./client-errors.js";
 import {
+  getCfAccessConfig,
   getCfAccessIdentity,
+  hasCfAccessConfiguration,
   type CfAccessIdentity,
   verifyCfAccessJwt,
 } from "./access.js";
@@ -639,6 +641,9 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
   }
 
   async startGatekeeperLogin(vendorId: string): Promise<{ url: string; attempt: RpcStub<LoginAttempt> }> {
+    if (hasCfAccessConfiguration(this.env)) {
+      throw new Error("This deployment requires Cloudflare Access authentication.");
+    }
     if (!getAuthGatekeeperAllowlist(this.env).includes(vendorId)) {
       throw new Error(`Sign-in via "${vendorId}" is not enabled on this deployment.`);
     }
@@ -665,6 +670,9 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
   }
 
   async authenticate(token: string): Promise<AuthenticatedApi> {
+    if (hasCfAccessConfiguration(this.env)) {
+      throw new Error("This deployment requires Cloudflare Access authentication.");
+    }
     let split = token.split(':');
     if (split.length !== 2) {
       throw new Error("Invalid session token.");
@@ -707,7 +715,7 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
   }
 
   async login(username: string, passwordHash: Uint8Array): Promise<string | null> {
-    if (this.env.CF_ACCESS_AUD) {
+    if (hasCfAccessConfiguration(this.env)) {
       throw new Error("This deployment requires Cloudflare Access authentication.");
     }
     if (!isPasswordAuthEnabled(this.env)) {
@@ -733,7 +741,7 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
 
   async createAccount(username: string, displayName: string, passwordHash: Uint8Array)
       : Promise<string | null> {
-    if (this.env.CF_ACCESS_AUD) {
+    if (hasCfAccessConfiguration(this.env)) {
       throw new Error("This deployment requires Cloudflare Access authentication.");
     }
     if (!isPasswordAuthEnabled(this.env)) {
@@ -829,7 +837,17 @@ export default {
 
       let accessIdentity: CfAccessIdentity | undefined;
 
-      if (env.CF_ACCESS_AUD) {
+      let accessConfig: ReturnType<typeof getCfAccessConfig>;
+      try {
+        accessConfig = getCfAccessConfig(env);
+      } catch (error) {
+        logger.error("invalid Cloudflare Access configuration", {
+          event: "access.config.invalid", error,
+        });
+        return new Response("Cloudflare Access authentication is misconfigured.", { status: 503 });
+      }
+
+      if (accessConfig) {
         if (req.headers.get("Origin") !== url.origin) {
           return new Response("Cross-origin API access not allowed.", { status: 403 });
         }

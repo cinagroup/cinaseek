@@ -7,6 +7,7 @@ import { createLogger } from "@gadgets/backend-utils/logger";
 import type { JWTPayload } from "jose";
 import {
   accessRateLimitKey,
+  hasCfAccessConfiguration,
   verifyCfAccessJwt,
   type CfAccessEnv,
 } from "./access.js";
@@ -110,7 +111,7 @@ export async function handleClientErrorRequest(
 
   try {
     let key: string;
-    if (env.CF_ACCESS_AUD) {
+    if (hasCfAccessConfiguration(env)) {
       const payload = await verifyAccess(request, env);
       if (!payload) return new Response("Invalid CF access JWT.", { status: 403 });
       const accessKey = await accessRateLimitKey(payload);
