@@ -27,8 +27,50 @@ export function useAuth(publicApi: RpcStub<PublicApi>) {
   authenticatedApiRef.current = authState.authenticatedApi
 
   useEffect(() => {
+    let cancelled = false
+    let pendingAccessApi: RpcStub<AuthenticatedApi> | null = null
+
+    const authenticateWithCfAccess = async () => {
+      setAuthState(prev => {
+        prev.authenticatedApi?.[Symbol.dispose]()
+        return { token: null, authenticatedApi: null, isLoading: true, error: null }
+      })
+
+      // Promise-pipeline whoami() through authentication. The UI only becomes authenticated after
+      // Access verification and the resulting user capability have both succeeded.
+      const authenticatedApi = publicApi.authenticateFromCfAccess()
+      pendingAccessApi = authenticatedApi
+      try {
+        await authenticatedApi.whoami()
+        if (cancelled) {
+          authenticatedApi[Symbol.dispose]()
+          return
+        }
+        setAuthState({
+          token: null,
+          authenticatedApi,
+          isLoading: false,
+          error: null
+        })
+        if (pendingAccessApi === authenticatedApi) pendingAccessApi = null
+      } catch (error) {
+        authenticatedApi[Symbol.dispose]()
+        if (pendingAccessApi === authenticatedApi) pendingAccessApi = null
+        if (!cancelled) {
+          setAuthState({
+            token: null,
+            authenticatedApi: null,
+            isLoading: false,
+            error: error instanceof Error && error.message
+              ? error.message
+              : 'Cloudflare Access authentication failed.'
+          })
+        }
+      }
+    }
+
     if (CF_ACCESS_MODE) {
-      authenticateWithCfAccess()
+      void authenticateWithCfAccess()
     } else {
       const storedToken = localStorage.getItem('authToken')
       if (storedToken) {
@@ -38,31 +80,13 @@ export function useAuth(publicApi: RpcStub<PublicApi>) {
       }
     }
     return () => {
+      cancelled = true
+      pendingAccessApi?.[Symbol.dispose]()
       // The authenticateWithXxx functions also dispose the old stub via their setAuthState
       // updater, so this may double-dispose on reconnect. That's fine — dispose is idempotent.
       authenticatedApiRef.current?.[Symbol.dispose]()
     }
   }, [publicApi])
-
-  const authenticateWithCfAccess = () => {
-    setAuthState(prev => {
-      if (prev.authenticatedApi) {
-        prev.authenticatedApi[Symbol.dispose]()
-      }
-      return { ...prev, authenticatedApi: null, isLoading: true, error: null }
-    })
-
-    // Use promise pipelining - no need to await. The CF Access JWT is already attached
-    // to the request by the browser (injected by the Access service worker/cookie), so
-    // the server validates it and returns an authenticated stub immediately.
-    const authenticatedApi = publicApi.authenticateFromCfAccess()
-    setAuthState({
-      token: null,
-      authenticatedApi,
-      isLoading: false,
-      error: null
-    })
-  }
 
   const authenticateWithToken = (token: string) => {
     setAuthState(prev => {
