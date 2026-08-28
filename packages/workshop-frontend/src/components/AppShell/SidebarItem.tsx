@@ -1,7 +1,7 @@
 import { Link, useRouterState, type LinkProps } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { useOptionalAuthenticatedApi } from '../../AuthContext'
-import { beginAccessLogin } from '../../accessSession'
+import { requestAccessLogin } from '../../accessSession'
 
 // A single nav row in the sidebar. Renders as a TanStack <Link>. Active state is computed from the
 // current router pathname so we can also tint the icon (TanStack's activeProps only swaps top-level
@@ -78,7 +78,7 @@ export default function SidebarItem({
         type="button"
         title={collapsed ? label : undefined}
         className={`${className} w-full text-left`}
-        onClick={() => beginAccessLogin(target || '/')}
+        onClick={() => requestAccessLogin(target || '/')}
       >
         {content}
       </button>

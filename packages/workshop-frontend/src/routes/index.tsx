@@ -22,9 +22,9 @@ import {
 import { useDocumentTitle } from "../useDocumentTitle";
 import { homePromptFromSearch } from "../homePrompt";
 import {
-  beginAccessLogin,
   consumePendingHomePrompt,
   peekPendingHomePrompt,
+  requestAccessLogin,
   savePendingHomePrompt,
 } from "../accessSession";
 
@@ -72,7 +72,7 @@ function GuestHomePage({ prompt }: HomeSearch) {
 
   const signIn = useCallback(() => {
     savePendingHomePrompt(input);
-    beginAccessLogin("/");
+    requestAccessLogin("/");
   }, [input]);
 
   const submit = useCallback((event?: FormEvent) => {

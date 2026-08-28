@@ -5,7 +5,7 @@ import UserMenu from '../UserMenu'
 import { useTheme } from '../../ThemeContext'
 import type { ThemeMode } from '../../theme'
 import { useOptionalAuthenticatedApi } from '../../AuthContext'
-import { beginAccessLogin } from '../../accessSession'
+import { requestAccessLogin } from '../../accessSession'
 
 const THEME_SEQUENCE: ThemeMode[] = ['system', 'light', 'dark']
 
@@ -63,7 +63,7 @@ function StripLink({
       <Tooltip content={label}>
         <button
           type="button"
-          onClick={() => beginAccessLogin(to)}
+          onClick={() => requestAccessLogin(to)}
           aria-label={label}
           className="flex h-8 w-8 items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
         >

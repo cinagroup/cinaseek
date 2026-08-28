@@ -6,6 +6,7 @@ import Sidebar from './Sidebar'
 import CommandPalette from './CommandPalette'
 import { OPEN_COMMAND_PALETTE_EVENT } from './commandPaletteBus'
 import { useOptionalAuthenticatedApi } from '../../AuthContext'
+import AccessLoginModal from '../AccessLoginModal'
 
 const STORAGE_KEY_COLLAPSED = 'gadgets:sidebar-collapsed'
 
@@ -119,6 +120,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {auth ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
+      {auth ? null : <AccessLoginModal />}
     </div>
   )
 }

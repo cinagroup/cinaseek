@@ -14,6 +14,7 @@ import LoginPage from '../LoginPage'
 import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
 import { beginAccessLogin, currentReturnTo } from '../accessSession'
+import { AccessLoginComplete } from '../components/AccessLoginModal'
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -47,6 +48,7 @@ function RootComponent() {
   // native — sidebar and all — instead of floating on a bare page.
   const standalone = !CF_ACCESS_MODE && (isSignup || (isBlueprint && !isAuthenticated))
   const publicGuestHome = CF_ACCESS_MODE && pathname === '/' && !isAuthenticated
+  const accessLoginComplete = CF_ACCESS_MODE && pathname === '/auth/complete'
 
   // The workspace editor renders fullscreen (no app chrome). /gadget/ is the legacy URL, kept
   // here so the chrome doesn't flash in during the redirect to /workspace/.
@@ -57,6 +59,10 @@ function RootComponent() {
     if (token) {
       login(token)
     }
+  }
+
+  if (accessLoginComplete) {
+    return <AccessLoginComplete status={accessSessionStatus} />
   }
 
   // Loading state

@@ -4,7 +4,7 @@ import { UserCircle } from '@phosphor-icons/react'
 import { useAuthenticatedApi, useOptionalAuthenticatedApi } from '../AuthContext'
 import { useAvatar } from '../useAvatar'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from './menuStyles'
-import { beginAccessLogin, currentReturnTo } from '../accessSession'
+import { currentReturnTo, requestAccessLogin } from '../accessSession'
 
 export default function UserMenu() {
   const auth = useOptionalAuthenticatedApi()
@@ -12,7 +12,7 @@ export default function UserMenu() {
     return (
       <button
         type="button"
-        onClick={() => beginAccessLogin(currentReturnTo())}
+        onClick={() => requestAccessLogin(currentReturnTo())}
         className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-kumo-tint text-kumo-strong transition-colors hover:bg-kumo-fill"
         title="Sign in or create an account"
         aria-label="Sign in or create an account"

@@ -6,6 +6,15 @@ export type AccessSessionStatus =
   | 'authenticated'
   | 'error'
 
+/** Global event used by guest controls to request the branded Access login modal. */
+export const ACCESS_LOGIN_REQUEST_EVENT = 'cinaseek:access-login-request'
+
+/** Same-origin popup message emitted after Cloudflare Access has created the application session. */
+export const ACCESS_LOGIN_COMPLETE_MESSAGE = 'cinaseek:access-login-complete'
+
+/** Public SPA route loaded in the authentication popup after Access succeeds. */
+export const ACCESS_LOGIN_COMPLETE_PATH = '/auth/complete'
+
 const HOME_DRAFT_KEY = 'cinaseek:home-draft:v1'
 const HOME_DRAFT_MAX_AGE_MS = 60 * 60 * 1000
 const HOME_DRAFT_MAX_LENGTH = 32_000
@@ -56,6 +65,13 @@ export function accessLoginUrl(returnTo = currentReturnTo()): string {
 /** Start CinaAuth sign-in/registration through the Access-protected same-origin login route. */
 export function beginAccessLogin(returnTo?: string): void {
   window.location.assign(accessLoginUrl(returnTo))
+}
+
+/** Ask the public app shell to show its branded login modal without leaving the current page. */
+export function requestAccessLogin(returnTo = currentReturnTo()): void {
+  window.dispatchEvent(new CustomEvent(ACCESS_LOGIN_REQUEST_EVENT, {
+    detail: { returnTo },
+  }))
 }
 
 /** Save a guest's home prompt in tab-scoped storage so it survives the login round trip. */
