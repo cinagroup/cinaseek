@@ -63,7 +63,7 @@ describe("Access login and guest draft", () => {
     expect(currentReturnTo(location)).toBe("/profile?tab=usage#limits");
   });
 
-  it("requests the in-page login modal without navigating the guest page", () => {
+  it("requests the login popup without navigating the guest page", () => {
     const listener = vi.fn<(event: Event) => void>();
     window.addEventListener(ACCESS_LOGIN_REQUEST_EVENT, listener);
     requestAccessLogin("/workspaces");

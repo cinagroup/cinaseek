@@ -9,9 +9,9 @@ import {
   ACCESS_LOGIN_REQUEST_EVENT,
   requestAccessLogin,
 } from '../accessSession'
-import AccessLoginModal from './AccessLoginModal'
+import AccessLoginController from './AccessLoginModal'
 
-describe('AccessLoginModal', () => {
+describe('AccessLoginController', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -27,7 +27,7 @@ describe('AccessLoginModal', () => {
     vi.restoreAllMocks()
   })
 
-  it('opens over the current page and starts Access in a popup', async () => {
+  it('opens Access in a popup immediately without rendering an intermediate dialog', async () => {
     const popup = {
       closed: false,
       close: vi.fn<() => void>(),
@@ -39,7 +39,7 @@ describe('AccessLoginModal', () => {
     const onAuthenticated = vi.fn<(returnTo: string) => void>()
 
     await act(async () => root.render(
-      <AccessLoginModal
+      <AccessLoginController
         openWindow={openWindow}
         onAuthenticated={onAuthenticated}
         createRequestId={() => 'test-request-id'}
@@ -47,11 +47,7 @@ describe('AccessLoginModal', () => {
     ))
     await act(async () => requestAccessLogin('/workspaces'))
 
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull()
-    const continueButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Continue with CinaAuth'))!
-    await act(async () => continueButton.click())
-
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
     expect(openWindow).toHaveBeenCalledWith(
       '/auth/login?returnTo=%2Fauth%2Fcomplete%3Frequest%3Dtest-request-id',
       'cinaseek-access-sign-in',
@@ -76,7 +72,7 @@ describe('AccessLoginModal', () => {
     } as unknown as Window
     const onAuthenticated = vi.fn<(returnTo: string) => void>()
     await act(async () => root.render(
-      <AccessLoginModal
+      <AccessLoginController
         openWindow={() => popup}
         onAuthenticated={onAuthenticated}
         createRequestId={() => 'test-request-id'}
@@ -85,9 +81,6 @@ describe('AccessLoginModal', () => {
     await act(async () => window.dispatchEvent(new CustomEvent(ACCESS_LOGIN_REQUEST_EVENT, {
       detail: { returnTo: '/' },
     })))
-    const continueButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Continue with CinaAuth'))!
-    await act(async () => continueButton.click())
     await act(async () => window.dispatchEvent(new MessageEvent('message', {
       origin: window.location.origin,
       source: window,
@@ -104,21 +97,34 @@ describe('AccessLoginModal', () => {
     } as unknown as Window
     const onAuthenticated = vi.fn<(returnTo: string) => void>()
     await act(async () => root.render(
-      <AccessLoginModal
+      <AccessLoginController
         openWindow={() => popup}
         onAuthenticated={onAuthenticated}
         createRequestId={() => 'test-request-id'}
       />,
     ))
     await act(async () => requestAccessLogin('/'))
-    const continueButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Continue with CinaAuth'))!
-    await act(async () => continueButton.click())
     await act(async () => window.dispatchEvent(new StorageEvent('storage', {
       key: 'cinaseek:access-login-complete:test-request-id',
       newValue: 'complete',
     })))
     expect(onAuthenticated).toHaveBeenCalledWith('/')
     expect(popup.close).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to full-page authentication when the browser blocks the popup', async () => {
+    const onPopupBlocked = vi.fn<(returnTo: string) => void>()
+    await act(async () => root.render(
+      <AccessLoginController
+        openWindow={() => null}
+        onPopupBlocked={onPopupBlocked}
+        createRequestId={() => 'test-request-id'}
+      />,
+    ))
+
+    await act(async () => requestAccessLogin('/profile?tab=usage'))
+
+    expect(onPopupBlocked).toHaveBeenCalledWith('/profile?tab=usage')
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
   })
 })

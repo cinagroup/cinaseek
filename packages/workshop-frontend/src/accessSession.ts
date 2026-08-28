@@ -6,7 +6,7 @@ export type AccessSessionStatus =
   | 'authenticated'
   | 'error'
 
-/** Global event used by guest controls to request the branded Access login modal. */
+/** Global event used by guest controls to request the Access login popup. */
 export const ACCESS_LOGIN_REQUEST_EVENT = 'cinaseek:access-login-request'
 
 /** Same-origin popup message emitted after Cloudflare Access has created the application session. */
@@ -67,7 +67,7 @@ export function beginAccessLogin(returnTo?: string): void {
   window.location.assign(accessLoginUrl(returnTo))
 }
 
-/** Ask the public app shell to show its branded login modal without leaving the current page. */
+/** Ask the public app shell to open Access without leaving the current page. */
 export function requestAccessLogin(returnTo = currentReturnTo()): void {
   window.dispatchEvent(new CustomEvent(ACCESS_LOGIN_REQUEST_EVENT, {
     detail: { returnTo },

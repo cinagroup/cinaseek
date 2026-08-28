@@ -83,16 +83,6 @@ const zhCN: TranslationCatalog = {
     },
   },
   auth: {
-    modal: {
-      close: '关闭登录窗口', title: '登录或注册账户',
-      description: '通过邮箱、通行密钥、GitHub 或 Google 安全地继续使用 CinaAuth。登录期间本页面会保留在后台。',
-      waiting: '正在等待登录…', continue: '使用 CinaAuth 继续', fullPage: '改用完整页面登录',
-      privacy: '身份验证受 Cloudflare Access 保护，CinaSeek 不会读取你的第三方账户密码。',
-    },
-    errors: {
-      popupClosed: '身份验证完成前登录窗口已关闭。',
-      popupBlocked: '浏览器阻止了登录窗口。请允许 CinaSeek 打开弹出式窗口，然后重试。',
-    },
     complete: {
       failedTitle: '登录未完成', successTitle: '登录成功', finishingTitle: '正在完成登录…',
       failedDescription: '请关闭此窗口，然后从 CinaSeek 重试。', successDescription: '你可以关闭此窗口并返回 CinaSeek。',

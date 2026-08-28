@@ -155,19 +155,6 @@ const en = {
     },
   },
   auth: {
-    modal: {
-      close: 'Close sign in',
-      title: 'Sign in or create an account',
-      description: 'Continue securely with CinaAuth using email, passkey, GitHub, or Google. This page will stay open behind the sign-in window.',
-      waiting: 'Waiting for sign in…',
-      continue: 'Continue with CinaAuth',
-      fullPage: 'Use full-page sign in instead',
-      privacy: 'Authentication is protected by Cloudflare Access. CinaSeek never reads your provider password.',
-    },
-    errors: {
-      popupClosed: 'The sign-in window was closed before authentication completed.',
-      popupBlocked: 'Your browser blocked the sign-in window. Allow pop-ups for CinaSeek and try again.',
-    },
     complete: {
       failedTitle: 'Sign in was not completed',
       successTitle: 'Signed in successfully',

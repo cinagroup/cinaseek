@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowSquareOut, ShieldCheck, X } from '@phosphor-icons/react'
+import { ShieldCheck } from '@phosphor-icons/react'
 import {
   ACCESS_LOGIN_COMPLETE_MESSAGE,
   ACCESS_LOGIN_COMPLETE_PATH,
@@ -7,13 +7,9 @@ import {
   accessLoginUrl,
   type AccessSessionStatus,
 } from '../accessSession'
-import SiteLogo from './SiteLogo'
-import { useSiteName } from '../ServerConfigContext'
 import { useTranslation } from '../i18n'
 
 type LoginRequestDetail = { returnTo?: unknown }
-type LoginPhase = 'ready' | 'authenticating' | 'error'
-type LoginError = 'popupClosed' | 'popupBlocked'
 
 const POPUP_WIDTH = 520
 const POPUP_HEIGHT = 760
@@ -60,75 +56,81 @@ function openAuthenticationWindow(url: string, target: string, features: string)
   return window.open(url, target, features)
 }
 
-/** Branded guest sign-in shell that keeps the home page visible while Access runs in a popup. */
-export default function AccessLoginModal({
+function createLoginRequestId(): string {
+  return crypto.randomUUID()
+}
+
+function navigateToAuthentication(returnTo: string): void {
+  window.location.assign(accessLoginUrl(returnTo))
+}
+
+/** Opens Access directly from a guest action and coordinates the popup completion handshake. */
+export default function AccessLoginController({
   onAuthenticated = navigateAfterAuthentication,
   openWindow = openAuthenticationWindow,
-  createRequestId = () => crypto.randomUUID(),
+  createRequestId = createLoginRequestId,
+  onPopupBlocked = navigateToAuthentication,
 }: {
   onAuthenticated?: (returnTo: string) => void
   openWindow?: (url: string, target: string, features: string) => Window | null
   createRequestId?: () => string
+  onPopupBlocked?: (returnTo: string) => void
 }) {
-  const { t } = useTranslation('auth')
-  const siteName = useSiteName()
-  const [returnTo, setReturnTo] = useState('/')
-  const [open, setOpen] = useState(false)
-  const [phase, setPhase] = useState<LoginPhase>('ready')
-  const [error, setError] = useState<LoginError | null>(null)
   const popupRef = useRef<Window | null>(null)
   const requestIdRef = useRef<string | null>(null)
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const returnToRef = useRef('/')
 
-  const close = useCallback(() => {
-    popupRef.current?.close()
-    popupRef.current = null
-    if (requestIdRef.current) {
-      try { localStorage.removeItem(completionStorageKey(requestIdRef.current)) } catch {}
-      requestIdRef.current = null
-    }
-    setOpen(false)
-    setPhase('ready')
-    setError(null)
-  }, [])
-
-  const completeAuthentication = useCallback(() => {
+  const clearAttempt = useCallback((closePopup: boolean) => {
     const popup = popupRef.current
     const requestId = requestIdRef.current
     popupRef.current = null
     requestIdRef.current = null
-    popup?.close()
+    if (closePopup) popup?.close()
     if (requestId) {
       try { localStorage.removeItem(completionStorageKey(requestId)) } catch {}
     }
-    setOpen(false)
+  }, [])
+
+  const completeAuthentication = useCallback(() => {
+    const returnTo = returnToRef.current
+    clearAttempt(true)
     onAuthenticated(returnTo)
-  }, [onAuthenticated, returnTo])
+  }, [clearAttempt, onAuthenticated])
+
+  const startSignIn = useCallback((requestedReturnTo: unknown) => {
+    const returnTo = safeReturnTo(requestedReturnTo)
+    returnToRef.current = returnTo
+
+    if (popupRef.current && !popupRef.current.closed) {
+      popupRef.current.focus()
+      return
+    }
+
+    clearAttempt(false)
+    const requestId = createRequestId()
+    requestIdRef.current = requestId
+    const popup = openWindow(
+      accessLoginUrl(`${ACCESS_LOGIN_COMPLETE_PATH}?request=${encodeURIComponent(requestId)}`),
+      'cinaseek-access-sign-in',
+      popupFeatures(),
+    )
+    if (!popup) {
+      requestIdRef.current = null
+      onPopupBlocked(returnTo)
+      return
+    }
+    popupRef.current = popup
+    popup.focus()
+  }, [clearAttempt, createRequestId, onPopupBlocked, openWindow])
 
   useEffect(() => {
     const handleRequest = (event: Event) => {
       const detail = (event as CustomEvent<LoginRequestDetail>).detail
-      setReturnTo(safeReturnTo(detail?.returnTo))
-      setPhase('ready')
-      setError(null)
-      setOpen(true)
+      startSignIn(detail?.returnTo)
     }
     window.addEventListener(ACCESS_LOGIN_REQUEST_EVENT, handleRequest)
     return () => window.removeEventListener(ACCESS_LOGIN_REQUEST_EVENT, handleRequest)
-  }, [])
-
-  useEffect(() => {
-    if (open) closeButtonRef.current?.focus()
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [close, open])
+  }, [startSignIn])
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -154,121 +156,15 @@ export default function AccessLoginModal({
   }, [completeAuthentication])
 
   useEffect(() => {
-    if (phase !== 'authenticating') return
     const timer = window.setInterval(() => {
-      if (!popupRef.current?.closed) return
-      popupRef.current = null
-      requestIdRef.current = null
-      window.clearInterval(timer)
-      setPhase('error')
-      setError('popupClosed')
+      if (popupRef.current?.closed) clearAttempt(false)
     }, 500)
     return () => window.clearInterval(timer)
-  }, [phase])
+  }, [clearAttempt])
 
-  const startSignIn = useCallback(() => {
-    setError(null)
-    const requestId = createRequestId()
-    requestIdRef.current = requestId
-    const popup = openWindow(
-      accessLoginUrl(`${ACCESS_LOGIN_COMPLETE_PATH}?request=${encodeURIComponent(requestId)}`),
-      'cinaseek-access-sign-in',
-      popupFeatures(),
-    )
-    if (!popup) {
-      requestIdRef.current = null
-      setPhase('error')
-      setError('popupBlocked')
-      return
-    }
-    popupRef.current = popup
-    setPhase('authenticating')
-    popup.focus()
-  }, [createRequestId, openWindow])
+  useEffect(() => () => clearAttempt(true), [clearAttempt])
 
-  if (!open) return null
-
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6">
-      <button
-        type="button"
-        aria-label={t('modal.close')}
-        className="absolute inset-0 cursor-default bg-black/55 backdrop-blur-[3px]"
-        onClick={close}
-      />
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="access-login-title"
-        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-kumo-line bg-kumo-base shadow-2xl"
-      >
-        <div className="flex items-center justify-between border-b border-kumo-line px-5 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-kumo-tint">
-              <SiteLogo size={30}><ShieldCheck size={22} /></SiteLogo>
-            </div>
-            <span className="text-sm font-semibold text-kumo-strong">{siteName}</span>
-          </div>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            onClick={close}
-            aria-label={t('modal.close')}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
-          >
-            <X size={17} />
-          </button>
-        </div>
-
-        <div className="px-6 py-7 sm:px-8 sm:py-8">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-kumo-brand/10 text-kumo-brand">
-            <ShieldCheck size={27} weight="duotone" />
-          </div>
-          <h2 id="access-login-title" className="mt-5 text-center text-xl font-semibold text-kumo-strong">
-            {t('modal.title')}
-          </h2>
-          <p className="mx-auto mt-2 max-w-sm text-center text-sm leading-5 text-kumo-subtle">
-            {t('modal.description')}
-          </p>
-
-          {error ? (
-            <div role="alert" className="mt-5 rounded-xl border border-kumo-danger/25 bg-kumo-danger-tint px-3.5 py-3 text-sm leading-5 text-kumo-danger">
-              {t(`errors.${error}`)}
-            </div>
-          ) : null}
-
-          <button
-            type="button"
-            onClick={startSignIn}
-            disabled={phase === 'authenticating'}
-            className="mt-6 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-kumo-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-wait disabled:opacity-70"
-          >
-            {phase === 'authenticating' ? (
-              <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white" />
-                {t('modal.waiting')}
-              </>
-            ) : (
-              <>
-                {t('modal.continue')}
-                <ArrowSquareOut size={17} />
-              </>
-            )}
-          </button>
-
-          <a
-            href={accessLoginUrl(returnTo)}
-            className="mt-3 block text-center text-xs text-kumo-inactive underline-offset-4 hover:text-kumo-subtle hover:underline"
-          >
-            {t('modal.fullPage')}
-          </a>
-          <p className="mt-5 text-center text-[11px] leading-4 text-kumo-inactive">
-            {t('modal.privacy')}
-          </p>
-        </div>
-      </section>
-    </div>
-  )
+  return null
 }
 
 /** Minimal status surface shown only inside the same-origin Access completion popup. */
