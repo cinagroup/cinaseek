@@ -24,6 +24,8 @@ describe('Vite development proxy', () => {
   it('uses loaded environment values for the proxy and source maps', async () => {
     const resolved = await resolveConfig(config)
     expect(resolved.server?.proxy).toMatchObject({
+      '/auth/login': 'http://backend.from-env.test:9999',
+      '/api/session': 'http://backend.from-env.test:9999',
       '/api/client-errors': 'http://backend.from-env.test:9999',
       '/api/site-logo': 'http://backend.from-env.test:9999',
     })

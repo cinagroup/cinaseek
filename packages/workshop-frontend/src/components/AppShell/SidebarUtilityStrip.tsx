@@ -4,6 +4,8 @@ import { Tooltip } from '@cloudflare/kumo'
 import UserMenu from '../UserMenu'
 import { useTheme } from '../../ThemeContext'
 import type { ThemeMode } from '../../theme'
+import { useOptionalAuthenticatedApi } from '../../AuthContext'
+import { beginAccessLogin } from '../../accessSession'
 
 const THEME_SEQUENCE: ThemeMode[] = ['system', 'light', 'dark']
 
@@ -53,8 +55,23 @@ function StripLink({
   label: string
   children: React.ReactNode
 }) {
+  const auth = useOptionalAuthenticatedApi()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const active = pathname === to
+  if (!auth) {
+    return (
+      <Tooltip content={label}>
+        <button
+          type="button"
+          onClick={() => beginAccessLogin(to)}
+          aria-label={label}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
+        >
+          {children}
+        </button>
+      </Tooltip>
+    )
+  }
   return (
     <Tooltip content={label}>
       <Link

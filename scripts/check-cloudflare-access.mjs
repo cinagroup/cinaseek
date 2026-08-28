@@ -27,6 +27,41 @@ function policyIncludesGroup(policy, groupId) {
       (rule) => ruleType(rule) === "group" && rule.group?.id === groupId);
 }
 
+function applicationDestinationUris(application) {
+  if (Array.isArray(application.destinations) && application.destinations.length > 0) {
+    return application.destinations
+      .map((destination) => typeof destination === "string" ? destination : destination?.uri)
+      .filter((uri) => typeof uri === "string");
+  }
+  return typeof application.domain === "string" ? [application.domain] : [];
+}
+
+function destinationCoversPath(destination, domain, path) {
+  let url;
+  try {
+    url = new URL(destination.includes("://") ? destination : `https://${destination}`);
+  } catch {
+    return false;
+  }
+  if (url.hostname.toLowerCase() !== domain) return false;
+  const destinationPath = url.pathname === "/" ? "/" : url.pathname.replace(/\/$/, "");
+  if (destinationPath === "/") return true;
+  if (destinationPath.endsWith("/*")) {
+    const prefix = destinationPath.slice(0, -2);
+    return path.startsWith(`${prefix}/`);
+  }
+  return destinationPath === path;
+}
+
+/** Finds one Access application whose destinations cover all required protected paths. */
+export function findAccessApplication(applications, domain, requiredPaths = ["/auth/login", "/api"]) {
+  return applications.find((application) => {
+    const destinations = applicationDestinationUris(application);
+    return requiredPaths.every((path) =>
+      destinations.some((destination) => destinationCoversPath(destination, domain, path)));
+  });
+}
+
 /** Evaluates Access API resources without exposing policy subjects or provider credentials. */
 export function evaluateAccessResources({
   domain,
@@ -38,10 +73,13 @@ export function evaluateAccessResources({
   identityProviders,
   policies,
   groups,
+  requiredPaths = ["/auth/login", "/api"],
 }) {
   const failures = [];
-  const app = applications.find((candidate) => candidate.domain === domain);
-  if (!app) return [`No Cloudflare Access application protects ${domain}.`];
+  const app = findAccessApplication(applications, domain, requiredPaths);
+  if (!app) {
+    return [`No single Cloudflare Access application protects ${requiredPaths.join(", ")} on ${domain}.`];
+  }
 
   if (app.type !== "self_hosted") failures.push("The Access application must be self-hosted.");
   if (app.aud !== audience) failures.push("The Access application AUD does not match deployment.");
@@ -193,7 +231,7 @@ async function main() {
   const accountId = await resolveAccountId(token);
   const applications = await cloudflareJson(
       `/accounts/${accountId}/access/apps?per_page=100`, token);
-  const app = applications.find((candidate) => candidate.domain === domain);
+  const app = findAccessApplication(applications, domain);
   const [identityProviders, groups, policies] = await Promise.all([
     cloudflareJson(`/accounts/${accountId}/access/identity_providers?per_page=100`, token),
     cloudflareJson(`/accounts/${accountId}/access/groups?per_page=100`, token),

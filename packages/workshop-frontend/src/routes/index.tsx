@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useKumoToastManager } from "@cloudflare/kumo";
+import { CaretDown, Plug, Plus } from "@phosphor-icons/react";
 import { ChatInput } from "../ChatInterface";
 import MeshBackground from "../components/MeshBackground";
 import HomeTaskSuggestions from "../components/AppShell/HomeTaskSuggestions";
-import { useAuthenticatedApi } from "../AuthContext";
+import { useAuthenticatedApi, useOptionalAuthenticatedApi } from "../AuthContext";
 import { RpcStub } from "capnweb";
 import {
   Overseer,
@@ -20,6 +21,12 @@ import {
 } from "../modelSelection";
 import { useDocumentTitle } from "../useDocumentTitle";
 import { homePromptFromSearch } from "../homePrompt";
+import {
+  beginAccessLogin,
+  consumePendingHomePrompt,
+  peekPendingHomePrompt,
+  savePendingHomePrompt,
+} from "../accessSession";
 
 type HomeSearch = { prompt?: string };
 
@@ -34,7 +41,139 @@ export const Route = createFileRoute("/")({
 // in the AppShell rail, so this page focuses on a single thing: composing the first message of a
 // new gadget — a centered column with a hero, the prompt composer, and a few task suggestions.
 function HomePage() {
-  return <HomePageContent prompt={Route.useSearch().prompt} />;
+  const auth = useOptionalAuthenticatedApi();
+  const prompt = Route.useSearch().prompt;
+  return auth
+    ? <AuthenticatedHomePage prompt={prompt} />
+    : <GuestHomePage prompt={prompt} />;
+}
+
+function AuthenticatedHomePage({ prompt }: HomeSearch) {
+  const [initialPrompt] = useState(() => prompt ?? consumePendingHomePrompt() ?? undefined);
+  return <HomePageContent prompt={initialPrompt} />;
+}
+
+function GuestHomePage({ prompt }: HomeSearch) {
+  useDocumentTitle("Home");
+  const navigate = useNavigate();
+  const [input, setInput] = useState(() => prompt ?? peekPendingHomePrompt() ?? "");
+
+  useEffect(() => {
+    if (!prompt) return;
+    setInput(prompt);
+    savePendingHomePrompt(prompt);
+    navigate({ to: "/", search: {}, replace: true });
+  }, [navigate, prompt]);
+
+  const updateInput = useCallback((value: string) => {
+    setInput(value);
+    savePendingHomePrompt(value);
+  }, []);
+
+  const signIn = useCallback(() => {
+    savePendingHomePrompt(input);
+    beginAccessLogin("/");
+  }, [input]);
+
+  const submit = useCallback((event?: FormEvent) => {
+    event?.preventDefault();
+    if (!input.trim()) return;
+    signIn();
+  }, [input, signIn]);
+
+  return (
+    <div className="relative isolate flex min-h-full w-full flex-col items-center justify-start px-4 pb-16 pt-10 sm:px-8 sm:pt-16 lg:pt-24">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[460px] overflow-hidden"
+        style={{
+          maskImage:
+            "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0) 95%)",
+          WebkitMaskImage:
+            "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0) 95%)",
+        }}
+      >
+        <MeshBackground />
+      </div>
+      <div className="flex w-full max-w-2xl flex-col items-stretch gap-8">
+        <header className="text-center">
+          <h1 className="text-3xl font-semibold tracking-tight leading-tight text-kumo-default sm:text-4xl">
+            What are we working on?
+          </h1>
+          <p className="mx-auto mt-3 max-w-md text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
+            Ask a question, create an output, or create an app that works with your tools and data.
+          </p>
+        </header>
+
+        <form onSubmit={submit} className="px-4 py-4 relative isolate">
+          <div className="themed-prompt-card-shadow relative overflow-visible rounded-2xl border border-kumo-line bg-kumo-control transition-shadow duration-150 ease-out focus-within:ring-2 focus-within:ring-kumo-ring/30">
+            <div className="relative px-4 pb-1 pt-3">
+              <textarea
+                value={input}
+                onChange={(event) => updateInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) submit(event);
+                }}
+                placeholder="Start a new conversation…"
+                autoFocus
+                rows={3}
+                aria-label="Prompt"
+                className="relative z-[1] w-full resize-none border-none bg-transparent p-0 text-[14px] leading-[22px] tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-1.5 px-3 pb-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={signIn}
+                  className="group flex h-8 w-8 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-subtle"
+                  aria-label="Sign in to upload a file"
+                  title="Sign in to upload a file"
+                >
+                  <Plus size={18} />
+                </button>
+                <button
+                  type="button"
+                  onClick={signIn}
+                  className="inline-flex h-8 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-none tracking-[-0.25px] text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-subtle"
+                >
+                  <Plug size={15} className="flex-shrink-0" />
+                  <span>Add resource</span>
+                </button>
+              </div>
+              <div className="ml-auto flex min-w-0 flex-shrink items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={signIn}
+                  aria-label="Sign in to select a model"
+                  className="group inline-flex h-8 min-w-0 max-w-[180px] cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-5 tracking-[-0.25px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
+                >
+                  <span className="min-w-0 truncate">Sign in to choose model</span>
+                  <CaretDown size={12} weight="bold" className="flex-shrink-0 text-kumo-inactive" />
+                </button>
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg bg-kumo-brand text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-30"
+                  aria-label="Sign in and send message"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="12" y1="19" x2="12" y2="5" />
+                    <polyline points="5 12 12 5 19 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <p className="mt-2 text-center text-[12px] leading-4 text-kumo-inactive">
+            Sign in or create an account to use models, files, tools, and private workspaces.
+          </p>
+        </form>
+
+        <HomeTaskSuggestions onPick={updateInput} />
+      </div>
+    </div>
+  );
 }
 
 export function HomePageContent({ prompt }: HomeSearch) {

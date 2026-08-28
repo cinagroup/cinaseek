@@ -13,6 +13,9 @@ import './styles.css'
 import FrontendErrorBoundary from './FrontendErrorBoundary'
 import { installWorkshopErrorReporting, reportIssue } from './errorReporting'
 import { applySiteFavicon, cacheBustSiteLogoUrl } from './siteLogoUtils'
+import { probeAccessSession, type AccessSessionStatus } from './accessSession'
+
+const CF_ACCESS_MODE = import.meta.env.VITE_CF_ACCESS_MODE === 'true'
 
 // ---------------------------------------------------------------------------
 // Dev auto-login: if VITE_DEV_AUTO_LOGIN=true, automatically create/login
@@ -74,11 +77,38 @@ function startConnection(): RpcStub<PublicApi> {
   return newWebSocketRpcSession<PublicApi>(wsUrl);
 }
 
-async function handleBroken(error: any) {
+function notifyConnectionStateChanged() {
+  for (const cb of notifyCurrentStubUpdated) cb()
+}
+
+function openConnection(): RpcStub<PublicApi> {
+  const stub = startConnection()
+  stub.onRpcBroken((error) => handleBroken(stub, error))
+  return stub
+}
+
+async function handleBroken(brokenStub: RpcStub<PublicApi>, error: unknown) {
+  if (currentStub !== brokenStub) return
   console.warn('RPC connection lost:', error);
 
   isConnectionLost = true;
-  for (let cb of notifyCurrentStubUpdated) { cb(); }
+  notifyConnectionStateChanged()
+
+  // A public shell must not reconnect forever after the Access application session expires.
+  // Re-check the protected HTTP endpoint first; a guest transition tears down the RPC state while
+  // a transient probe failure keeps the ordinary reconnect path alive.
+  if (CF_ACCESS_MODE) {
+    const status = await probeAccessSession()
+    if (currentStub !== brokenStub) return
+    if (status === 'guest') {
+      currentStub = null
+      accessSessionStatus = 'guest'
+      isConnectionLost = false
+      notifyConnectionStateChanged()
+      return
+    }
+    if (status === 'authenticated') accessSessionStatus = 'authenticated'
+  }
 
   let timeSinceConnect = Date.now() - lastConnectTime;
   if (timeSinceConnect < backoff) {
@@ -91,20 +121,33 @@ async function handleBroken(error: any) {
     backoff = 1000;
   }
 
-  currentStub = startConnection();
-  currentStub.onRpcBroken(handleBroken);
+  if (currentStub !== brokenStub) return
+  currentStub = openConnection();
 
   // Don't clear isConnectionLost here — the new connection hasn't proven
   // it works yet. It gets cleared by markConnectionRestored() once the
   // app successfully communicates with the backend.
-  for (let cb of notifyCurrentStubUpdated) {
-    cb();
-  }
+  notifyConnectionStateChanged()
 }
 
 // Callbacks to call whenever `currentStub` or connection state is updated.
 let notifyCurrentStubUpdated: Set<() => void> = new Set();
 let isConnectionLost = false;
+let currentStub: RpcStub<PublicApi> | null = null
+let accessSessionStatus: AccessSessionStatus = CF_ACCESS_MODE ? 'checking' : 'not-applicable'
+let accessSessionInitialization: Promise<void> | null = null
+
+function initializeAccessSession(): Promise<void> {
+  if (!CF_ACCESS_MODE) return Promise.resolve()
+  if (accessSessionInitialization) return accessSessionInitialization
+
+  accessSessionInitialization = probeAccessSession().then((status) => {
+    accessSessionStatus = status
+    if (status === 'authenticated' && !currentStub) currentStub = openConnection()
+    notifyConnectionStateChanged()
+  })
+  return accessSessionInitialization
+}
 
 // Called externally (e.g., by auth) to indicate the connection is alive.
 export function markConnectionRestored() {
@@ -115,29 +158,43 @@ export function markConnectionRestored() {
 
 // Current stub. handleBroken() will replace this on disconnect.
 installWorkshopErrorReporting()
-let currentStub = startConnection();
-currentStub.onRpcBroken(handleBroken);
+if (!CF_ACCESS_MODE) currentStub = openConnection()
 
 const router = createRouter()
 applyStoredThemeMode()
 
 function AppWithConnection() {
-  const [rpcState, setRpcState] = useState<{stub: RpcStub<PublicApi>; connectionLost: boolean}>({
+  const [rpcState, setRpcState] = useState<{
+    stub: RpcStub<PublicApi> | null
+    connectionLost: boolean
+    accessSessionStatus: AccessSessionStatus
+  }>({
     stub: currentStub,
     connectionLost: isConnectionLost,
+    accessSessionStatus,
   });
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   const [serverConfigError, setServerConfigError] = useState(false);
 
   useEffect(() => {
-    let cb = () => setRpcState({ stub: currentStub, connectionLost: isConnectionLost });
+    const cb = () => setRpcState({
+      stub: currentStub,
+      connectionLost: isConnectionLost,
+      accessSessionStatus,
+    });
     notifyCurrentStubUpdated.add(cb);
+    void initializeAccessSession()
     return () => { notifyCurrentStubUpdated.delete(cb); };
   }, []);
 
   // Fetch deployment config once the (re)connected stub is available. Re-fetch on reconnect so a
   // server restart with changed config is picked up.
   useEffect(() => {
+    if (!rpcState.stub) {
+      setServerConfig(null)
+      setServerConfigError(false)
+      return
+    }
     let cancelled = false;
     setServerConfigError(false);
     rpcState.stub.getServerConfig()
@@ -186,7 +243,7 @@ const root = createRoot(document.getElementById('root')!, {
 // useAuth checks the token, the user skips the login page. If the backend
 // is unreachable, the app still renders immediately (showing a connection
 // banner or login page) instead of hanging on a blank screen.
-devAutoLogin(currentStub).catch(() => {})
+if (currentStub) devAutoLogin(currentStub).catch(() => {})
 
 root.render(
   <StrictMode>

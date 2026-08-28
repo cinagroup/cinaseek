@@ -21,6 +21,7 @@ import {
   SidebarWorkspacesLists,
 } from './SidebarWorkspaces'
 import SidebarUtilityStrip from './SidebarUtilityStrip'
+import { useOptionalAuthenticatedApi } from '../../AuthContext'
 
 // The persistent left rail. Three pinned regions sandwich a single scrolling region of lists, so
 // the user can always reach Search, primary nav, and the bottom utility strip no matter how many
@@ -40,6 +41,7 @@ export default function Sidebar({
   onToggleCollapsed: () => void
 }) {
   const siteName = useSiteName()
+  const auth = useOptionalAuthenticatedApi()
   // Gatekeeper-served management apps the user can reach now (one per gatekeeper that provides a UI
   // and is connected / enabled for everyone). Disabled or not-yet-connected ones aren't returned, so
   // they simply don't appear. The set is fully dynamic — no gatekeeper is hardcoded.
@@ -75,15 +77,17 @@ export default function Sidebar({
         </Link>
         {!collapsed && (
           <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => openCommandPalette()}
-              aria-label="Search"
-              title="Search (⌘K)"
-              className="press flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
-            >
-              <MagnifyingGlass size={15} />
-            </button>
+            {auth ? (
+              <button
+                type="button"
+                onClick={() => openCommandPalette()}
+                aria-label="Search"
+                title="Search (⌘K)"
+                className="press flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
+              >
+                <MagnifyingGlass size={15} />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onToggleCollapsed}
@@ -110,7 +114,8 @@ export default function Sidebar({
         </button>
       )}
 
-      <SidebarWorkspacesProvider>
+      {auth ? (
+        <SidebarWorkspacesProvider>
         {/* Pinned top stack. shrink-0 keeps it from squishing when the lists below grow. */}
         <div className="flex shrink-0 flex-col gap-3 pt-3">
           {/* Primary nav */}
@@ -120,24 +125,28 @@ export default function Sidebar({
               label="Home"
               icon={<House size={14} weight="regular" />}
               collapsed={collapsed}
+              requiresAuth
             />
             <SidebarItem
               to="/workspaces"
               label="Workspaces"
               icon={<SquaresFour size={14} weight="regular" />}
               collapsed={collapsed}
+              requiresAuth
             />
             <SidebarItem
               to="/blueprints"
               label="Blueprints"
               icon={<Blueprint size={14} weight="regular" />}
               collapsed={collapsed}
+              requiresAuth
             />
             <SidebarItem
               to="/outputs"
               label="Outputs"
               icon={<Stack size={14} weight="regular" />}
               collapsed={collapsed}
+              requiresAuth
             />
             {/* Gatekeeper management apps (e.g. the Context Library), listed dynamically. */}
             {gatekeeperApps.map((app) => {
@@ -183,6 +192,7 @@ export default function Sidebar({
               label="Explore"
               icon={<Compass size={14} weight="regular" />}
               collapsed={collapsed}
+              requiresAuth
             />
           </nav>
 
@@ -195,7 +205,50 @@ export default function Sidebar({
         <div className="sidebar-scroll mt-1 min-h-0 flex-1 overflow-y-auto">
           <SidebarWorkspacesLists collapsed={collapsed} />
         </div>
-      </SidebarWorkspacesProvider>
+        </SidebarWorkspacesProvider>
+      ) : (
+        <>
+          <div className="flex shrink-0 flex-col gap-3 pt-3">
+            <nav className="flex flex-col gap-0.5 px-2">
+              <SidebarItem
+                to="/"
+                label="Home"
+                icon={<House size={14} weight="regular" />}
+                collapsed={collapsed}
+              />
+              <SidebarItem
+                to="/workspaces"
+                label="Workspaces"
+                icon={<SquaresFour size={14} weight="regular" />}
+                collapsed={collapsed}
+                requiresAuth
+              />
+              <SidebarItem
+                to="/blueprints"
+                label="Blueprints"
+                icon={<Blueprint size={14} weight="regular" />}
+                collapsed={collapsed}
+                requiresAuth
+              />
+              <SidebarItem
+                to="/outputs"
+                label="Outputs"
+                icon={<Stack size={14} weight="regular" />}
+                collapsed={collapsed}
+                requiresAuth
+              />
+              <SidebarItem
+                to="/explore"
+                label="Explore"
+                icon={<Compass size={14} weight="regular" />}
+                collapsed={collapsed}
+                requiresAuth
+              />
+            </nav>
+          </div>
+          <div className="min-h-0 flex-1" />
+        </>
+      )}
 
       <SidebarUtilityStrip collapsed={collapsed} />
     </aside>

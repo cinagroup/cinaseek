@@ -1,5 +1,7 @@
 import { Link, useRouterState, type LinkProps } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { useOptionalAuthenticatedApi } from '../../AuthContext'
+import { beginAccessLogin } from '../../accessSession'
 
 // A single nav row in the sidebar. Renders as a TanStack <Link>. Active state is computed from the
 // current router pathname so we can also tint the icon (TanStack's activeProps only swaps top-level
@@ -14,6 +16,8 @@ export type SidebarItemProps = {
   collapsed?: boolean
   /** When true, match this item active when the current path starts with `to`. */
   matchPrefix?: boolean
+  /** Require a real Access navigation when this item is selected by a guest. */
+  requiresAuth?: boolean
 }
 
 export default function SidebarItem({
@@ -24,7 +28,9 @@ export default function SidebarItem({
   trailing,
   collapsed = false,
   matchPrefix = false,
+  requiresAuth = false,
 }: SidebarItemProps) {
+  const auth = useOptionalAuthenticatedApi()
   // Resolve the active path manually so we can style the icon as well as the row. For parameterized
   // routes (e.g. "/gatekeepers/$appId"), substitute the params so the resolved path can match.
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -41,17 +47,14 @@ export default function SidebarItem({
   // Kept loose: the generated route-tree union is stricter than is convenient for a generic row.
   const linkProps = { to, params } as unknown as LinkProps
 
-  return (
-    <Link
-      {...linkProps}
-      title={collapsed ? label : undefined}
-      className={[
+  const className = [
         'group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-[18px] tracking-[-0.25px] transition-colors',
         isActive
           ? 'bg-kumo-fill font-medium text-kumo-strong'
           : 'font-normal text-kumo-default hover:bg-kumo-tint',
-      ].join(' ')}
-    >
+      ].join(' ')
+  const content = (
+    <>
       <span
         className={[
           'flex h-5 w-5 shrink-0 items-center justify-center transition-colors',
@@ -66,6 +69,25 @@ export default function SidebarItem({
           {trailing && <span className="shrink-0 text-kumo-inactive">{trailing}</span>}
         </>
       )}
+    </>
+  )
+
+  if (requiresAuth && !auth) {
+    return (
+      <button
+        type="button"
+        title={collapsed ? label : undefined}
+        className={`${className} w-full text-left`}
+        onClick={() => beginAccessLogin(target || '/')}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <Link {...linkProps} title={collapsed ? label : undefined} className={className}>
+      {content}
     </Link>
   )
 }

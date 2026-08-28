@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { RpcStub } from 'capnweb'
 import { PublicApi, AuthenticatedApi } from '@gadgets/workshop-shared/api'
+import type { AccessSessionStatus } from './accessSession'
 
 const CF_ACCESS_MODE = import.meta.env.VITE_CF_ACCESS_MODE === 'true'
 
@@ -13,7 +14,10 @@ interface AuthState {
 
 export { CF_ACCESS_MODE }
 
-export function useAuth(publicApi: RpcStub<PublicApi>) {
+export function useAuth(
+  publicApi: RpcStub<PublicApi> | null,
+  accessSessionStatus: AccessSessionStatus = publicApi ? 'authenticated' : 'checking',
+) {
   const [authState, setAuthState] = useState<AuthState>({
     token: null,
     authenticatedApi: null,
@@ -31,6 +35,7 @@ export function useAuth(publicApi: RpcStub<PublicApi>) {
     let pendingAccessApi: RpcStub<AuthenticatedApi> | null = null
 
     const authenticateWithCfAccess = async () => {
+      if (!publicApi) return
       setAuthState(prev => {
         prev.authenticatedApi?.[Symbol.dispose]()
         return { token: null, authenticatedApi: null, isLoading: true, error: null }
@@ -70,8 +75,26 @@ export function useAuth(publicApi: RpcStub<PublicApi>) {
     }
 
     if (CF_ACCESS_MODE) {
-      void authenticateWithCfAccess()
+      if (accessSessionStatus === 'authenticated' && publicApi) {
+        void authenticateWithCfAccess()
+      } else {
+        setAuthState(prev => {
+          prev.authenticatedApi?.[Symbol.dispose]()
+          return {
+            token: null,
+            authenticatedApi: null,
+            isLoading: accessSessionStatus === 'checking',
+            error: accessSessionStatus === 'error'
+              ? 'Could not verify the Cloudflare Access session.'
+              : null,
+          }
+        })
+      }
     } else {
+      if (!publicApi) {
+        setAuthState(prev => ({ ...prev, isLoading: false, error: 'RPC connection unavailable.' }))
+        return
+      }
       const storedToken = localStorage.getItem('authToken')
       if (storedToken) {
         authenticateWithToken(storedToken)
@@ -86,9 +109,10 @@ export function useAuth(publicApi: RpcStub<PublicApi>) {
       // updater, so this may double-dispose on reconnect. That's fine — dispose is idempotent.
       authenticatedApiRef.current?.[Symbol.dispose]()
     }
-  }, [publicApi])
+  }, [publicApi, accessSessionStatus])
 
   const authenticateWithToken = (token: string) => {
+    if (!publicApi) return
     setAuthState(prev => {
       // Dispose the previous authenticated API stub if it exists
       if (prev.authenticatedApi) {

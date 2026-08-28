@@ -19,6 +19,8 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       host: true,
       proxy: {
+        '/auth/login': `http://${backendHost}`,
+        '/api/session': `http://${backendHost}`,
         '/api/client-errors': `http://${backendHost}`,
         '/blueprint-screenshot': `http://${backendHost}`,
         '/api/site-logo': `http://${backendHost}`,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateAccessResources } from "./check-cloudflare-access.mjs";
+import { evaluateAccessResources, findAccessApplication } from "./check-cloudflare-access.mjs";
 
 const resources = () => ({
   domain: "cinaseek.ai",
@@ -72,4 +72,26 @@ test("requires named Access groups to be used by an Allow policy", () => {
   input.policies[0].include = [{ email: { email: "admin@example.com" } }];
   const failures = evaluateAccessResources(input);
   assert(failures.some((failure) => failure.includes("is not used")));
+});
+
+test("accepts one application with path-scoped authentication destinations", () => {
+  const input = resources();
+  input.applications[0].domain = "cinaseek.ai/auth/login";
+  input.applications[0].destinations = [
+    { type: "public", uri: "cinaseek.ai/auth/login" },
+    { type: "public", uri: "cinaseek.ai/api" },
+    { type: "public", uri: "cinaseek.ai/api/*" },
+  ];
+  assert.equal(findAccessApplication(input.applications, "cinaseek.ai")?.id, "app-id");
+  assert.deepEqual(evaluateAccessResources(input), []);
+});
+
+test("does not let an API child wildcard stand in for the exact parent", () => {
+  const input = resources();
+  input.applications[0].destinations = [
+    { type: "public", uri: "cinaseek.ai/auth/login" },
+    { type: "public", uri: "cinaseek.ai/api/*" },
+  ];
+  const failures = evaluateAccessResources(input);
+  assert(failures.some((failure) => failure.includes("/api")));
 });

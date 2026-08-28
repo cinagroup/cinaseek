@@ -3,7 +3,7 @@ import { createRootRoute, Outlet, useRouterState } from '@tanstack/react-router'
 import { TooltipProvider, Toasty } from '@cloudflare/kumo'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
-import { useRpcStub, useConnectionLost } from '../RpcContext'
+import { useRpcContext } from '../RpcContext'
 import { markConnectionRestored } from '../main'
 import { useAuth, CF_ACCESS_MODE } from '../useAuth'
 import { AuthProvider } from '../AuthContext'
@@ -13,6 +13,7 @@ import AppShell from '../components/AppShell/AppShell'
 import LoginPage from '../LoginPage'
 import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
+import { beginAccessLogin, currentReturnTo } from '../accessSession'
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -27,9 +28,9 @@ function ConnectionLostBanner() {
 }
 
 function RootComponent() {
-  const rpcStub = useRpcStub()
-  const connectionLost = useConnectionLost()
-  const { isAuthenticated, authenticatedApi, isLoading, error, logout, login } = useAuth(rpcStub)
+  const { stub: rpcStub, connectionLost, accessSessionStatus } = useRpcContext()
+  const { isAuthenticated, authenticatedApi, isLoading, error, logout, login } =
+    useAuth(rpcStub, accessSessionStatus)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
   // When authenticatedApi becomes available, the connection is proven alive.
@@ -44,7 +45,8 @@ function RootComponent() {
   // A standalone (no app shell) render is used only for signed-out visitors of public routes.
   // Signed-in users get the full app chrome so public pages (esp. the blueprint detail) feel
   // native — sidebar and all — instead of floating on a bare page.
-  const standalone = isSignup || (isBlueprint && !isAuthenticated)
+  const standalone = !CF_ACCESS_MODE && (isSignup || (isBlueprint && !isAuthenticated))
+  const publicGuestHome = CF_ACCESS_MODE && pathname === '/' && !isAuthenticated
 
   // The workspace editor renders fullscreen (no app chrome). /gadget/ is the legacy URL, kept
   // here so the chrome doesn't flash in during the redirect to /workspace/.
@@ -58,7 +60,7 @@ function RootComponent() {
   }
 
   // Loading state
-  if (isLoading && !standalone) {
+  if (isLoading && !standalone && !publicGuestHome) {
     return (
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
         {connectionLost && <ConnectionLostBanner />}
@@ -69,7 +71,7 @@ function RootComponent() {
   }
 
   // Auth error
-  if (error && !standalone) {
+  if (error && !standalone && !publicGuestHome) {
     return (
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base p-6">
         <p className="text-sm text-kumo-danger">Authentication error: {error}</p>
@@ -83,18 +85,27 @@ function RootComponent() {
     )
   }
 
-  // CF Access mode: show spinner while pipelined auth resolves
-  if (!isAuthenticated && CF_ACCESS_MODE && !standalone) {
+  // The original home and app chrome are public in Access mode. Capability-bearing components use
+  // the optional auth context and remain unavailable until the protected session probe succeeds.
+  if (publicGuestHome) {
     return (
-      <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
-        <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-kumo-subtle">Authenticating...</p>
-      </div>
+      <TooltipProvider>
+        <Toasty>
+          <AppShell>
+            <Outlet />
+          </AppShell>
+        </Toasty>
+      </TooltipProvider>
     )
   }
 
+  // Direct navigation to a protected SPA route must perform a real document navigation so
+  // Cloudflare Access can challenge it; client-side routing alone would never reach the edge.
+  if (!isAuthenticated && CF_ACCESS_MODE && !standalone) return <AccessLoginRedirect />
+
   // Not authenticated and not a public route — show login
   if (!isAuthenticated && !standalone) {
+    if (!rpcStub) return null
     return <LoginPage rpcStub={rpcStub} onLoginSuccess={handleLoginSuccess} />
   }
 
@@ -129,6 +140,16 @@ function RootComponent() {
         </TooltipProvider>
       </FeatureFlagsProvider>
     </AuthProvider>
+  )
+}
+
+function AccessLoginRedirect() {
+  useEffect(() => beginAccessLogin(currentReturnTo()), [])
+  return (
+    <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
+      <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
+      <p className="text-sm text-kumo-subtle">Opening sign in…</p>
+    </div>
   )
 }
 

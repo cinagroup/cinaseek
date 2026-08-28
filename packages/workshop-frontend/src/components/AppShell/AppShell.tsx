@@ -5,6 +5,7 @@ import TopBarNotice from '../../TopBarNotice'
 import Sidebar from './Sidebar'
 import CommandPalette from './CommandPalette'
 import { OPEN_COMMAND_PALETTE_EVENT } from './commandPaletteBus'
+import { useOptionalAuthenticatedApi } from '../../AuthContext'
 
 const STORAGE_KEY_COLLAPSED = 'gadgets:sidebar-collapsed'
 
@@ -25,6 +26,7 @@ function readCollapsed(): boolean {
 // minimal top bar. We don't try to gracefully shrink the rail at narrow widths; the overlay model
 // is simpler and matches how the rest of the app handles small screens.
 export default function AppShell({ children }: { children: React.ReactNode }) {
+  const auth = useOptionalAuthenticatedApi()
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -116,7 +118,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {auth ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
     </div>
   )
 }

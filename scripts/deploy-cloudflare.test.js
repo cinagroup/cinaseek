@@ -81,7 +81,7 @@ test("verifies the Access edge challenge and RS256 signing keys", async () => {
     fetchImpl,
   });
   assert.deepEqual(requested, [
-    "https://cinaseek.ai/",
+    "https://cinaseek.ai/auth/login",
     "https://cinaseek.ai/api",
     "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/certs",
   ]);

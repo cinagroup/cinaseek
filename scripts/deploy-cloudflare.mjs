@@ -81,7 +81,9 @@ export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
   const normalizedDomain = normalizeDomain(domain);
   const normalizedIssuer = normalizeAccessIssuer(issuer);
 
-  for (const path of ["/", "/api"]) {
+  // The origin page is intentionally public. These are the two authentication chokepoints that
+  // must remain protected before either an RPC connection or post-login redirect reaches origin.
+  for (const path of ["/auth/login", "/api"]) {
     let challenge;
     try {
       challenge = await fetchImpl(`https://${normalizedDomain}${path}`, {
@@ -538,7 +540,8 @@ async function main() {
   });
 
   // Select authentication mode explicitly so an inherited shell value cannot change the build.
-  // Access must already protect the public hostname before an Access-mode build is deployed.
+  // Access must already protect the authentication chokepoints before an Access-mode build is
+  // deployed. The root page may still be whole-host protected during the first staged rollout.
   run(process.execPath, [TYPESCRIPT_CLI], { cwd: frontendDir });
   run(process.execPath, [VITE_CLI, "build"], {
     cwd: frontendDir,

@@ -30,6 +30,7 @@ import {
   type CfAccessIdentity,
   verifyCfAccessJwt,
 } from "./access.js";
+import { handleAccessLoginRequest, handleAccessSessionRequest } from "./access-http.js";
 import { resolveUiFeatureFlags } from "./feature-flags";
 import { serveSiteLogo, SITE_LOGO_PATH } from "./site-logo.js";
 import { createWorkshopLogger } from "./observability";
@@ -792,6 +793,14 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext) {
     let url = new URL(req.url);
+
+    if (url.pathname === "/auth/login") {
+      return handleAccessLoginRequest(req, env);
+    }
+
+    if (url.pathname === "/api/session") {
+      return handleAccessSessionRequest(req, env);
+    }
 
     if (url.pathname === SITE_LOGO_PATH) {
       return serveSiteLogo(req, env.BLUEPRINT_CONTENT);

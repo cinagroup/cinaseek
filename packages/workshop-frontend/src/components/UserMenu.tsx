@@ -1,10 +1,30 @@
 import { useNavigate } from '@tanstack/react-router'
 import { DropdownMenu } from '@cloudflare/kumo'
-import { useAuthenticatedApi } from '../AuthContext'
+import { UserCircle } from '@phosphor-icons/react'
+import { useAuthenticatedApi, useOptionalAuthenticatedApi } from '../AuthContext'
 import { useAvatar } from '../useAvatar'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from './menuStyles'
+import { beginAccessLogin, currentReturnTo } from '../accessSession'
 
 export default function UserMenu() {
+  const auth = useOptionalAuthenticatedApi()
+  if (!auth) {
+    return (
+      <button
+        type="button"
+        onClick={() => beginAccessLogin(currentReturnTo())}
+        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-kumo-tint text-kumo-strong transition-colors hover:bg-kumo-fill"
+        title="Sign in or create an account"
+        aria-label="Sign in or create an account"
+      >
+        <UserCircle size={18} weight="regular" />
+      </button>
+    )
+  }
+  return <AuthenticatedUserMenu />
+}
+
+function AuthenticatedUserMenu() {
   const { authenticatedApi, logout, currentUser, isAdmin } = useAuthenticatedApi()
   const navigate = useNavigate()
 

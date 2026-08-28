@@ -32,6 +32,7 @@ describe("useAuth in Cloudflare Access mode", () => {
 
   async function renderWith(
       authenticatedApi: RpcStub<AuthenticatedApi>,
+      accessSessionStatus: 'checking' | 'guest' | 'authenticated' | 'error' = 'authenticated',
   ): Promise<() => { isLoading: boolean; error: string | null; isAuthenticated: boolean }> {
     vi.stubEnv("VITE_CF_ACCESS_MODE", "true");
     vi.resetModules();
@@ -42,7 +43,7 @@ describe("useAuth in Cloudflare Access mode", () => {
     let current: ReturnType<typeof useAuth> | undefined;
 
     function Probe() {
-      current = useAuth(publicApi);
+      current = useAuth(publicApi, accessSessionStatus);
       return null;
     }
 
@@ -95,5 +96,16 @@ describe("useAuth in Cloudflare Access mode", () => {
       error: "Not authenticated with Access.",
     });
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("renders an ordinary guest without opening an authenticated capability", async () => {
+    const authenticatedApi = {
+      whoami: vi.fn<() => Promise<never>>(),
+      [Symbol.dispose]: vi.fn<() => void>(),
+    } as unknown as RpcStub<AuthenticatedApi>;
+    const current = await renderWith(authenticatedApi, 'guest');
+
+    expect(current()).toMatchObject({ isLoading: false, isAuthenticated: false, error: null });
+    expect(authenticatedApi.whoami).not.toHaveBeenCalled();
   });
 });
