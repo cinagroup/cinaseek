@@ -13,6 +13,7 @@ import {
   slashCommandTokenKey, type ParsedSlashCommandInput,
 } from "./slash-command-input";
 import { loadSlashCommandCatalog, slashCommandKey } from "./slash-command-catalog";
+import { useTranslation } from "../../i18n";
 
 type SlashCommandPopupLayout = {
   left: number;
@@ -69,6 +70,7 @@ export function useSlashCommandPicker({
   // sent to, so starting a new one with it would leave an empty thread and do nothing.
   chatExists: boolean;
 }) {
+  const { t: translate } = useTranslation("slashCommands");
   const [choices, setChoices] = useState<SlashCommandChoice[]>([]);
   const [choicesQuery, setChoicesQuery] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -229,17 +231,17 @@ export function useSlashCommandPicker({
         maxHeight: layout.maxHeight,
       }}
     >
-      <p className={`m-0 shrink-0 px-3.5 pb-1 pt-2.5 ${PICKER_CAPTION}`}>Commands</p>
+      <p className={`m-0 shrink-0 px-3.5 pb-1 pt-2.5 ${PICKER_CAPTION}`}>{translate("title")}</p>
       <div
         ref={listRef}
         id={listboxId}
         role="listbox"
-        aria-label="Slash commands"
+        aria-label={translate("ariaLabel")}
         aria-busy={loading}
         className="sidebar-scroll min-h-0 flex-1 overflow-y-auto"
       >
         {loading && choices.length === 0 ? (
-          <p className={PICKER_EMPTY}>Loading commands…</p>
+          <p className={PICKER_EMPTY}>{translate("loading")}</p>
         ) : choices.length > 0 ? (
           choices.map((choice, optionIndex) => (
             <button
@@ -272,10 +274,10 @@ export function useSlashCommandPicker({
         ) : (
           <p className={PICKER_EMPTY}>
             {error
-              ? `Couldn’t load commands. ${error}`
+              ? translate("loadFailed", { error })
               : query
-                ? "No commands match your search."
-                : "No commands are available."}
+                ? translate("noMatches")
+                : translate("empty")}
           </p>
         )}
       </div>
@@ -299,10 +301,10 @@ export function useSlashCommandPicker({
     setIndex: selectIndex,
     status: open
       ? loading
-        ? "Loading slash commands"
+        ? translate("statusLoading")
         : error
-          ? `Slash commands unavailable: ${error}`
-          : `${choices.length} slash command${choices.length === 1 ? "" : "s"} found`
+          ? translate("statusUnavailable", { error })
+          : translate("statusFound", { count: choices.length })
       : "",
   };
 }

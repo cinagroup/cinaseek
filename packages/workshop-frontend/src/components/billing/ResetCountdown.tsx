@@ -1,17 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from '../../i18n'
 
-// Format the milliseconds remaining until `resetAt` as a compact "Hh Mm Ss" string.
-function formatRemaining(ms: number): string {
-  if (ms <= 0) return '0s'
+function durationParts(ms: number): { hours: number; minutes: number; seconds: number } {
+  if (ms <= 0) return { hours: 0, minutes: 0, seconds: 0 }
   const totalSeconds = Math.floor(ms / 1000)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-  const parts: string[] = []
-  if (hours > 0) parts.push(`${hours}h`)
-  if (hours > 0 || minutes > 0) parts.push(`${minutes}m`)
-  parts.push(`${seconds}s`)
-  return parts.join(' ')
+  return {
+    hours: Math.floor(totalSeconds / 3600),
+    minutes: Math.floor((totalSeconds % 3600) / 60),
+    seconds: totalSeconds % 60,
+  }
 }
 
 // Live-ticking countdown to a reset time (ISO timestamp). Updates once per second. Calls
@@ -24,6 +21,7 @@ export default function ResetCountdown({
   resetAt?: string
   onElapsed?: () => void
 }) {
+  const { t } = useTranslation('settings')
   const [now, setNow] = useState(() => Date.now())
 
   // Keep the latest onElapsed in a ref so the "elapsed" effect can fire it without depending on a
@@ -49,5 +47,13 @@ export default function ResetCountdown({
 
   if (!valid) return null
 
-  return <span className="tabular-nums font-medium">{formatRemaining(remaining)}</span>
+  const duration = durationParts(remaining)
+  const parts: string[] = []
+  if (duration.hours > 0) parts.push(t('billing.duration.hours', { count: duration.hours }))
+  if (duration.hours > 0 || duration.minutes > 0) {
+    parts.push(t('billing.duration.minutes', { count: duration.minutes }))
+  }
+  parts.push(t('billing.duration.seconds', { count: duration.seconds }))
+
+  return <span className="tabular-nums font-medium">{parts.join(' ')}</span>
 }

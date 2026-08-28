@@ -5,6 +5,7 @@ import type { RpcStub } from 'capnweb'
 import type { GadgetClient } from '@gadgets/workshop-shared/api'
 import { WorkshopIconButton } from './components/WorkshopControls'
 import { makeExportFilename, saveStreamToFile } from './fileTransfers'
+import { useTranslation } from './i18n'
 
 type Props = {
   gadget: RpcStub<GadgetClient> | null
@@ -14,6 +15,7 @@ type Props = {
 }
 
 export default function GadgetExportMenu({ gadget, gadgetTitle, chatId, disabled }: Props) {
+  const { t: translate } = useTranslation('gadgetExport')
   const [exporting, setExporting] = useState(false)
   const toasts = useKumoToastManager()
 
@@ -33,17 +35,17 @@ export default function GadgetExportMenu({ gadget, gadgetTitle, chatId, disabled
       )
     } catch (error) {
       console.error('Failed to export Gadget as PDF:', error)
-      toasts.add({ title: 'Failed to export PDF', variant: 'error' })
+      toasts.add({ title: translate('failed'), variant: 'error' })
     } finally {
       setExporting(false)
     }
   }
 
   return (
-    <Tooltip content={exporting ? 'Exporting to PDF' : 'Export to PDF'} asChild>
+    <Tooltip content={exporting ? translate('exporting') : translate('export')} asChild>
       <span className="relative inline-flex">
         <WorkshopIconButton
-          aria-label="Export to PDF"
+          aria-label={translate('export')}
           disabled={disabled || !gadget || exporting}
           onClick={() => { void download() }}
         >

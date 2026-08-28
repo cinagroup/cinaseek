@@ -13,6 +13,7 @@ import {
   parseGatekeeperAppWorkspaceTarget,
   type GatekeeperAppWorkspaceTarget,
 } from './gatekeeperAppNavigation'
+import { useTranslation } from './i18n'
 
 // A receiver, defined by the sandboxed app, that the host calls to push theme changes into the frame.
 interface ThemeReceiver extends RpcTarget {
@@ -215,6 +216,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
   frame: GatekeeperUiFrame,
   gatekeeperVendorId: string,
 }) {
+  const { t: translate } = useTranslation('gatekeeperApp')
   const navigate = useNavigate()
   const { authenticatedApi } = useAuthenticatedApi()
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -359,7 +361,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
       // allow-same-origin (the frame stays an opaque origin), and the app's CSP keeps connect-src 'none'.
       sandbox="allow-scripts allow-modals"
       allow="clipboard-write"
-      title="Gatekeeper app"
+      title={translate('frameTitle')}
       style={iframeStyleForOverlay(overlay)}
     />
   )

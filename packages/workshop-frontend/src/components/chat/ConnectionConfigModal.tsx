@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Dialog, Button, Input } from '@cloudflare/kumo'
 import { X } from '@phosphor-icons/react'
 import type { Connection, ConnectionResource } from '../../data/sample'
+import { useTranslation } from '../../i18n'
 import { logoComponents } from '../ConnectionLogos'
 
 export default function ConnectionConfigModal({
@@ -15,6 +16,7 @@ export default function ConnectionConfigModal({
   onOpenChange: (open: boolean) => void
   onSave?: (resources: ConnectionResource[]) => void
 }) {
+  const { t: translate } = useTranslation('connectionConfig')
   const [resources, setResources] = useState<ConnectionResource[]>(
     connection.resources ?? []
   )
@@ -60,6 +62,7 @@ export default function ConnectionConfigModal({
             render={(props) => (
               <button
                 {...props}
+                aria-label={translate('close')}
                 className="p-1 text-kumo-subtle hover:text-kumo-default rounded-md hover:bg-kumo-tint transition-colors"
               >
                 <X size={14} />
@@ -92,7 +95,7 @@ export default function ConnectionConfigModal({
                 onClick={handleAdd}
                 disabled={!inputValue.trim()}
               >
-                Add
+                {translate('add')}
               </Button>
             </div>
           </div>
@@ -102,7 +105,7 @@ export default function ConnectionConfigModal({
         <div className="max-h-56 overflow-y-auto px-5 pb-4">
           {resources.length === 0 ? (
             <p className="text-sm text-kumo-inactive text-center py-4">
-              No resources added yet
+              {translate('empty')}
             </p>
           ) : (
             <div className="space-y-1">
@@ -116,6 +119,7 @@ export default function ConnectionConfigModal({
                   </span>
                   <button
                     onClick={() => handleRemove(r.id)}
+                    aria-label={translate('remove', { resource: r.label })}
                     className="p-0.5 text-kumo-inactive opacity-0 group-hover:opacity-100 hover:text-kumo-danger rounded transition-all"
                   >
                     <X size={12} />
@@ -131,7 +135,7 @@ export default function ConnectionConfigModal({
           <Dialog.Close
             render={(props) => (
               <Button {...props} variant="outline" size="sm">
-                Cancel
+                {translate('cancel')}
               </Button>
             )}
           />
@@ -143,7 +147,7 @@ export default function ConnectionConfigModal({
               onOpenChange(false)
             }}
           >
-            Save
+            {translate('save')}
           </Button>
         </div>
       </Dialog>

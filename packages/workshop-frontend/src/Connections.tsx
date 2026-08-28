@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useTranslation } from './i18n'
 import { Dialog, Tooltip, useKumoToastManager } from '@cloudflare/kumo'
 import {
   Pencil,
@@ -38,6 +39,7 @@ interface ConnectionsProps {
 // Auto-approval rules live in Activity because they apply across the workspace, while this view is
 // scoped to one gadget.
 export default function Connections({ overseer, gadget, chatId, authenticatedApi, onConnectionsChange, isVisible, onHasGatekeepersChange }: ConnectionsProps) {
+  const { t: translate } = useTranslation('connections')
   const [bindings, setBindings] = useState<GadgetBindingInfo[]>([])
   // Identity of the gadget this tab is showing, needed to offer it to agent spawners.
   const [gadgetInfo, setGadgetInfo] = useState<{ id: WorkpieceId; title: string } | null>(null)
@@ -72,7 +74,7 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
     } catch (err) {
       console.error('Failed to load gatekeepers:', err)
       reportIssue('connections.load', err)
-      toasts.add({ title: 'Failed to load connections', variant: 'error' })
+      toasts.add({ title: translate('loadFailed'), variant: 'error' })
     } finally {
       setLoading(false)
     }
@@ -91,7 +93,10 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
       await loadGatekeepers()
     } catch (err) {
       console.error('Failed to toggle hook:', err)
-      toasts.add({ title: `Failed to ${enabled ? 'enable' : 'disable'} hook`, variant: 'error' })
+      toasts.add({
+        title: translate(enabled ? 'enableHookFailed' : 'disableHookFailed'),
+        variant: 'error',
+      })
       // Revert optimistic update.
       setHooks((prev) => prev.map((h) => (h.id === id ? { ...h, enabled: !enabled } : h)))
     } finally {
@@ -110,7 +115,7 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
       await loadGatekeepers()
     } catch (err) {
       console.error('Failed to delete hook:', err)
-      toasts.add({ title: 'Failed to delete hook', variant: 'error' })
+      toasts.add({ title: translate('deleteHookFailed'), variant: 'error' })
     } finally {
       setDeleteHookTarget(null)
     }
@@ -136,12 +141,12 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
     return [
       {
         target: gadgetInfo.id,
-        targetTitle: `${gadgetInfo.title} (this gadget)`,
+        targetTitle: translate('thisGadget', { title: gadgetInfo.title }),
         name: 'GADGET',
       },
       ...bindings.map((b) => ({ target: b.target, targetTitle: b.resourceTitle, name: b.name })),
     ]
-  }, [gadgetInfo, bindings])
+  }, [gadgetInfo, bindings, translate])
 
   const handleEditStart = (name: string) => {
     setEditingBinding(name)
@@ -151,7 +156,7 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
   const handleEditSave = async (name: string) => {
     const newName = editValue.trim()
     if (!newName) {
-      toasts.add({ title: 'Binding name cannot be empty', variant: 'error' })
+      toasts.add({ title: translate('bindingNameEmpty'), variant: 'error' })
       return
     }
     if (newName === name) {
@@ -165,7 +170,7 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
       onConnectionsChange?.()
     } catch (err) {
       console.error('Failed to rename binding:', err)
-      toasts.add({ title: 'Failed to update binding name', variant: 'error' })
+      toasts.add({ title: translate('renameFailed'), variant: 'error' })
     } finally {
       setEditingBinding(null)
     }
@@ -184,7 +189,7 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
       onConnectionsChange?.()
     } catch (err) {
       console.error('Failed to remove binding:', err)
-      toasts.add({ title: 'Failed to remove connection', variant: 'error' })
+      toasts.add({ title: translate('removeFailed'), variant: 'error' })
     } finally {
       setDeleteTarget(null)
     }
@@ -197,10 +202,10 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h2 className="m-0 text-[17px] leading-6 font-medium tracking-[-0.35px] text-kumo-default">
-                Connections
+                {translate('title')}
               </h2>
               <p className="mt-1 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-                External resources this gadget can use.
+                {translate('description')}
               </p>
             </div>
             <WorkshopButton
@@ -208,19 +213,19 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
               onClick={() => setIsNewConnectionModalVisible(true)}
               className="self-start"
             >
-              Connect resource
+              {translate('connect')}
             </WorkshopButton>
           </div>
 
           {loading ? (
             <div className="rounded-xl border border-kumo-line bg-kumo-base px-4 py-6 text-center text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-              Loading connections...
+              {translate('loading')}
             </div>
           ) : bindings.length === 0 ? (
             <EmptyState
-              title="No connected resources"
-              description="Connect Google Docs, GitHub, Google Sheets, and other services so this gadget can safely use external data."
-              actionLabel="Connect resource"
+              title={translate('emptyTitle')}
+              description={translate('emptyDescription')}
+              actionLabel={translate('connect')}
               onAction={() => setIsNewConnectionModalVisible(true)}
             />
           ) : (
@@ -241,10 +246,10 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
                       <div className="flex flex-wrap items-center gap-3">
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-danger">
-                            Delete {gk.resourceTitle}?
+                            {translate('deleteResourceTitle', { resource: gk.resourceTitle })}
                           </p>
                           <p className="truncate text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
-                            The binding <span className="font-mono">{gk.name}</span> will be removed from this gadget.
+                            {translate('deleteBindingDescription', { name: gk.name })}
                           </p>
                         </div>
                         <WorkshopButton
@@ -252,12 +257,12 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
                           className="min-w-[68px]"
                           onClick={handleDeleteConfirm}
                         >
-                          Delete
+                          {translate('delete')}
                         </WorkshopButton>
                         <WorkshopButton
                           onClick={() => setDeleteTarget(null)}
                         >
-                          Cancel
+                          {translate('cancel')}
                         </WorkshopButton>
                       </div>
                     ) : isEditing ? (
@@ -269,8 +274,8 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
                             if (e.key === 'Enter') handleEditSave(gk.name)
                             if (e.key === 'Escape') handleEditCancel()
                           }}
-                          placeholder="Binding name"
-                          aria-label="Binding name"
+                          placeholder={translate('bindingName')}
+                          aria-label={translate('bindingName')}
                           autoFocus
                           className="min-w-0 flex-1 font-mono"
                         />
@@ -280,12 +285,12 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
                           onClick={() => handleEditSave(gk.name)}
                           disabled={!editValue.trim()}
                         >
-                          Save
+                          {translate('save')}
                         </WorkshopButton>
                         <WorkshopButton
                           onClick={handleEditCancel}
                         >
-                          Cancel
+                          {translate('cancel')}
                         </WorkshopButton>
                       </div>
                     ) : (
@@ -299,41 +304,41 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
                           <p className="flex items-center gap-2 truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
                             <span className="min-w-0 truncate">{gk.resourceTitle}</span>
                             {isPending && (
-                              <Tooltip content="Added in this chat; kept when you accept the chat's changes" asChild>
+                              <Tooltip content={translate('draftDescription')} asChild>
                                 <span className="flex-shrink-0 rounded-full bg-kumo-fill px-1.5 py-0.5 text-[10px] leading-none font-medium text-kumo-subtle">
-                                  Draft
+                                  {translate('draft')}
                                 </span>
                               </Tooltip>
                             )}
                           </p>
                           <p className="mt-0.5 truncate text-[11px] leading-4 tracking-[-0.1px] text-kumo-inactive">
-                            Referenced in code as: <span className="font-mono text-kumo-subtle">{gk.name}</span>
+                            {translate('referencedAs', { name: gk.name })}
                           </p>
                         </div>
                         <div className="ml-auto flex shrink-0 items-center gap-1">
-                          <Tooltip content="Edit name used in code" asChild>
+                          <Tooltip content={translate('editName')} asChild>
                             <WorkshopIconButton
                               onClick={() => handleEditStart(gk.name)}
-                              aria-label="Edit name used in code"
+                              aria-label={translate('editName')}
                             >
                               <Pencil size={14} />
                             </WorkshopIconButton>
                           </Tooltip>
                           {!isPending && (
-                            <Tooltip content="Edit blueprint settings" asChild>
+                            <Tooltip content={translate('editBlueprint')} asChild>
                               <WorkshopIconButton
                                 onClick={() => setAnnotationTarget(gk)}
-                                aria-label="Edit blueprint settings"
+                                aria-label={translate('editBlueprint')}
                               >
                                 <Blueprint size={14} />
                               </WorkshopIconButton>
                             </Tooltip>
                           )}
-                          <Tooltip content="Delete connection" asChild>
+                          <Tooltip content={translate('deleteConnection')} asChild>
                             <WorkshopIconButton
                               danger
                               onClick={() => setDeleteTarget({ name: gk.name, resourceTitle: gk.resourceTitle })}
-                              aria-label="Delete connection"
+                              aria-label={translate('deleteConnection')}
                             >
                               <Trash size={14} />
                             </WorkshopIconButton>
@@ -352,10 +357,10 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
           <section className="mt-8">
             <div className="mb-3">
               <h2 className="m-0 text-[17px] leading-6 font-medium tracking-[-0.35px] text-kumo-default">
-                Hooks
+                {translate('hooksTitle')}
               </h2>
               <p className="mt-1 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-                Callbacks that let connected resources wake up this gadget when events happen.
+                {translate('hooksDescription')}
               </p>
             </div>
 
@@ -373,10 +378,10 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
                       <div className="flex flex-wrap items-center gap-3">
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-danger">
-                            Delete hook "{hook.description.title}"?
+                            {translate('deleteHookTitle', { title: hook.description.title })}
                           </p>
                           <p className="truncate text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
-                            This permanently removes the hook. Future events will stop being delivered.
+                            {translate('deleteHookDescription')}
                           </p>
                         </div>
                         <WorkshopButton
@@ -384,12 +389,12 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
                           className="min-w-[68px]"
                           onClick={handleDeleteHookConfirm}
                         >
-                          Delete
+                          {translate('delete')}
                         </WorkshopButton>
                         <WorkshopButton
                           onClick={() => setDeleteHookTarget(null)}
                         >
-                          Cancel
+                          {translate('cancel')}
                         </WorkshopButton>
                       </div>
                     ) : (
@@ -420,11 +425,11 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
                             disabled={togglingHooks.has(hook.id)}
                             onToggle={(enabled) => handleToggleHook(hook.id, enabled)}
                           />
-                          <Tooltip content="Delete hook" asChild>
+                          <Tooltip content={translate('deleteHook')} asChild>
                             <WorkshopIconButton
                               danger
                               onClick={() => setDeleteHookTarget({ id: hook.id, title: hook.description.title })}
-                              aria-label="Delete hook"
+                              aria-label={translate('deleteHook')}
                             >
                               <Trash size={14} />
                             </WorkshopIconButton>
@@ -451,9 +456,7 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
             const gatekeeperId = await gk.getId()
             await gadget.bindWithSuggestedName(gatekeeperId, chatId)
             toasts.add({
-              title: chatId === undefined
-                ? 'Connection created successfully'
-                : "Connection created — accept the chat's changes to keep it",
+              title: translate(chatId === undefined ? 'created' : 'createdDraft'),
               variant: 'success',
             })
             await loadGatekeepers()
@@ -469,7 +472,7 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
         gadget={gadget}
         onClose={() => setAnnotationTarget(null)}
         onSaved={() => {
-          toasts.add({ title: 'Blueprint settings saved.', variant: 'success' })
+          toasts.add({ title: translate('blueprintSaved'), variant: 'success' })
           setAnnotationTarget(null)
         }}
       />
@@ -489,10 +492,15 @@ function BlueprintAnnotationModal({
   onClose: () => void
   onSaved: () => void
 }) {
+  const { t: translate } = useTranslation('connections')
   const [data, setData] = useState<BindingCardData | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<
+    { message: string } | { translationKey: 'blueprint.notFound' | 'blueprint.loadFailed' } | null
+  >(null)
   const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<
+    { message: string } | { translationKey: 'blueprint.saveFailed' } | null
+  >(null)
 
   useEffect(() => {
     if (!target) {
@@ -509,13 +517,17 @@ function BlueprintAnnotationModal({
           if (loaded) {
             setData(loaded)
           } else {
-            setLoadError('Connection not found.')
+            setLoadError({ translationKey: 'blueprint.notFound' })
           }
         }
       } catch (err: any) {
         if (!cancelled) {
           reportIssue('connections.binding-load', err)
-          setLoadError(err?.message || 'Could not load binding.')
+          setLoadError(
+            err?.message
+              ? { message: err.message }
+              : { translationKey: 'blueprint.loadFailed' },
+          )
         }
       }
     })()
@@ -533,7 +545,9 @@ function BlueprintAnnotationModal({
       onSaved()
     } catch (err: any) {
       reportIssue('connections.binding-save', err)
-      setSaveError(err?.message || 'Could not save.')
+      setSaveError(
+        err?.message ? { message: err.message } : { translationKey: 'blueprint.saveFailed' },
+      )
     } finally {
       setSaving(false)
     }
@@ -548,15 +562,15 @@ function BlueprintAnnotationModal({
           <div className="flex items-start justify-between gap-4 border-b border-kumo-line px-4 py-4 sm:px-5">
             <div className="min-w-0">
               <Dialog.Title className="text-[15px] leading-5 font-medium tracking-[-0.3px] text-kumo-default">
-                Blueprint settings
+                {translate('blueprint.title')}
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
-                How this connection appears in blueprints.
+                {translate('blueprint.description')}
               </Dialog.Description>
             </div>
             <Dialog.Close
               render={(props) => (
-                <WorkshopIconButton {...props} aria-label="Close">
+                <WorkshopIconButton {...props} aria-label={translate('blueprint.close')}>
                   <X size={16} />
                 </WorkshopIconButton>
               )}
@@ -565,9 +579,13 @@ function BlueprintAnnotationModal({
 
           <div className="space-y-4 px-4 py-4 sm:px-5">
             {loadError ? (
-              <div className="text-[13px] text-kumo-subtle">{loadError}</div>
+              <div className="text-[13px] text-kumo-subtle">
+                {'message' in loadError ? loadError.message : translate(loadError.translationKey)}
+              </div>
             ) : !data ? (
-              <div className="py-2 text-center text-[13px] text-kumo-subtle">Loading...</div>
+              <div className="py-2 text-center text-[13px] text-kumo-subtle">
+                {translate('blueprint.loading')}
+              </div>
             ) : (
               <>
                 <BlueprintBindingCard
@@ -584,7 +602,9 @@ function BlueprintAnnotationModal({
             {saveError && (
               <div className="mb-3 flex items-start gap-2 rounded-lg border border-l-2 border-l-kumo-brand border-y-kumo-line border-r-kumo-line bg-kumo-base px-3 py-2 text-[12px] leading-[18px] font-normal tracking-[-0.2px] text-kumo-default">
                 <Warning size={14} weight="fill" className="mt-0.5 shrink-0 text-kumo-brand" />
-                <span>{saveError}</span>
+                <span>
+                  {'message' in saveError ? saveError.message : translate(saveError.translationKey)}
+                </span>
               </div>
             )}
             <div className="flex items-center justify-end gap-2">
@@ -592,14 +612,14 @@ function BlueprintAnnotationModal({
                 onClick={onClose}
                 disabled={saving}
               >
-                Cancel
+                {translate('cancel')}
               </WorkshopButton>
               <WorkshopButton
                 tone="primary"
                 onClick={handleSave}
                 disabled={saving || !data}
               >
-                {saving ? 'Saving...' : 'Save'}
+                {saving ? translate('saving') : translate('save')}
               </WorkshopButton>
             </div>
           </div>

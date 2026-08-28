@@ -14,6 +14,7 @@ import FrontendErrorBoundary from './FrontendErrorBoundary'
 import { installWorkshopErrorReporting, reportIssue } from './errorReporting'
 import { applySiteFavicon, cacheBustSiteLogoUrl } from './siteLogoUtils'
 import { probeAccessSession, type AccessSessionStatus } from './accessSession'
+import { initializeI18n } from './i18n'
 
 const CF_ACCESS_MODE = import.meta.env.VITE_CF_ACCESS_MODE === 'true'
 
@@ -245,10 +246,20 @@ const root = createRoot(document.getElementById('root')!, {
 // banner or login page) instead of hanging on a blank screen.
 if (currentStub) devAutoLogin(currentStub).catch(() => {})
 
-root.render(
-  <StrictMode>
-    <FrontendErrorBoundary>
-      <AppWithConnection />
-    </FrontendErrorBoundary>
-  </StrictMode>
-)
+function renderApplication() {
+  root.render(
+    <StrictMode>
+      <FrontendErrorBoundary>
+        <AppWithConnection />
+      </FrontendErrorBoundary>
+    </StrictMode>
+  )
+}
+
+// Resolve and load the selected catalog before the first paint, preventing an English-to-localized
+// flash. English is bundled as the reliable fallback; non-default catalogs are split by Vite.
+initializeI18n()
+  .catch((error) => reportIssue('workshop.i18n.initialize', error, {
+    handled: true, severity: 'warning', captureMechanism: 'explicit',
+  }))
+  .finally(renderApplication)

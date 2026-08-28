@@ -21,6 +21,7 @@ export type RenderArgs = {
   /** View zone IDs from the previous render; will be removed before adding new ones. */
   previousViewZoneIds: readonly string[]
   onExpandDeletion: (deletionKey: string) => void
+  showHiddenDeletedLines: (count: number) => string
 }
 
 /**
@@ -36,6 +37,7 @@ export function renderDiffLayer({
   decorationCollection,
   previousViewZoneIds,
   onExpandDeletion,
+  showHiddenDeletedLines,
 }: RenderArgs): string[] {
   const editorModel = ed.getModel()
   if (!editorModel) return []
@@ -96,6 +98,7 @@ export function renderDiffLayer({
         run,
         expanded: expandedDeletions.has(run.key),
         onExpand: () => onExpandDeletion(run.key),
+        showHiddenDeletedLines,
       })
       // Anchor before the change run's added lines (or before the next line
       // for pure deletions).
@@ -291,10 +294,12 @@ function createDeletionZoneNodes({
   run,
   expanded,
   onExpand,
+  showHiddenDeletedLines,
 }: {
   run: ChangeRun
   expanded: boolean
   onExpand: () => void
+  showHiddenDeletedLines: (count: number) => string
 }) {
   const margin = document.createElement('div')
   margin.className = 'gadgets-deleted-margin'
@@ -345,7 +350,7 @@ function createDeletionZoneNodes({
       button.type = 'button'
       button.className = 'gadgets-deleted-code-row gadgets-deleted-omitted-row'
       const hidden = total - 2 * DELETED_HEAD_TAIL
-      button.textContent = `Show ${hidden} hidden deleted line${hidden === 1 ? '' : 's'}`
+      button.textContent = showHiddenDeletedLines(hidden)
       button.addEventListener("click", onExpand)
       code.append(button)
     }

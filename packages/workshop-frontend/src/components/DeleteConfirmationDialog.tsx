@@ -1,6 +1,7 @@
 import { Dialog } from '@cloudflare/kumo'
 import { X } from '@phosphor-icons/react'
 import type { ReactNode } from 'react'
+import { useTranslation } from '../i18n'
 import { WorkshopButton, WorkshopIconButton } from './WorkshopControls'
 
 interface DeleteConfirmationDialogProps {
@@ -8,9 +9,9 @@ interface DeleteConfirmationDialogProps {
   title: string
   description: ReactNode
   isDeleting?: boolean
-  /** Label for the confirm button (defaults to "Delete"). */
+  /** Label for the confirm button (defaults to the localized delete action). */
   confirmLabel?: string
-  /** Label for the confirm button while the action runs (defaults to "Deleting..."). */
+  /** Label for the confirm button while the action runs (defaults to the localized deleting state). */
   confirmingLabel?: string
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
@@ -21,11 +22,14 @@ export default function DeleteConfirmationDialog({
   title,
   description,
   isDeleting = false,
-  confirmLabel = 'Delete',
-  confirmingLabel = 'Deleting...',
+  confirmLabel,
+  confirmingLabel,
   onOpenChange,
   onConfirm,
 }: DeleteConfirmationDialogProps) {
+  const { t } = useTranslation('common')
+  const resolvedConfirmLabel = confirmLabel ?? t('actions.delete')
+  const resolvedConfirmingLabel = confirmingLabel ?? t('actions.deleting')
   return (
     <Dialog.Root
       open={open}
@@ -52,7 +56,7 @@ export default function DeleteConfirmationDialog({
                 {...props}
                 className="!h-7 !w-7"
                 disabled={isDeleting}
-                aria-label="Close"
+                aria-label={t('actions.close')}
               >
                 <X size={16} />
               </WorkshopIconButton>
@@ -68,7 +72,7 @@ export default function DeleteConfirmationDialog({
                 className="!h-9"
                 disabled={isDeleting}
               >
-                Cancel
+                {t('actions.cancel')}
               </WorkshopButton>
             )}
           />
@@ -78,7 +82,7 @@ export default function DeleteConfirmationDialog({
             disabled={isDeleting}
             className="!h-9 min-w-[64px]"
           >
-            {isDeleting ? confirmingLabel : confirmLabel}
+            {isDeleting ? resolvedConfirmingLabel : resolvedConfirmLabel}
           </WorkshopButton>
         </div>
       </Dialog>

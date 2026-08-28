@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from './i18n'
 import { Dialog, Button, Input, Select, SensitiveInput, Collapsible, useKumoToastManager } from '@cloudflare/kumo'
 import { AiChatAuthorInfo, AiModelConfig, AiModelProvider, AiGatewayInfo, SUGGESTED_MODELS } from '@gadgets/workshop-shared/api'
 import { RpcStub } from 'capnweb'
@@ -96,6 +97,7 @@ function buildOptions(gatewayMode: boolean, enabledProviders: Set<string> | null
 }
 
 export default function AddModelModal({ visible, onCancel, onSuccess, authenticatedApi, aiConfig }: AddModelModalProps) {
+  const { t } = useTranslation('providers')
   const toasts = useKumoToastManager()
 
   const [loading, setLoading] = useState(false)
@@ -157,12 +159,12 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     const newErrors: Record<string, string> = {}
 
     if (!selection) {
-      newErrors.selection = gatewayMode ? 'Please select a provider' : 'Please select a model'
+      newErrors.selection = gatewayMode ? t('addDialog.errors.selectProvider') : t('addDialog.errors.selectModel')
     }
 
     if (selection?.type === 'custom') {
-      if (!modelId.trim()) newErrors.modelId = 'Please enter the model ID'
-      if (!displayName.trim()) newErrors.displayName = 'Please enter a display name'
+      if (!modelId.trim()) newErrors.modelId = t('addDialog.errors.modelId')
+      if (!displayName.trim()) newErrors.displayName = t('addDialog.errors.displayName')
     }
 
     const isOllama = selection?.provider === 'ollama'
@@ -171,19 +173,19 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     const showCredentials = !gatewayMode
 
     if (showCredentials && selection && !isOllama && !isOpenAiCompatible && !apiToken.trim()) {
-      newErrors.apiToken = 'Please enter your API token'
+      newErrors.apiToken = t('addDialog.errors.apiToken')
     }
 
     if (showCredentials && isCloudflare && !accountId.trim()) {
-      newErrors.accountId = 'Please enter your Cloudflare account ID'
+      newErrors.accountId = t('addDialog.errors.accountId')
     }
 
     if (((showCredentials && isOllama) || isOpenAiCompatible) && !apiUrl.trim()) {
       newErrors.apiUrl = isOllama
-        ? 'Please enter the Ollama API URL'
+        ? t('addDialog.errors.ollamaUrl')
         : gatewayMode
-        ? 'Please enter the AI Gateway Custom Provider path'
-        : 'Please enter the OpenAI-compatible API URL'
+        ? t('addDialog.errors.gatewayPath')
+        : t('addDialog.errors.compatibleUrl')
     }
 
     setErrors(newErrors)
@@ -216,17 +218,20 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       }
 
       await authenticatedApi.addModel(profile, config)
-      toasts.add({ title: 'AI model added successfully', variant: 'success' })
+      toasts.add({ title: t('addDialog.added'), variant: 'success' })
       onSuccess()
     } catch (error: any) {
       console.error('Failed to add model:', error)
-      toasts.add({ title: 'Failed to add model', variant: 'error' })
+      toasts.add({ title: t('addDialog.addFailed'), variant: 'error' })
     } finally {
       setLoading(false)
     }
   }
 
-  const options = buildOptions(gatewayMode, enabledProviders)
+  const options = buildOptions(gatewayMode, enabledProviders).map((option) =>
+    option.value.startsWith('other-')
+      ? { ...option, label: t('addDialog.otherProvider', { provider: PROVIDER_LABELS[option.provider as AiModelProvider] || option.provider }) }
+      : option)
   const showCustomFields = selection?.type === 'custom'
   const example = selection ? exampleModel(selection.provider) : null
   const isOllama = selection?.provider === 'ollama'
@@ -249,15 +254,15 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     <Dialog.Root open={visible} onOpenChange={(open) => { if (!open) onCancel() }}>
       <Dialog className="p-6" size="lg">
         <Dialog.Title className="text-lg font-semibold mb-4">
-          Add AI Model
+          {t('addDialog.title')}
         </Dialog.Title>
 
         <div className="space-y-4">
           {/* Model / Provider selection */}
           <Select
-            label={gatewayMode ? 'Select Provider' : 'Select Model'}
+            label={gatewayMode ? t('addDialog.selectProvider') : t('addDialog.selectModel')}
             className="w-full text-sm"
-            placeholder={gatewayMode ? 'Choose a provider...' : 'Choose an AI model...'}
+            placeholder={gatewayMode ? t('addDialog.chooseProvider') : t('addDialog.chooseModel')}
             value={selectValue}
             onValueChange={(v) => handleModelSelect(v as string)}
             error={errors.selection}
@@ -287,9 +292,9 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
           {showCustomFields && (
             <>
               <Input
-                label="Model ID"
+                label={t('addDialog.modelId')}
                 placeholder={`e.g., ${example!.modelId}`}
-                description={`The model identifier as specified by the provider (e.g., '${example!.modelId}')`}
+                description={t('addDialog.modelIdDescription', { example: example!.modelId })}
                 value={modelId}
                 onChange={(e) => { setModelId(e.target.value); setErrors(prev => ({ ...prev, modelId: '' })) }}
                 error={errors.modelId}
@@ -297,9 +302,9 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
               />
 
               <Input
-                label="Display Name"
+                label={t('addDialog.displayName')}
                 placeholder={`e.g., ${example!.name}`}
-                description="Human-readable name shown in the UI"
+                description={t('addDialog.displayNameDescription')}
                 value={displayName}
                 onChange={(e) => { setDisplayName(e.target.value); setErrors(prev => ({ ...prev, displayName: '' })) }}
                 error={errors.displayName}
@@ -311,9 +316,9 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
           {/* Cloudflare account ID (the Workers AI REST endpoint is account-scoped) */}
           {showCredentials && isCloudflare && (
             <Input
-              label="Cloudflare Account ID"
+              label={t('addDialog.accountId')}
               placeholder="e.g., 0123456789abcdef0123456789abcdef"
-              description="The Cloudflare account to bill for Workers AI usage"
+              description={t('addDialog.accountIdDescription')}
               value={accountId}
               onChange={(e) => { setAccountId(e.target.value); setErrors(prev => ({ ...prev, accountId: '' })) }}
               error={errors.accountId}
@@ -324,16 +329,16 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
           {/* API Token */}
           {showCredentials && selection && (
             <SensitiveInput
-              label="API Token"
+              label={t('addDialog.apiToken')}
               placeholder={API_TOKEN_PLACEHOLDERS[selection.provider]}
               description={
                 isOllama
-                  ? 'Optional for local Ollama access'
+                  ? t('addDialog.apiTokenOllama')
                   : isOpenAiCompatible
-                  ? 'Optional bearer token for this endpoint'
+                  ? t('addDialog.apiTokenCompatible')
                   : isCloudflare
-                  ? 'An API token with Workers AI Read + Edit permissions (in the dashboard: Workers AI > Use REST API > Create a Workers AI API Token)'
-                  : `Your ${PROVIDER_LABELS[selection.provider]} API token for billing`
+                  ? t('addDialog.apiTokenCloudflare')
+                  : t('addDialog.apiTokenProvider', { provider: PROVIDER_LABELS[selection.provider] })
               }
               value={apiToken}
               onValueChange={(v) => { setApiToken(v); setErrors(prev => ({ ...prev, apiToken: '' })) }}
@@ -345,17 +350,17 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
           {/* Direct endpoint URL, or the deployment Gateway's Custom Provider route. */}
           {((showCredentials && isOllama) || isOpenAiCompatible) && (
             <Input
-              label={isOpenAiCompatible && gatewayMode ? 'Gateway Provider Path' : 'API URL'}
+              label={isOpenAiCompatible && gatewayMode ? t('addDialog.gatewayProviderPath') : t('addDialog.apiUrl')}
               placeholder={isOllama
                 ? 'http://localhost:11434'
                 : gatewayMode
                 ? 'custom-my-provider/v1'
                 : 'https://api.example.com/v1'}
               description={isOllama
-                ? 'URL of your Ollama server'
+                ? t('addDialog.ollamaUrlDescription')
                 : gatewayMode
-                ? 'Path to a Cloudflare Custom Provider and its API version; CinaSeek adds /chat/completions'
-                : 'Base URL of an OpenAI Chat Completions-compatible API; include its version path'}
+                ? t('addDialog.gatewayPathDescription')
+                : t('addDialog.compatibleUrlDescription')}
               value={apiUrl}
               onChange={(e) => { setApiUrl(e.target.value); setErrors(prev => ({ ...prev, apiUrl: '' })) }}
               error={errors.apiUrl}
@@ -369,12 +374,12 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
               open={advancedOpen}
               onOpenChange={setAdvancedOpen}
             >
-              <Collapsible.DefaultTrigger>Advanced Settings</Collapsible.DefaultTrigger>
+              <Collapsible.DefaultTrigger>{t('addDialog.advanced')}</Collapsible.DefaultTrigger>
               <Collapsible.DefaultPanel>
                 <Input
-                  label="API URL"
+                  label={t('addDialog.apiUrl')}
                   placeholder="https://..."
-                  description="Override the default API endpoint (useful for proxies like Cloudflare AI Gateway)"
+                  description={t('addDialog.overrideUrlDescription')}
                   value={apiUrl}
                   onChange={(e) => setApiUrl(e.target.value)}
                 />
@@ -387,7 +392,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
         <div className="mt-6 flex justify-end gap-2">
           <Dialog.Close render={(props) => (
             <Button variant="secondary" {...props} disabled={loading}>
-              Cancel
+              {t('addDialog.cancel')}
             </Button>
           )} />
           <Button
@@ -396,7 +401,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
             loading={loading}
             disabled={!selection}
           >
-            Add Model
+            {t('addDialog.submit')}
           </Button>
         </div>
       </Dialog>

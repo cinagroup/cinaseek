@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
 import { useAuthenticatedApi } from './AuthContext'
 import SandboxedGatekeeperApp from './SandboxedGatekeeperApp'
 import { reportIssue } from './errorReporting'
+import { useTranslation } from './i18n'
 
 // The frame's `ui` is an RPC stub at runtime; dispose it to release the server-side capability.
 function disposeFrame(frame: GatekeeperUiFrame | null) {
@@ -12,6 +13,9 @@ function disposeFrame(frame: GatekeeperUiFrame | null) {
 // Renders a gatekeeper's full-page management app (a sandboxed SPA the gatekeeper serves).
 // Fetches the app frame (iframe HTML + `ui` capability) from the backend and hosts it.
 export default function GatekeeperAppPage({ appId }: { appId: string }) {
+  const { t: translate } = useTranslation('gatekeeperApp')
+  const translateRef = useRef(translate)
+  translateRef.current = translate
   const { authenticatedApi } = useAuthenticatedApi()
   // Wrap the frame in an object: it holds a `ui` RPC stub, and we never want useState's setter to
   // treat a stored value as an updater function.
@@ -25,7 +29,7 @@ export default function GatekeeperAppPage({ appId }: { appId: string }) {
       .getGatekeeperApp(appId)
       .then((frame) => {
         if (!frame) {
-          if (!cancelled) setError('This app is not available on this deployment.')
+          if (!cancelled) setError(translateRef.current('unavailable'))
           return
         }
         if (cancelled) {
@@ -54,7 +58,7 @@ export default function GatekeeperAppPage({ appId }: { appId: string }) {
     )
   }
   if (!state) {
-    return <div className="px-4 py-16 text-center text-sm text-kumo-subtle">Loading…</div>
+    return <div className="px-4 py-16 text-center text-sm text-kumo-subtle">{translate('loading')}</div>
   }
 
   // Fill the viewport below the header so the embedded app can manage its own internal layout.

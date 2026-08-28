@@ -6,6 +6,8 @@ import { useTheme } from '../../ThemeContext'
 import type { ThemeMode } from '../../theme'
 import { useOptionalAuthenticatedApi } from '../../AuthContext'
 import { requestAccessLogin } from '../../accessSession'
+import { LanguageMenu } from '../../i18n/LanguageSwitcher'
+import { useTranslation } from '../../i18n'
 
 const THEME_SEQUENCE: ThemeMode[] = ['system', 'light', 'dark']
 
@@ -14,19 +16,22 @@ function nextThemeMode(mode: ThemeMode): ThemeMode {
 }
 
 function ThemeModeButton() {
+  const { t } = useTranslation('shell')
   const { themeMode, resolvedThemeMode, setThemeMode } = useTheme()
-  const label = themeMode === 'system'
-    ? `Theme: system (${resolvedThemeMode})`
-    : `Theme: ${themeMode}`
   const nextMode = nextThemeMode(themeMode)
+  const resolvedLabel = resolvedThemeMode === 'dark' ? t('theme.dark') : t('theme.light')
+  const modeLabel = (mode: ThemeMode) => mode === 'system'
+    ? t('theme.system', { resolved: resolvedLabel })
+    : mode === 'dark' ? t('theme.dark') : t('theme.light')
+  const label = t('theme.control', { current: modeLabel(themeMode), next: modeLabel(nextMode) })
 
   return (
     <Tooltip
-      content={`${label}. Switch to ${nextMode}.`}
+      content={label}
       render={(
         <button
           type="button"
-          aria-label={`${label}. Switch to ${nextMode}.`}
+          aria-label={label}
           onClick={() => setThemeMode(nextMode)}
           className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring focus-visible:ring-offset-2 focus-visible:ring-offset-kumo-elevated"
         >
@@ -60,21 +65,23 @@ function StripLink({
   const active = pathname === to
   if (!auth) {
     return (
-      <Tooltip content={label}>
-        <button
+      <Tooltip
+        content={label}
+        render={<button
           type="button"
           onClick={() => requestAccessLogin(to)}
           aria-label={label}
           className="flex h-8 w-8 items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
         >
           {children}
-        </button>
-      </Tooltip>
+        </button>}
+      />
     )
   }
   return (
-    <Tooltip content={label}>
-      <Link
+    <Tooltip
+      content={label}
+      render={<Link
         to={to}
         aria-label={label}
         className={[
@@ -85,12 +92,13 @@ function StripLink({
         ].join(' ')}
       >
         {children}
-      </Link>
-    </Tooltip>
+      </Link>}
+    />
   )
 }
 
 export default function SidebarUtilityStrip({ collapsed = false }: { collapsed?: boolean }) {
+  const { t } = useTranslation('shell')
   return (
     <div
       className={[
@@ -100,10 +108,11 @@ export default function SidebarUtilityStrip({ collapsed = false }: { collapsed?:
         collapsed ? 'flex-col justify-center gap-2 px-1.5' : '',
       ].join(' ')}
     >
-      <StripLink to="/gatekeepers" label="Gatekeepers">
+      <StripLink to="/gatekeepers" label={t('nav.gatekeepers')}>
         <Plug size={15} />
       </StripLink>
       <div className={collapsed ? 'flex flex-col items-center gap-2' : 'ml-auto flex items-center gap-1'}>
+        <LanguageMenu />
         <ThemeModeButton />
         <UserMenu />
       </div>

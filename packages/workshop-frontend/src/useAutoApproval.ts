@@ -3,6 +3,7 @@ import { useKumoToastManager } from '@cloudflare/kumo'
 import type { RpcStub } from 'capnweb'
 import type { Overseer, PreApprovableAction } from '@gadgets/workshop-shared/api'
 import type { ActionKind } from '@gadgets/workshop-shared/gatekeeper'
+import { useTranslation } from './i18n'
 
 export interface AutoApprovalEntry {
   gatekeeperId: number
@@ -19,6 +20,9 @@ export function autoApprovalKey(entry: { gatekeeperId: number; actionKind: Actio
 }
 
 export function useAutoApproval(overseer: RpcStub<Overseer> | null) {
+  const { t: translate } = useTranslation('actionHooks')
+  const translateRef = useRef(translate)
+  translateRef.current = translate
   const toasts = useKumoToastManager()
   const [catalog, setCatalog] = useState<PreApprovableAction[]>([])
   const [rules, setRules] = useState<Array<{ gatekeeperId: number; actionKind: ActionKind }>>([])
@@ -114,7 +118,7 @@ export function useAutoApproval(overseer: RpcStub<Overseer> | null) {
     } catch (err) {
       console.error('Failed to update auto-approval rule:', err)
       toasts.add({
-        title: `Failed to ${enabled ? 'enable' : 'disable'} auto-approval`,
+        title: translateRef.current(enabled ? 'enableAutoApprovalFailed' : 'disableAutoApprovalFailed'),
         variant: 'error',
       })
     } finally {

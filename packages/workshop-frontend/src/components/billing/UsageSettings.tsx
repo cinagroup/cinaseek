@@ -7,13 +7,16 @@ import { useAuthenticatedApi } from '../../AuthContext'
 import { useCloudflareLimitsEnabled } from '../../ServerConfigContext'
 import { buildAddCreditsUrl } from './creditsUrl'
 import ResetCountdown from './ResetCountdown'
+import { useTranslation } from '../../i18n'
+import { formatNumber } from '../../i18n/format'
 
 // Shows the user's free-tier usage and Cloudflare connection / credit status on the profile page.
 // Renders nothing unless the Cloudflare limits flow is enabled server-side.
 export default function UsageSettings() {
+  const { t } = useTranslation('settings')
   const limitsEnabled = useCloudflareLimitsEnabled()
   const { authenticatedApi } = useAuthenticatedApi()
-  const toasts = useKumoToastManager()
+  const { add: addToast } = useKumoToastManager()
   const [usage, setUsage] = useState<CloudflareUsageInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -61,7 +64,7 @@ export default function UsageSettings() {
       const { url } = await authenticatedApi.connectAccount('cloudflare')
       window.open(url, '_blank', 'noopener,noreferrer')
     } catch {
-      toasts.add({ title: 'Failed to start Cloudflare connection', variant: 'error' })
+      addToast({ title: t('billing.connectFailed'), variant: 'error' })
     } finally {
       setBusy(false)
     }
@@ -71,12 +74,12 @@ export default function UsageSettings() {
     setSelecting(accountId)
     try {
       await authenticatedApi.selectCloudflareAccount(accountId)
-      toasts.add({ title: 'Cloudflare account selected', variant: 'success' })
+      addToast({ title: t('billing.accountSelected'), variant: 'success' })
       setAccounts(null)
       refresh()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to select account'
-      toasts.add({ title: msg, variant: 'error' })
+      console.error('Failed to select Cloudflare account:', err)
+      addToast({ title: t('billing.accountSelectionFailed'), variant: 'error' })
     } finally {
       setSelecting(null)
     }
@@ -85,46 +88,46 @@ export default function UsageSettings() {
   return (
     <section className="flex flex-col gap-3">
       <h2 className="px-1 text-[12px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
-        Usage &amp; billing
+        {t('billing.section')}
       </h2>
       <div className="rounded-xl border border-kumo-line bg-kumo-base p-5">
       {loading || !usage ? (
-        <p className="text-sm text-kumo-subtle">Loading usage…</p>
+        <p className="text-sm text-kumo-subtle">{t('billing.loading')}</p>
       ) : (
         <div className="space-y-6">
           {/* Free daily allowance */}
           <div>
-            <p className="text-xs font-medium text-kumo-subtle mb-1">Free daily allowance</p>
+            <p className="text-xs font-medium text-kumo-subtle mb-1">{t('billing.allowance')}</p>
             <p className="text-sm text-kumo-default">
-              {usage.remaining} of {usage.dailyLimit}{' '}
-              {usage.dailyLimit === 1 ? 'request' : 'requests'} remaining today
+              {t('billing.remaining', {
+                count: usage.dailyLimit,
+                remaining: formatNumber(usage.remaining),
+                limit: formatNumber(usage.dailyLimit),
+              })}
             </p>
             {usage.resetAt && (
               <p className="text-xs text-kumo-subtle mt-1">
-                Resets at 00:00 UTC, in{' '}
-                <ResetCountdown resetAt={usage.resetAt} onElapsed={refresh} />.
+                {t('billing.resetBefore')}<ResetCountdown resetAt={usage.resetAt} onElapsed={refresh} />{t('billing.resetAfter')}
               </p>
             )}
           </div>
 
           {/* Cloudflare connection / credits */}
           <div>
-            <p className="text-xs font-medium text-kumo-subtle mb-1">Cloudflare account</p>
+            <p className="text-xs font-medium text-kumo-subtle mb-1">{t('billing.cloudflareAccount')}</p>
             {!usage.connected ? (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm text-kumo-subtle">
                   <CloudflareLogo size={16} />
-                  <span>Not connected</span>
+                  <span>{t('billing.notConnected')}</span>
                 </div>
                 <p className="text-sm text-kumo-subtle">
-                  Connect your Cloudflare account to keep building once your free allowance runs
-                  out. Usage beyond the free tier is billed to your own Cloudflare AI Gateway
-                  credits.
+                  {t('billing.connectDescription')}
                 </p>
                 <div className="pt-1">
                   <Button variant="primary" size="sm" onClick={connect} loading={busy}>
                     <Lightning size={14} weight="bold" className="mr-1" />
-                    Connect Cloudflare
+                    {t('billing.connect')}
                   </Button>
                 </div>
               </div>
@@ -133,17 +136,16 @@ export default function UsageSettings() {
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm text-kumo-default">
                   <Warning size={18} weight="bold" className="text-kumo-warning" />
-                  <span>Choose which Cloudflare account to bill</span>
+                  <span>{t('billing.chooseAccount')}</span>
                 </div>
                 <p className="text-sm text-kumo-subtle">
-                  Your connection has access to multiple Cloudflare accounts. Select the one whose
-                  AI Gateway credits should be used.
+                  {t('billing.chooseAccountDescription')}
                 </p>
                 {accounts === null ? (
-                  <p className="text-sm text-kumo-subtle">Loading accounts…</p>
+                  <p className="text-sm text-kumo-subtle">{t('billing.loadingAccounts')}</p>
                 ) : accounts.length === 0 ? (
                   <p className="text-sm text-kumo-subtle">
-                    No accounts available on this connection.
+                    {t('billing.noAccounts')}
                   </p>
                 ) : (
                   <div className="flex flex-col gap-2">
@@ -168,16 +170,17 @@ export default function UsageSettings() {
                 <div className="flex items-center gap-2 text-sm text-kumo-default">
                   <CloudCheck size={18} weight="bold" className="text-kumo-success" />
                   <span>
-                    Connected
-                    {usage.accountName && <> — {usage.accountName}</>}
+                    {usage.accountName
+                      ? t('billing.connectedAccount', { account: usage.accountName })
+                      : t('billing.connected')}
                   </span>
                 </div>
                 <p className="text-sm text-kumo-default">
-                  Account balance:{' '}
+                  {t('billing.balance')}{' '}
                   {usage.balance !== null ? (
-                    <strong>${usage.balance.toFixed(2)}</strong>
+                    <strong>{formatNumber(usage.balance, { style: 'currency', currency: 'USD' })}</strong>
                   ) : (
-                    <span className="text-kumo-subtle">unknown</span>
+                    <span className="text-kumo-subtle">{t('billing.unknown')}</span>
                   )}
                 </p>
 
@@ -188,7 +191,7 @@ export default function UsageSettings() {
                     onClick={() => window.open(buildAddCreditsUrl(usage.accountId), '_blank')}
                   >
                     <Lightning size={14} weight="bold" className="mr-1" />
-                    Add credits
+                    {t('billing.addCredits')}
                   </Button>
                 </div>
               </div>
@@ -196,14 +199,14 @@ export default function UsageSettings() {
           </div>
 
           <p className="text-xs text-kumo-subtle border-t border-kumo-line pt-3">
-            Learn more about{' '}
+            {t('billing.learnMore')}{' '}
             <a
               href="https://developers.cloudflare.com/ai-gateway/features/unified-billing/"
               target="_blank"
               rel="noreferrer"
               className="underline"
             >
-              AI Gateway unified billing
+              {t('billing.unifiedBilling')}
             </a>
             .
           </p>

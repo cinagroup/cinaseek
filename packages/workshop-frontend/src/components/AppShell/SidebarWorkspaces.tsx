@@ -27,6 +27,7 @@ import { useAuthenticatedApi } from '../../AuthContext'
 import ShareModal from '../../ShareModal'
 import DeleteConfirmationDialog from '../DeleteConfirmationDialog'
 import SidebarGadgetRow from './SidebarGadgetRow'
+import { useTranslation } from '../../i18n'
 
 // Cap on items shown in the Recent list before the user clicks through to /workspaces.
 const RECENT_INITIAL_LIMIT = 6
@@ -66,6 +67,7 @@ function useWorkspacesContext(): WorkspacesContextValue {
 // independently in the parent layout (pinned vs. scrolling areas).
 // ─────────────────────────────────────────────────────────────────────────────
 export function SidebarWorkspacesProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation('shell')
   const { authenticatedApi } = useAuthenticatedApi()
   const toasts = useKumoToastManager()
 
@@ -146,11 +148,11 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
     } catch (err) {
       console.error('Failed to toggle pin:', err)
       setGadgets((prev) => prev.map((x) => (x.id === g.id ? { ...x, pinned: g.pinned } : x)))
-      toasts.add({ title: 'Failed to update favorite', variant: 'error' })
+      toasts.add({ title: t('workspace.favoriteUpdateFailed'), variant: 'error' })
     } finally {
       overseer[Symbol.dispose]()
     }
-  }, [authenticatedApi, toasts])
+  }, [authenticatedApi, t, toasts])
 
   const onRename = useCallback(async (g: GadgetMetadataWithTimestamps, newTitle: string) => {
     setGadgets((prev) => prev.map((x) => (x.id === g.id ? { ...x, title: newTitle } : x)))
@@ -160,11 +162,11 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
     } catch (err) {
       console.error('Failed to rename:', err)
       setGadgets((prev) => prev.map((x) => (x.id === g.id ? { ...x, title: g.title } : x)))
-      toasts.add({ title: 'Failed to rename workspace', variant: 'error' })
+      toasts.add({ title: t('workspace.renameFailed'), variant: 'error' })
     } finally {
       overseer[Symbol.dispose]()
     }
-  }, [authenticatedApi, toasts])
+  }, [authenticatedApi, t, toasts])
 
   const onShare = useCallback(async (g: GadgetMetadataWithTimestamps) => {
     let overseer: RpcStub<Overseer> | null = null
@@ -177,9 +179,9 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
     } catch (err) {
       overseer?.[Symbol.dispose]()
       console.error('Failed to open workspace for sharing:', err)
-      toasts.add({ title: 'Failed to open share settings', variant: 'error' })
+      toasts.add({ title: t('workspace.shareOpenFailed'), variant: 'error' })
     }
-  }, [authenticatedApi, toasts])
+  }, [authenticatedApi, t, toasts])
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return
@@ -197,17 +199,17 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
       }
       setGadgets((prev) => prev.filter((x) => x.id !== deleteTarget.id))
       toasts.add({
-        title: deleteTarget.owner ? 'Workspace removed' : 'Workspace deleted',
+        title: deleteTarget.owner ? t('workspace.removed') : t('workspace.deleted'),
         variant: 'success',
       })
     } catch (err) {
       console.error('Failed to delete workspace:', err)
-      toasts.add({ title: 'Failed to delete workspace', variant: 'error' })
+      toasts.add({ title: t('workspace.deleteFailed'), variant: 'error' })
     } finally {
       setIsDeleting(false)
       setDeleteTarget(null)
     }
-  }, [authenticatedApi, deleteTarget, toasts])
+  }, [authenticatedApi, deleteTarget, t, toasts])
 
   const value: WorkspacesContextValue = {
     search,
@@ -231,14 +233,14 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
         open={deleteTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         isDeleting={isDeleting}
-        title={deleteTarget?.owner ? 'Remove workspace' : 'Delete workspace'}
+        title={deleteTarget?.owner ? t('workspace.removeTitle') : t('workspace.deleteTitle')}
         description={
           deleteTarget?.owner
-            ? `Remove "${deleteTarget?.title || 'Untitled workspace'}" from your list? You can still access it via its link.`
-            : `Delete "${deleteTarget?.title || 'Untitled workspace'}"? This cannot be undone.`
+            ? t('workspace.removeDescription', { title: deleteTarget?.title || t('workspace.untitled') })
+            : t('workspace.deleteDescription', { title: deleteTarget?.title || t('workspace.untitled') })
         }
-        confirmLabel={deleteTarget?.owner ? 'Remove' : 'Delete'}
-        confirmingLabel={deleteTarget?.owner ? 'Removing...' : 'Deleting...'}
+        confirmLabel={deleteTarget?.owner ? t('workspace.remove') : t('workspace.delete')}
+        confirmingLabel={deleteTarget?.owner ? t('workspace.removing') : t('workspace.deleting')}
         onConfirm={handleDeleteConfirm}
       />
 
@@ -262,6 +264,7 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
 // Only renders in collapsed mode — see the note below.
 // ─────────────────────────────────────────────────────────────────────────────
 export function SidebarWorkspacesTools({ collapsed = false }: { collapsed?: boolean }) {
+  const { t } = useTranslation('shell')
   // No "New workspace" button: Home *is* the new-workspace launcher, so it would be redundant.
   // Search lives as a magnifying-glass icon in the brand row when expanded; when collapsed the
   // brand-row buttons are hidden, so we surface a compact search icon here instead.
@@ -272,8 +275,8 @@ export function SidebarWorkspacesTools({ collapsed = false }: { collapsed?: bool
       <button
         type="button"
         onClick={() => openCommandPalette()}
-        aria-label="Search"
-        title="Search (⌘K)"
+        aria-label={t('sidebar.search')}
+        title={t('sidebar.searchWithShortcut')}
         className="press flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
       >
         <MagnifyingGlass size={15} />
@@ -287,6 +290,7 @@ export function SidebarWorkspacesTools({ collapsed = false }: { collapsed?: bool
 // region. In collapsed mode shows a compact avatar stack.
 // ─────────────────────────────────────────────────────────────────────────────
 export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: boolean }) {
+  const { t } = useTranslation('shell')
   const {
     search,
     favorites,
@@ -327,7 +331,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
     <div className="flex flex-col pb-3">
       {/* Favorites */}
       <SidebarSection
-        label="Favorites"
+        label={t('workspace.favorites')}
         count={favorites.length}
         open={favOpen}
         onToggle={() => setFavOpen((o) => !o)}
@@ -335,7 +339,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
       >
         {favorites.length === 0 ? (
           <p className="px-2.5 py-1.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-inactive">
-            Favorite a workspace to keep it here.
+            {t('workspace.favoriteHint')}
           </p>
         ) : (
           <div className="flex flex-col">
@@ -355,7 +359,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
 
       {/* Recent workspaces — no count here; the "Show all (N)" link already carries it. */}
       <SidebarSection
-        label="Recent workspaces"
+        label={t('workspace.recent')}
         open={recentOpen}
         onToggle={() => setRecentOpen((o) => !o)}
       >
@@ -367,7 +371,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
           </div>
         ) : recent.length === 0 ? (
           <p className="px-2.5 py-1.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-inactive">
-            {search ? 'No matches.' : 'No workspaces yet.'}
+            {search ? t('workspace.noMatches') : t('workspace.empty')}
           </p>
         ) : (
           <>
@@ -387,7 +391,9 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
               to="/workspaces"
               className="mt-0.5 flex h-7 items-center gap-1 rounded-md px-2.5 text-[12px] font-medium tracking-[-0.2px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
             >
-              {recentHidden > 0 ? `Show all (${recent.length})` : 'Show all'}
+              {recentHidden > 0
+                ? t('workspace.showAllCount', { count: recent.length })
+                : t('workspace.showAll')}
               <ArrowRight size={11} weight="bold" />
             </Link>
           </>

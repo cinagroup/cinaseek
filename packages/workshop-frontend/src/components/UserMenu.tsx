@@ -5,8 +5,10 @@ import { useAuthenticatedApi, useOptionalAuthenticatedApi } from '../AuthContext
 import { useAvatar } from '../useAvatar'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from './menuStyles'
 import { currentReturnTo, requestAccessLogin } from '../accessSession'
+import { useTranslation } from '../i18n'
 
 export default function UserMenu() {
+  const { t } = useTranslation('shell')
   const auth = useOptionalAuthenticatedApi()
   if (!auth) {
     return (
@@ -14,8 +16,8 @@ export default function UserMenu() {
         type="button"
         onClick={() => requestAccessLogin(currentReturnTo())}
         className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-kumo-tint text-kumo-strong transition-colors hover:bg-kumo-fill"
-        title="Sign in or create an account"
-        aria-label="Sign in or create an account"
+        title={t('user.signIn')}
+        aria-label={t('user.signIn')}
       >
         <UserCircle size={18} weight="regular" />
       </button>
@@ -25,6 +27,7 @@ export default function UserMenu() {
 }
 
 function AuthenticatedUserMenu() {
+  const { t } = useTranslation('shell')
   const { authenticatedApi, logout, currentUser, isAdmin } = useAuthenticatedApi()
   const navigate = useNavigate()
 
@@ -40,8 +43,8 @@ function AuthenticatedUserMenu() {
         render={
           <button
             className="w-7 h-7 cursor-pointer rounded-full flex items-center justify-center bg-kumo-tint hover:bg-kumo-fill transition-colors overflow-hidden"
-            title="Open profile menu"
-            aria-label="Open profile menu"
+            title={t('user.openMenu')}
+            aria-label={t('user.openMenu')}
           >
             {avatarUrl ? (
               <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
@@ -56,20 +59,20 @@ function AuthenticatedUserMenu() {
           onClick={() => navigate({ to: '/profile' })}
           className={MENU_ITEM}
         >
-          Profile
+          {t('nav.profile')}
         </DropdownMenu.Item>
         <DropdownMenu.Item
           onClick={() => navigate({ to: '/providers' })}
           className={MENU_ITEM}
         >
-          Providers
+          {t('nav.providers')}
         </DropdownMenu.Item>
         {isAdmin && (
           <DropdownMenu.Item
             onClick={() => navigate({ to: '/admin' })}
             className={MENU_ITEM}
           >
-            Admin
+            {t('nav.admin')}
           </DropdownMenu.Item>
         )}
         <DropdownMenu.Separator />
@@ -78,7 +81,7 @@ function AuthenticatedUserMenu() {
           onClick={logout}
           className={MENU_ITEM_DANGER}
         >
-          Sign out
+          {t('user.signOut')}
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu>

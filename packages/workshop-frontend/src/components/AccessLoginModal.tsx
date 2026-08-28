@@ -9,9 +9,11 @@ import {
 } from '../accessSession'
 import SiteLogo from './SiteLogo'
 import { useSiteName } from '../ServerConfigContext'
+import { useTranslation } from '../i18n'
 
 type LoginRequestDetail = { returnTo?: unknown }
 type LoginPhase = 'ready' | 'authenticating' | 'error'
+type LoginError = 'popupClosed' | 'popupBlocked'
 
 const POPUP_WIDTH = 520
 const POPUP_HEIGHT = 760
@@ -68,11 +70,12 @@ export default function AccessLoginModal({
   openWindow?: (url: string, target: string, features: string) => Window | null
   createRequestId?: () => string
 }) {
+  const { t } = useTranslation('auth')
   const siteName = useSiteName()
   const [returnTo, setReturnTo] = useState('/')
   const [open, setOpen] = useState(false)
   const [phase, setPhase] = useState<LoginPhase>('ready')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<LoginError | null>(null)
   const popupRef = useRef<Window | null>(null)
   const requestIdRef = useRef<string | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -158,7 +161,7 @@ export default function AccessLoginModal({
       requestIdRef.current = null
       window.clearInterval(timer)
       setPhase('error')
-      setError('The sign-in window was closed before authentication completed.')
+      setError('popupClosed')
     }, 500)
     return () => window.clearInterval(timer)
   }, [phase])
@@ -175,7 +178,7 @@ export default function AccessLoginModal({
     if (!popup) {
       requestIdRef.current = null
       setPhase('error')
-      setError('Your browser blocked the sign-in window. Allow pop-ups for CinaSeek and try again.')
+      setError('popupBlocked')
       return
     }
     popupRef.current = popup
@@ -189,7 +192,7 @@ export default function AccessLoginModal({
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6">
       <button
         type="button"
-        aria-label="Close sign in"
+        aria-label={t('modal.close')}
         className="absolute inset-0 cursor-default bg-black/55 backdrop-blur-[3px]"
         onClick={close}
       />
@@ -210,7 +213,7 @@ export default function AccessLoginModal({
             ref={closeButtonRef}
             type="button"
             onClick={close}
-            aria-label="Close sign in"
+            aria-label={t('modal.close')}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
           >
             <X size={17} />
@@ -222,15 +225,15 @@ export default function AccessLoginModal({
             <ShieldCheck size={27} weight="duotone" />
           </div>
           <h2 id="access-login-title" className="mt-5 text-center text-xl font-semibold text-kumo-strong">
-            Sign in or create an account
+            {t('modal.title')}
           </h2>
           <p className="mx-auto mt-2 max-w-sm text-center text-sm leading-5 text-kumo-subtle">
-            Continue securely with CinaAuth using email, passkey, GitHub, or Google. This page will stay open behind the sign-in window.
+            {t('modal.description')}
           </p>
 
           {error ? (
             <div role="alert" className="mt-5 rounded-xl border border-kumo-danger/25 bg-kumo-danger-tint px-3.5 py-3 text-sm leading-5 text-kumo-danger">
-              {error}
+              {t(`errors.${error}`)}
             </div>
           ) : null}
 
@@ -243,11 +246,11 @@ export default function AccessLoginModal({
             {phase === 'authenticating' ? (
               <>
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white" />
-                Waiting for sign in…
+                {t('modal.waiting')}
               </>
             ) : (
               <>
-                Continue with CinaAuth
+                {t('modal.continue')}
                 <ArrowSquareOut size={17} />
               </>
             )}
@@ -257,10 +260,10 @@ export default function AccessLoginModal({
             href={accessLoginUrl(returnTo)}
             className="mt-3 block text-center text-xs text-kumo-inactive underline-offset-4 hover:text-kumo-subtle hover:underline"
           >
-            Use full-page sign in instead
+            {t('modal.fullPage')}
           </a>
           <p className="mt-5 text-center text-[11px] leading-4 text-kumo-inactive">
-            Authentication is protected by Cloudflare Access. CinaSeek never reads your provider password.
+            {t('modal.privacy')}
           </p>
         </div>
       </section>
@@ -270,6 +273,7 @@ export default function AccessLoginModal({
 
 /** Minimal status surface shown only inside the same-origin Access completion popup. */
 export function AccessLoginComplete({ status }: { status: AccessSessionStatus }) {
+  const { t } = useTranslation('auth')
   const [notified, setNotified] = useState(false)
 
   useEffect(() => {
@@ -302,18 +306,18 @@ export function AccessLoginComplete({ status }: { status: AccessSessionStatus })
           <ShieldCheck size={27} weight="duotone" />
         </div>
         <h1 className="mt-4 text-lg font-semibold text-kumo-strong">
-          {failed ? 'Sign in was not completed' : notified ? 'Signed in successfully' : 'Finishing sign in…'}
+          {failed ? t('complete.failedTitle') : notified ? t('complete.successTitle') : t('complete.finishingTitle')}
         </h1>
         <p className="mt-2 text-sm text-kumo-subtle">
           {failed
-            ? 'Close this window and try again from CinaSeek.'
+            ? t('complete.failedDescription')
             : notified
-              ? 'You can close this window and return to CinaSeek.'
-              : 'Verifying your Cloudflare Access session.'}
+              ? t('complete.successDescription')
+              : t('complete.verifyingDescription')}
         </p>
         {failed || !notified ? (
           <a href="/" className="mt-5 inline-flex h-10 items-center rounded-xl bg-kumo-brand px-4 text-sm font-semibold text-white">
-            Return to CinaSeek
+            {t('complete.return')}
           </a>
         ) : null}
       </div>

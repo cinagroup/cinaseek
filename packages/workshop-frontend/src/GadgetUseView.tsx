@@ -16,6 +16,7 @@ import { GadgetPresence } from './components/GadgetPresence'
 import TopBarNotice from './TopBarNotice'
 import SiteLogo from './components/SiteLogo'
 import GadgetExportMenu from './GadgetExportMenu'
+import { useTranslation } from './i18n'
 
 // The minimal, "use"-only experience: a shared top bar plus the gadget's deployed UI, and nothing
 // else. Collaborators with the "use" role may only render and interact with the gadget's mainline
@@ -54,6 +55,7 @@ export default function GadgetUseView({
   authenticatedApi,
   currentUserId,
 }: Props) {
+  const { t: translate } = useTranslation('gadgetUse')
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-kumo-base relative">
       {/* ═══ TOP BAR ════════════════════════════════════════════════════════════ */}
@@ -64,7 +66,7 @@ export default function GadgetUseView({
         <TopBarNotice />
         {/* Left: logo / title */}
         <div className="flex items-center gap-2 min-w-0">
-          <Link to="/" aria-label="Home" className="flex-shrink-0 hover:opacity-80 transition-opacity">
+          <Link to="/" aria-label={translate('home')} className="flex-shrink-0 hover:opacity-80 transition-opacity">
             <SiteLogo size={22}>
               <Hexagon size={22} className="text-kumo-brand" weight="bold" />
             </SiteLogo>
@@ -78,7 +80,7 @@ export default function GadgetUseView({
 
           {metadata.owner && (
             <span className="text-xs text-kumo-inactive flex-shrink-0">
-              by {metadata.owner.name}
+              {translate('byOwner', { name: metadata.owner.name })}
             </span>
           )}
         </div>
@@ -111,7 +113,7 @@ export default function GadgetUseView({
         <div className="flex items-center gap-2 flex-shrink-0">
           <GadgetExportMenu
             gadget={gadget}
-            gadgetTitle={gadgets.find(g => g.id === selectedGadgetId)?.title ?? 'Gadget'}
+            gadgetTitle={gadgets.find(g => g.id === selectedGadgetId)?.title ?? translate('gadgetFallback')}
           />
           <GadgetPresence
             overseer={overseer}
@@ -133,7 +135,7 @@ export default function GadgetUseView({
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center">
-            <p className="text-sm text-kumo-subtle">This workspace has no gadgets yet.</p>
+            <p className="text-sm text-kumo-subtle">{translate('empty')}</p>
           </div>
         )}
       </div>

@@ -15,20 +15,24 @@ import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
 import { beginAccessLogin, currentReturnTo } from '../accessSession'
 import { AccessLoginComplete } from '../components/AccessLoginModal'
+import { useTranslation } from '../i18n'
 
 export const Route = createRootRoute({
   component: RootComponent,
 })
 
 function ConnectionLostBanner() {
+  const { t } = useTranslation('shell')
   return (
     <div className="sticky top-0 z-[100] bg-kumo-warning-tint border-b border-kumo-warning/30 px-4 py-2 text-center text-sm text-kumo-warning">
-      Connection lost — reconnecting…
+      {t('status.connectionLost')}
     </div>
   )
 }
 
 function RootComponent() {
+  const { t } = useTranslation('shell')
+  const { t: commonT } = useTranslation('common')
   const { stub: rpcStub, connectionLost, accessSessionStatus } = useRpcContext()
   const { isAuthenticated, authenticatedApi, isLoading, error, logout, login } =
     useAuth(rpcStub, accessSessionStatus)
@@ -71,7 +75,7 @@ function RootComponent() {
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
         {connectionLost && <ConnectionLostBanner />}
         <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-kumo-subtle">{connectionLost ? 'Waiting for server…' : 'Loading...'}</p>
+        <p className="text-sm text-kumo-subtle">{connectionLost ? t('status.waitingForServer') : t('status.loading')}</p>
       </div>
     )
   }
@@ -80,12 +84,12 @@ function RootComponent() {
   if (error && !standalone && !publicGuestHome) {
     return (
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base p-6">
-        <p className="text-sm text-kumo-danger">Authentication error: {error}</p>
+        <p className="text-sm text-kumo-danger">{t('status.authenticationError', { error })}</p>
         <button
           onClick={() => window.location.reload()}
           className="px-4 py-2 text-sm font-medium text-kumo-inverse bg-kumo-brand rounded-lg hover:bg-kumo-brand-hover transition-colors"
         >
-          Retry
+          {commonT('actions.retry')}
         </button>
       </div>
     )
@@ -150,11 +154,12 @@ function RootComponent() {
 }
 
 function AccessLoginRedirect() {
+  const { t } = useTranslation('shell')
   useEffect(() => beginAccessLogin(currentReturnTo()), [])
   return (
     <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
       <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-      <p className="text-sm text-kumo-subtle">Opening sign in…</p>
+      <p className="text-sm text-kumo-subtle">{t('status.openingSignIn')}</p>
     </div>
   )
 }

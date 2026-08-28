@@ -27,6 +27,7 @@ import {
   requestAccessLogin,
   savePendingHomePrompt,
 } from "../accessSession";
+import { useTranslation } from "../i18n";
 
 type HomeSearch = { prompt?: string };
 
@@ -54,7 +55,8 @@ function AuthenticatedHomePage({ prompt }: HomeSearch) {
 }
 
 function GuestHomePage({ prompt }: HomeSearch) {
-  useDocumentTitle("Home");
+  const { t } = useTranslation('home');
+  useDocumentTitle(t('pageTitle'));
   const navigate = useNavigate();
   const [input, setInput] = useState(() => prompt ?? peekPendingHomePrompt() ?? "");
 
@@ -98,10 +100,10 @@ function GuestHomePage({ prompt }: HomeSearch) {
       <div className="flex w-full max-w-2xl flex-col items-stretch gap-8">
         <header className="text-center">
           <h1 className="text-3xl font-semibold tracking-tight leading-tight text-kumo-default sm:text-4xl">
-            What are we working on?
+            {t('hero.title')}
           </h1>
           <p className="mx-auto mt-3 max-w-md text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-            Ask a question, create an output, or create an app that works with your tools and data.
+            {t('hero.subtitle')}
           </p>
         </header>
 
@@ -114,10 +116,10 @@ function GuestHomePage({ prompt }: HomeSearch) {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) submit(event);
                 }}
-                placeholder="Start a new conversation…"
+                placeholder={t('composer.placeholder')}
                 autoFocus
                 rows={3}
-                aria-label="Prompt"
+                aria-label={t('composer.promptLabel')}
                 className="relative z-[1] w-full resize-none border-none bg-transparent p-0 text-[14px] leading-[22px] tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive"
               />
             </div>
@@ -127,8 +129,8 @@ function GuestHomePage({ prompt }: HomeSearch) {
                   type="button"
                   onClick={signIn}
                   className="group flex h-8 w-8 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-subtle"
-                  aria-label="Sign in to upload a file"
-                  title="Sign in to upload a file"
+                  aria-label={t('composer.uploadSignIn')}
+                  title={t('composer.uploadSignIn')}
                 >
                   <Plus size={18} />
                 </button>
@@ -138,24 +140,24 @@ function GuestHomePage({ prompt }: HomeSearch) {
                   className="inline-flex h-8 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-none tracking-[-0.25px] text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-subtle"
                 >
                   <Plug size={15} className="flex-shrink-0" />
-                  <span>Add resource</span>
+                  <span>{t('composer.addResource')}</span>
                 </button>
               </div>
               <div className="ml-auto flex min-w-0 flex-shrink items-center gap-1.5">
                 <button
                   type="button"
                   onClick={signIn}
-                  aria-label="Sign in to select a model"
+                  aria-label={t('composer.modelSignIn')}
                   className="group inline-flex h-8 min-w-0 max-w-[180px] cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-5 tracking-[-0.25px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
                 >
-                  <span className="min-w-0 truncate">Sign in to choose model</span>
+                  <span className="min-w-0 truncate">{t('composer.chooseModel')}</span>
                   <CaretDown size={12} weight="bold" className="flex-shrink-0 text-kumo-inactive" />
                 </button>
                 <button
                   type="submit"
                   disabled={!input.trim()}
                   className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg bg-kumo-brand text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-30"
-                  aria-label="Sign in and send message"
+                  aria-label={t('composer.sendSignIn')}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <line x1="12" y1="19" x2="12" y2="5" />
@@ -166,7 +168,7 @@ function GuestHomePage({ prompt }: HomeSearch) {
             </div>
           </div>
           <p className="mt-2 text-center text-[12px] leading-4 text-kumo-inactive">
-            Sign in or create an account to use models, files, tools, and private workspaces.
+            {t('composer.accountHint')}
           </p>
         </form>
 
@@ -177,11 +179,12 @@ function GuestHomePage({ prompt }: HomeSearch) {
 }
 
 export function HomePageContent({ prompt }: HomeSearch) {
-  useDocumentTitle("Home");
+  const { t } = useTranslation('home');
+  useDocumentTitle(t('pageTitle'));
 
   const { authenticatedApi } = useAuthenticatedApi();
   const navigate = useNavigate();
-  const toasts = useKumoToastManager();
+  const { add: addToast } = useKumoToastManager();
 
   const [models, setModels] = useState<AiChatAuthorInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -205,12 +208,12 @@ export function HomePageContent({ prompt }: HomeSearch) {
       })
       .catch((err) => {
         console.error("Failed to fetch models:", err);
-        toasts.add({ title: "Couldn't load AI models", variant: "error" });
+        addToast({ title: t('errors.models'), variant: "error" });
       });
     return () => {
       cancelled = true;
     };
-  }, [authenticatedApi]);
+  }, [addToast, authenticatedApi, t]);
 
   const handleModelChange = useCallback((value: string | null) => {
     setSelectedModel(value);
@@ -262,11 +265,11 @@ export function HomePageContent({ prompt }: HomeSearch) {
           provisionalOverseerRef.current?.stub[Symbol.dispose]();
           provisionalOverseerRef.current = null;
         }
-        toasts.add({ title: "Failed to create workspace", variant: "error" });
+        addToast({ title: t('errors.createWorkspace'), variant: "error" });
         throw err;
       }
     },
-    [ensureProvisionalGadget, navigate, toasts],
+    [addToast, ensureProvisionalGadget, navigate, t],
   );
 
   const getOverseer = useCallback((): RpcStub<Overseer> => {
@@ -304,10 +307,10 @@ export function HomePageContent({ prompt }: HomeSearch) {
         {/* Hero */}
         <header className="text-center">
           <h1 className="text-3xl font-semibold tracking-tight leading-tight text-kumo-default sm:text-4xl">
-            What are we working on?
+            {t('hero.title')}
           </h1>
           <p className="mx-auto mt-3 max-w-md text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-            Ask a question, create an output, or create an app that works with your tools and data.
+            {t('hero.subtitle')}
           </p>
         </header>
 

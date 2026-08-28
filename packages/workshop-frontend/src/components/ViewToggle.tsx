@@ -1,4 +1,5 @@
 import { List, GridFour } from '@phosphor-icons/react'
+import { useTranslation } from '../i18n'
 
 // Shared grid/list segmented toggle. Used on Gatekeepers and Outputs so view-switching looks and
 // behaves identically across the app.
@@ -9,9 +10,10 @@ export default function ViewToggle({
   view: 'grid' | 'list'
   onChange: (view: 'grid' | 'list') => void
 }) {
+  const { t } = useTranslation('common')
   const options = [
-    { value: 'list' as const, Icon: List, label: 'List view' },
-    { value: 'grid' as const, Icon: GridFour, label: 'Grid view' },
+    { value: 'list' as const, Icon: List, label: t('view.list') },
+    { value: 'grid' as const, Icon: GridFour, label: t('view.grid') },
   ]
   return (
     <div className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-kumo-line bg-kumo-base p-0.5">
