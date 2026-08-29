@@ -532,25 +532,29 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
   async listModels(): Promise<AiChatAuthorInfo[]> {
     let result: AiChatAuthorInfo[] = [];
+    const storedModels = [...this.storage.aiModels.list()];
 
     // When AI Gateway mode is active, include all suggested models for enabled providers.
     let gwConfig = getAiGatewayConfig(this.env);
-    let gwModelIds = new Set<string>();
+    let protectedModelIds = new Set<string>();
     if (gwConfig) {
       for (let entry of gwConfig.getModelList()) {
         result.push(entry);
-        gwModelIds.add(entry.id);
+        protectedModelIds.add(entry.id);
       }
     } else {
+      const storedModelIds = new Set(storedModels.map(model => model.profile.id));
       for (let entry of getWorkersAiBindingModelList()) {
-        result.push(entry);
-        gwModelIds.add(entry.id);
+        // A user may have configured the same Workers AI model with their own account and token.
+        // Preserve that explicit configuration instead of silently replacing it with the
+        // deployment-owned binding model.
+        if (!storedModelIds.has(entry.id)) result.push(entry);
       }
     }
 
     // Also include user-configured models, skipping any that duplicate a gateway model.
-    for (let model of this.storage.aiModels.list()) {
-      if (!gwModelIds.has(model.profile.id)) {
+    for (let model of storedModels) {
+      if (!protectedModelIds.has(model.profile.id)) {
         result.push(model.profile);
       }
     }
@@ -712,12 +716,14 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       profile: this.storage.profile.get()
     };
     if (modelId) {
-      // In AI Gateway mode, resolve gateway models first.
-      result.aiModel = gwConfig
-        ? gwConfig.resolveModel(modelId)
-        : resolveWorkersAiBindingModel(modelId);
-      if (!result.aiModel) {
-        result.aiModel = this.storage.aiModels.get(modelId);
+      if (gwConfig) {
+        // Gateway models are deployment policy and remain authoritative in Gateway mode.
+        result.aiModel = gwConfig.resolveModel(modelId) ?? this.storage.aiModels.get(modelId);
+      } else {
+        // Outside Gateway mode, an explicitly stored BYOK model overrides the deployment-owned
+        // Workers AI fallback when both use the same model ID.
+        result.aiModel = this.storage.aiModels.get(modelId) ??
+            resolveWorkersAiBindingModel(modelId);
       }
       if (!result.aiModel) throw new Error(`No such model: ${modelId}`);
     }
