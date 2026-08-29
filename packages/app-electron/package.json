@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "desktopName": "cinaseek.desktop",
-  "author": "Cina Group",
+  "author": {
+    "name": "Cina Group",
+    "email": "cinagroup@users.noreply.github.com"
+  },
+  "homepage": "https://cinaseek.ai",
   "description": "Secure CinaSeek desktop shell",
   "main": "dist/main.js",
   "scripts": {
