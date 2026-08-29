@@ -4,7 +4,7 @@ import {
   type AiModelProvider,
   SUGGESTED_MODELS,
 } from "@gadgets/workshop-shared/api";
-import { UserAiModelRecord } from "./user.js";
+import type { UserAiModelRecord } from "./user.js";
 
 const SUPPORTED_GATEWAY_PROVIDERS = new Set<AiModelProvider>([
   "anthropic",
@@ -18,7 +18,36 @@ const SUPPORTED_GATEWAY_PROVIDERS = new Set<AiModelProvider>([
 //
 // This 70B model is quite fast and cheap and produces pretty good titles. The cost is insignificant
 // compared to the actual coding model so there's not much reason to use a smaller model.
-const QUICK_MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+export const QUICK_MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+/** Models supplied by the deployment's in-process Workers AI binding when Gateway mode is off. */
+export function getWorkersAiBindingModelList(): AiChatAuthorInfo[] {
+  return Object.entries(SUGGESTED_MODELS.cloudflare).map(([id, model]) => ({
+    type: "agent",
+    id,
+    name: model.name,
+  }));
+}
+
+/** Resolve a model ID offered by the in-process Workers AI binding. */
+export function resolveWorkersAiBindingModel(modelId: string): UserAiModelRecord | undefined {
+  const model = SUGGESTED_MODELS.cloudflare[modelId];
+  if (!model) return undefined;
+  return {
+    profile: { type: "agent", id: modelId, name: model.name },
+    config: { provider: "cloudflare", model: modelId, apiToken: "" },
+  };
+}
+
+/** Return the deployment-owned Workers AI model used for lightweight background tasks. */
+export function getWorkersAiBindingQuickModel(): AiModelConfig {
+  return { provider: "cloudflare", model: QUICK_MODEL_ID, apiToken: "" };
+}
+
+/** Whether a model ID is safe to route through the deployment's Workers AI binding. */
+export function isWorkersAiBindingModelId(modelId: string): boolean {
+  return modelId === QUICK_MODEL_ID || modelId in SUGGESTED_MODELS.cloudflare;
+}
 
 export class AiGatewayConfig {
   readonly gateway: string;
@@ -100,12 +129,7 @@ export class AiGatewayConfig {
    * Get the AiModelConfig for the quick model (used for title generation).
    */
   getQuickModelConfig(): AiModelConfig | undefined {
-    // Always use Workers AI here.
-    return {
-      provider: "cloudflare",
-      model: QUICK_MODEL_ID,
-      apiToken: "",
-    };
+    return getWorkersAiBindingQuickModel();
   }
 }
 

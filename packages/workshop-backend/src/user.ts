@@ -6,7 +6,12 @@ import { CloudflareGatekeeperUser } from "@gadgets/workshop-shared/cloudflare-ga
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { createTypedStorage, collection } from "@gadgets/typed-storage";
 import { createWorkshopLogger } from "./observability";
-import { getAiGatewayConfig } from "./ai-gateway.js";
+import {
+  getAiGatewayConfig,
+  getWorkersAiBindingModelList,
+  getWorkersAiBindingQuickModel,
+  resolveWorkersAiBindingModel,
+} from "./ai-gateway.js";
 import { utcDayKey, nextUtcMidnightIso, DailyQuotaResult } from "./ai-gateway-billing/limits/config.js";
 import type { AdminSettings } from "./admin-settings.js";
 import { isReservedBlueprintKey, readBlueprintKvRecord } from "./blueprint-archive.js";
@@ -513,6 +518,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
         result.push(entry);
         gwModelIds.add(entry.id);
       }
+    } else {
+      for (let entry of getWorkersAiBindingModelList()) {
+        result.push(entry);
+        gwModelIds.add(entry.id);
+      }
     }
 
     // Also include user-configured models, skipping any that duplicate a gateway model.
@@ -567,9 +577,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
   async setPreferredModel(id: string | null): Promise<void> {
     if (id !== null) {
-      // Validate that the model exists in the user's configured models or as a gateway model.
+      // Validate that the model exists in the user's configured models or as a deployment model.
       let gwConfig = getAiGatewayConfig(this.env);
-      let exists = !!this.storage.aiModels.get(id) || !!gwConfig?.resolveModel(id);
+      let exists = !!this.storage.aiModels.get(id) || (gwConfig
+        ? !!gwConfig.resolveModel(id)
+        : !!resolveWorkersAiBindingModel(id));
       if (!exists) {
         throw new Error(`No such model: ${id}`);
       }
@@ -671,9 +683,9 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     };
     if (modelId) {
       // In AI Gateway mode, resolve gateway models first.
-      if (gwConfig) {
-        result.aiModel = gwConfig.resolveModel(modelId);
-      }
+      result.aiModel = gwConfig
+        ? gwConfig.resolveModel(modelId)
+        : resolveWorkersAiBindingModel(modelId);
       if (!result.aiModel) {
         result.aiModel = this.storage.aiModels.get(modelId);
       }
@@ -682,7 +694,6 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
     // Resolve the quick model (used for lightweight tasks like title generation).
     if (gwConfig) {
-      // In AI Gateway mode, always use the hardcoded quick model.
       result.quickModel = gwConfig.getQuickModelConfig();
     } else {
       let quickModelId = this.storage.quickModel.get();
@@ -692,6 +703,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
           result.quickModel = quickModel.config;
         }
       }
+      result.quickModel ??= getWorkersAiBindingQuickModel();
     }
     return result;
   }

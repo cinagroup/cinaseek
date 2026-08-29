@@ -339,6 +339,41 @@ describe("getModel direct routing (no gateway)", () => {
     expect(request.headers.get("cf-aig-metadata")).toBeNull();
   }, 15000);
 
+  it("streams deployment-owned Workers AI through the in-process binding", async () => {
+    const run = async (_model: string, input: Record<string, unknown>) => {
+      const body = [
+        'data: {"id":"binding-test","model":"@cf/zai-org/glm-5.2",' +
+          '"choices":[{"index":0,"delta":{"content":"Binding works"},' +
+          '"finish_reason":null}]}\n\n',
+        'data: {"id":"binding-test","model":"@cf/zai-org/glm-5.2",' +
+          '"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+        'data: [DONE]\n\n',
+      ].join("");
+      expect(input.model).toBeUndefined();
+      expect(input.stream).toBe(true);
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    };
+    const workersAi = Object.create(null) as Ai;
+    workersAi.run = run;
+
+    const handle = getModel(env({
+      CF_AI_GATEWAY: undefined,
+      WORKERS_AI: workersAi,
+    }), {
+      provider: "cloudflare",
+      model: "@cf/zai-org/glm-5.2",
+      apiToken: "",
+    }, INITIATOR);
+
+    expect(handle.model.baseUrl).toBe("https://workers-ai-binding.invalid/v1");
+    const stream = handle.stream(handle.model, {
+      messages: [{ role: "user", content: "hello", timestamp: 0 }],
+    }, { maxRetries: 0 });
+    const message = await stream.result();
+    expect(message.stopReason).toBe("stop");
+    expect(message.content).toContainEqual({ type: "text", text: "Binding works" });
+  }, 15000);
+
   it("uses the config's own account and token for direct Workers AI", async () => {
     // Outside gateway mode, Workers AI is BYOK like any other provider: credentials come from
     // the model config (never from env, which only configures gateway mode).

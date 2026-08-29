@@ -3,6 +3,9 @@ import {
   AiGatewayLogRetryableError,
   getAiGatewayLogCost,
   getAiGatewayConfig,
+  getWorkersAiBindingModelList,
+  getWorkersAiBindingQuickModel,
+  resolveWorkersAiBindingModel,
 } from "../src/ai-gateway.js";
 
 function env(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
@@ -15,6 +18,22 @@ function env(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
 }
 
 describe("AI Gateway configuration", () => {
+  it("offers deployment-owned Workers AI models without Gateway credentials", () => {
+    const models = getWorkersAiBindingModelList();
+    expect(models.map((model) => model.id)).toContain("@cf/zai-org/glm-5.2");
+    expect(resolveWorkersAiBindingModel("@cf/zai-org/glm-5.2")?.config).toEqual({
+      provider: "cloudflare",
+      model: "@cf/zai-org/glm-5.2",
+      apiToken: "",
+    });
+    expect(resolveWorkersAiBindingModel("unknown-model")).toBeUndefined();
+    expect(getWorkersAiBindingQuickModel()).toEqual({
+      provider: "cloudflare",
+      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      apiToken: "",
+    });
+  });
+
   it("accepts the supported OpenAI-compatible adapter", () => {
     const config = getAiGatewayConfig(env({
       CF_AI_GATEWAY_ACCOUNT_ID: "account-id",

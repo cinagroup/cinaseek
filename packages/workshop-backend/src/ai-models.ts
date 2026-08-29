@@ -17,9 +17,18 @@ import { LanguageModelBinding } from "./ai-model-binding";
 import AI_MODEL_BINDING_TYPES from "./ai-model-binding.txt";
 import { AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, WORKERS_AI_OUTPUT_LIMIT }
   from "@gadgets/workshop-shared/api";
-import { AiGatewayConfig, getAiGatewayConfig, type AiGatewayLogRoute } from "./ai-gateway.js";
+import {
+  AiGatewayConfig,
+  getAiGatewayConfig,
+  isWorkersAiBindingModelId,
+  type AiGatewayLogRoute,
+} from "./ai-gateway.js";
 import { completeText } from "./ai-invoke.js";
 import { bridgePdfAttachments } from "./chat-attachment-pdf.js";
+import {
+  createWorkersAiBindingFetch,
+  WORKERS_AI_BINDING_BASE_URL,
+} from "./workers-ai-binding.js";
 
  // Routing to bill a user's own Cloudflare account for inference (BYOK path once the free tier is
  // exhausted). Defined here to avoid a backend->ai-gateway-billing type import cycle at runtime.
@@ -286,6 +295,8 @@ type HandleArgs = {
   gatewayMetadata?: GatewayMetadata;
   sessionAffinity?: string;
   aiGatewayLogRoute?: AiGatewayLogRoute;
+  // Optional in-process transport used by the deployment-owned Workers AI binding.
+  fetch?: typeof fetch;
 };
 
 function makeHandle(args: HandleArgs): ModelHandle {
@@ -336,6 +347,7 @@ function makeHandle(args: HandleArgs): ModelHandle {
         ...options,
         ...(args.apiKey !== undefined ? { apiKey: args.apiKey } : {}),
         ...(Object.keys(headers).length > 0 ? { headers } : {}),
+        ...(args.fetch ? { fetch: args.fetch } : {}),
         // Session affinity: pi only sends it when caching isn't "none" (fine for us).
         sessionId: options.sessionId ?? args.sessionAffinity,
         onResponse: async (response, responseModel) => {
@@ -384,6 +396,28 @@ export function getModel(env: Cloudflare.Env, config: AiModelConfig,
   let gwConfig = getAiGatewayConfig(env);
   if (gwConfig) {
     return getModelViaGateway(gwConfig, config, initiator, options);
+  }
+
+  if (config.provider === "cloudflare" && config.apiToken === "" && !config.accountId &&
+      isWorkersAiBindingModelId(config.model)) {
+    const catalog = catalogModel(config.provider, config.model);
+    return makeHandle({
+      model: {
+        id: config.model,
+        name: catalog?.name ?? config.model,
+        api: "openai-completions",
+        provider: "cloudflare-workers-ai",
+        baseUrl: WORKERS_AI_BINDING_BASE_URL,
+        reasoning: catalog?.reasoning ?? false,
+        input: catalog?.input ?? ["text"],
+        cost: catalog?.cost ?? ZERO_COST,
+        ...modelTokenWindow(config, catalog),
+        compat: workersAiCompat(catalog),
+      },
+      apiKey: "workers-ai-binding",
+      fetch: createWorkersAiBindingFetch(env.WORKERS_AI, config.model),
+      sessionAffinity: options.sessionAffinity,
+    });
   }
 
   return getModelDirect(config, options.sessionAffinity);
