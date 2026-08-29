@@ -36,7 +36,7 @@ export default function TopBarNotice() {
   return (
     <div
       aria-hidden="false"
-      className="hidden lg:flex absolute inset-0 items-center justify-center pointer-events-none px-40"
+      className="cinaseek-desktop-no-drag hidden lg:flex absolute inset-0 items-center justify-center pointer-events-none px-40"
     >
       <div className="max-w-full truncate text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={INLINE_MARKDOWN_COMPONENTS}>

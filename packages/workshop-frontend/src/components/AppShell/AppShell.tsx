@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouterState } from '@tanstack/react-router'
-import { List, X } from '@phosphor-icons/react'
+import { List, SidebarSimple, X } from '@phosphor-icons/react'
 import TopBarNotice from '../../TopBarNotice'
 import Sidebar from './Sidebar'
 import CommandPalette from './CommandPalette'
@@ -8,6 +8,8 @@ import { OPEN_COMMAND_PALETTE_EVENT } from './commandPaletteBus'
 import { useOptionalAuthenticatedApi } from '../../AuthContext'
 import AccessLoginController from '../AccessLoginModal'
 import { useTranslation } from '../../i18n'
+import { isCinaSeekDesktopShell } from '../../nativeShell'
+import DesktopMenuBar from './DesktopMenuBar'
 
 const STORAGE_KEY_COLLAPSED = 'gadgets:sidebar-collapsed'
 
@@ -33,6 +35,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const desktopShell = isCinaSeekDesktopShell()
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => {
@@ -82,7 +85,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen min-h-screen w-screen overflow-hidden bg-kumo-base">
       {/* Desktop sidebar — hidden on mobile in favor of the drawer. */}
       <div className="hidden md:flex">
-        <Sidebar collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
+        <Sidebar
+          collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed}
+          collapseControlInTopBar={desktopShell}
+        />
       </div>
 
       {/* Mobile drawer */}
@@ -104,15 +111,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {/* Top bar. Same height as the sidebar's brand row (h-14) so they read as one continuous
             chrome strip across the top. Mostly empty — carries the mobile hamburger on the left and
             any admin TopBarNotice centered. */}
-        <div className="relative flex h-14 shrink-0 items-center justify-between border-b border-kumo-line bg-kumo-base px-3">
-          <button
-            type="button"
-            onClick={() => setMobileOpen((o) => !o)}
-            aria-label={mobileOpen ? t('sidebar.closeMenu') : t('sidebar.openMenu')}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-kumo-default transition-colors hover:bg-kumo-tint md:hidden"
-          >
-            {mobileOpen ? <X size={16} /> : <List size={16} />}
-          </button>
+        <div className={`relative flex h-14 shrink-0 items-center justify-between border-b border-kumo-line bg-kumo-base ${desktopShell ? 'cinaseek-desktop-titlebar pl-2' : 'px-3'}`}>
+          <div className="cinaseek-desktop-no-drag flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setMobileOpen((o) => !o)}
+              aria-label={mobileOpen ? t('sidebar.closeMenu') : t('sidebar.openMenu')}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-kumo-default transition-colors hover:bg-kumo-tint md:hidden"
+            >
+              {mobileOpen ? <X size={16} /> : <List size={16} />}
+            </button>
+            {desktopShell ? (
+              <>
+                <button
+                  type="button"
+                  onClick={toggleCollapsed}
+                  aria-label={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+                  title={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+                  className="hidden h-7 w-7 cursor-pointer items-center justify-center rounded-[3px] text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default md:flex"
+                >
+                  <SidebarSimple size={15} className={collapsed ? 'rotate-180' : ''} />
+                </button>
+                <DesktopMenuBar />
+              </>
+            ) : null}
+          </div>
           <TopBarNotice />
           <span aria-hidden="true" className="h-7 w-7 md:hidden" />
         </div>

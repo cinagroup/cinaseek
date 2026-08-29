@@ -23,3 +23,12 @@ export function isSecureWebUrl(value: string): boolean {
 export function isSafeExternalUrl(value: string): boolean {
   return isSecureWebUrl(value) && !isCinaSeekAppUrl(value)
 }
+
+/** Returns a credential-free CinaSeek page URL suitable for the operating-system browser. */
+export function safeCinaSeekBrowserUrl(value: string): string {
+  const url = parseUrl(value)
+  if (url?.origin !== CINASEEK_APP_ORIGIN) return CINASEEK_APP_ORIGIN
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}

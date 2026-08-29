@@ -826,3 +826,25 @@ html {
 body:has([role="dialog"], [role="alertdialog"]) .app-header {
   z-index: 0;
 }
+
+/* Electron's Window Controls Overlay keeps native Windows window buttons while the app's existing
+   56px top row becomes the draggable title bar. Interactive children opt out explicitly. */
+.cinaseek-desktop-titlebar {
+  app-region: drag;
+  padding-right: max(
+    0.75rem,
+    calc(100vw - env(titlebar-area-width, calc(100vw - 144px)))
+  );
+  user-select: none;
+}
+
+.cinaseek-desktop-no-drag,
+.cinaseek-desktop-no-drag * {
+  app-region: no-drag;
+}
+
+/* The bundled mark is black on transparency; invert only that default asset in dark mode. Admin
+   supplied logos retain their authored colors. */
+[data-mode="dark"] .cinaseek-default-site-logo {
+  filter: invert(1);
+}

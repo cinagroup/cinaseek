@@ -14,6 +14,24 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+type CinaSeekDesktopMenuId = 'file' | 'edit' | 'view' | 'help';
+
+interface CinaSeekDesktopMenuAnchor {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface CinaSeekDesktopBridge {
+  openMenu(menuId: CinaSeekDesktopMenuId, anchor: CinaSeekDesktopMenuAnchor): void;
+  setTheme(theme: 'light' | 'dark'): void;
+}
+
+interface Window {
+  readonly cinaseekDesktop?: CinaSeekDesktopBridge;
+}
+
 // Stub declarations for Cloudflare Workers types used by the shared package.
 // The frontend compiles @gadgets/workshop-shared source via path aliases, so it needs
 // minimal type stubs for server-side types that appear in the shared interfaces.

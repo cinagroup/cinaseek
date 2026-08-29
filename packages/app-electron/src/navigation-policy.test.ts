@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isCinaSeekAppUrl, isSafeExternalUrl, isSecureWebUrl } from './navigation-policy.js'
+import {
+  CINASEEK_APP_ORIGIN,
+  isCinaSeekAppUrl,
+  isSafeExternalUrl,
+  isSecureWebUrl,
+  safeCinaSeekBrowserUrl,
+} from './navigation-policy.js'
 
 test('accepts only the exact CinaSeek production origin as application content', () => {
   assert.equal(isCinaSeekAppUrl('https://cinaseek.ai/workspaces'), true)
@@ -18,4 +24,12 @@ test('sandboxed authentication windows only navigate to credential-free HTTPS UR
 test('external URLs exclude the application origin', () => {
   assert.equal(isSafeExternalUrl('https://docs.github.com/'), true)
   assert.equal(isSafeExternalUrl('https://cinaseek.ai/'), false)
+})
+
+test('system-browser application URLs retain the page but remove credential-bearing fields', () => {
+  assert.equal(
+    safeCinaSeekBrowserUrl('https://cinaseek.ai/workspaces?code=secret#token'),
+    'https://cinaseek.ai/workspaces',
+  )
+  assert.equal(safeCinaSeekBrowserUrl('https://example.com/path'), CINASEEK_APP_ORIGIN)
 })

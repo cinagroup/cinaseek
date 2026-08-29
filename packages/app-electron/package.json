@@ -1,6 +1,6 @@
 {
   "name": "@cinaseek/app-electron",
-  "version": "1.0.1",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "desktopName": "cinaseek.desktop",
@@ -48,6 +48,7 @@
     },
     "files": [
       "dist/**/*.js",
+      "dist/**/*.cjs",
       "!dist/**/*.test.js",
       "package.json"
     ],

@@ -37,9 +37,11 @@ import { useTranslation } from '../../i18n'
 export default function Sidebar({
   collapsed,
   onToggleCollapsed,
+  collapseControlInTopBar = false,
 }: {
   collapsed: boolean
   onToggleCollapsed: () => void
+  collapseControlInTopBar?: boolean
 }) {
   const { t } = useTranslation('shell')
   const siteName = useSiteName()
@@ -77,7 +79,7 @@ export default function Sidebar({
             </span>
           )}
         </Link>
-        {!collapsed && (
+        {!collapsed && !collapseControlInTopBar && (
           <div className="flex items-center gap-0.5">
             {auth ? (
               <button
@@ -104,7 +106,7 @@ export default function Sidebar({
       </div>
 
       {/* Expand affordance when collapsed — placed just under the logo for discoverability. */}
-      {collapsed && (
+      {collapsed && !collapseControlInTopBar && (
         <button
           type="button"
           onClick={onToggleCollapsed}
