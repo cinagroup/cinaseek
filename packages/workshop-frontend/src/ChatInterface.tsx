@@ -130,6 +130,7 @@ import { useSlashCommandPicker } from "./components/chat/SlashCommandPicker";
 import { formatFullTimestamp } from "./utils/formatTimestamp";
 import { copyToClipboard } from "./clipboard";
 import { isImeComposing } from "./keyboardEvent";
+import { i18n } from "./i18n";
 import {
   composerDraftStorageKey,
   decorateComposerDraft,
@@ -916,31 +917,37 @@ function getToolIcon(
 function getProvisionalToolLabel(toolName: AiToolCall["toolName"] | null | undefined) {
   switch (toolName) {
     case "readFile":
-      return "Reading file";
+      return i18n.t("chat:tools.progress.readFile");
     case "writeFile":
-      return "Writing file";
+      return i18n.t("chat:tools.progress.writeFile");
     case "editFile":
-      return "Editing file";
+      return i18n.t("chat:tools.progress.editFile");
     case "describeBinding":
-      return "Inspecting binding";
+      return i18n.t("chat:tools.progress.describeBinding");
     case "setBindingHook":
-      return "Connecting binding";
+      return i18n.t("chat:tools.progress.setBindingHook");
     case "setGadgetBinding":
-      return "Wiring up binding";
+      return i18n.t("chat:tools.progress.setGadgetBinding");
     case "saveCapsuleAsBinding":
-      return "Saving resource";
+      return i18n.t("chat:tools.progress.saveCapsuleAsBinding");
     case "createGadget":
-      return "Creating gadget";
+      return i18n.t("chat:tools.progress.createGadget");
     case "executeCode":
-      return "Running code";
+      return i18n.t("chat:tools.progress.executeCode");
     case "webFetch":
-      return "Fetching web page";
+      return i18n.t("chat:tools.progress.webFetch");
     case "observeUserChanges":
-      return "Observing user changes";
+      return i18n.t("chat:tools.progress.observeUserChanges");
     case "giveUp":
-      return "Stopping";
+      return i18n.t("chat:tools.progress.giveUp");
+    case "listBlueprints":
+      return i18n.t("chat:tools.progress.listBlueprints");
+    case "listConnectableResources":
+      return i18n.t("chat:tools.progress.listConnectableResources");
+    case "requestConnection":
+      return i18n.t("chat:tools.progress.requestConnection");
     default:
-      return "Using tool";
+      return i18n.t("chat:tools.progress.unknown");
   }
 }
 
@@ -951,21 +958,21 @@ function getToolTarget(tc: AiToolCall): string | undefined {
 // Present-tense verb for an in-progress tool call.
 function getProvisionalToolVerb(toolName: AiToolCall["toolName"]): string {
   switch (toolName) {
-    case "readFile": return "Reading";
-    case "writeFile": return "Writing";
-    case "editFile": return "Editing";
-    case "describeBinding": return "Inspecting";
-    case "setBindingHook": return "Connecting";
-    case "setGadgetBinding": return "Wiring up";
-    case "saveCapsuleAsBinding": return "Saving";
-    case "createGadget": return "Creating gadget";
-    case "executeCode": return "Running code";
-    case "webFetch": return "Fetching";
-    case "observeUserChanges": return "Observing user changes";
-    case "giveUp": return "Stopping";
-    case "listBlueprints": return "Listing blueprints";
-    case "listConnectableResources": return "Listing connectable resources";
-    case "requestConnection": return "Requesting a connection";
+    case "readFile": return i18n.t("chat:tools.progressVerb.readFile");
+    case "writeFile": return i18n.t("chat:tools.progressVerb.writeFile");
+    case "editFile": return i18n.t("chat:tools.progressVerb.editFile");
+    case "describeBinding": return i18n.t("chat:tools.progressVerb.describeBinding");
+    case "setBindingHook": return i18n.t("chat:tools.progressVerb.setBindingHook");
+    case "setGadgetBinding": return i18n.t("chat:tools.progressVerb.setGadgetBinding");
+    case "saveCapsuleAsBinding": return i18n.t("chat:tools.progressVerb.saveCapsuleAsBinding");
+    case "createGadget": return i18n.t("chat:tools.progressVerb.createGadget");
+    case "executeCode": return i18n.t("chat:tools.progressVerb.executeCode");
+    case "webFetch": return i18n.t("chat:tools.progressVerb.webFetch");
+    case "observeUserChanges": return i18n.t("chat:tools.progressVerb.observeUserChanges");
+    case "giveUp": return i18n.t("chat:tools.progressVerb.giveUp");
+    case "listBlueprints": return i18n.t("chat:tools.progressVerb.listBlueprints");
+    case "listConnectableResources": return i18n.t("chat:tools.progressVerb.listConnectableResources");
+    case "requestConnection": return i18n.t("chat:tools.progressVerb.requestConnection");
   }
   const _exhaustive: never = toolName;
   return _exhaustive;
@@ -975,21 +982,21 @@ function getProvisionalToolVerb(toolName: AiToolCall["toolName"]): string {
 function describeProvisionalToolCount(toolName: AiToolCall["toolName"], count: number): string {
   if (count <= 1) return getProvisionalToolLabel(toolName);
   switch (toolName) {
-    case "readFile": return `Reading ${pluralize(count, "file")}`;
-    case "writeFile": return `Writing ${pluralize(count, "file")}`;
-    case "editFile": return `Making ${count} edits`;
-    case "webFetch": return `Fetching ${pluralize(count, "page")}`;
-    case "executeCode": return count === 1 ? "Running code" : `Running code ${formatTimes(count)}`;
-    case "describeBinding": return `Inspecting ${pluralize(count, "binding")}`;
-    case "setBindingHook": return `Connecting ${pluralize(count, "binding")}`;
-    case "setGadgetBinding": return `Wiring up ${pluralize(count, "binding")}`;
-    case "saveCapsuleAsBinding": return `Saving ${pluralize(count, "resource")}`;
-    case "createGadget": return `Creating ${pluralize(count, "gadget")}`;
-    case "observeUserChanges": return `Observing ${pluralize(count, "change set")}`;
-    case "giveUp": return "Stopping";
-    case "listBlueprints": return "Listing blueprints";
-    case "listConnectableResources": return "Listing connectable resources";
-    case "requestConnection": return `Requesting ${pluralize(count, "connection")}`;
+    case "readFile": return i18n.t("chat:tools.progressCount.readFile", { count });
+    case "writeFile": return i18n.t("chat:tools.progressCount.writeFile", { count });
+    case "editFile": return i18n.t("chat:tools.progressCount.editFile", { count });
+    case "webFetch": return i18n.t("chat:tools.progressCount.webFetch", { count });
+    case "executeCode": return i18n.t("chat:tools.progressCount.executeCode", { count });
+    case "describeBinding": return i18n.t("chat:tools.progressCount.describeBinding", { count });
+    case "setBindingHook": return i18n.t("chat:tools.progressCount.setBindingHook", { count });
+    case "setGadgetBinding": return i18n.t("chat:tools.progressCount.setGadgetBinding", { count });
+    case "saveCapsuleAsBinding": return i18n.t("chat:tools.progressCount.saveCapsuleAsBinding", { count });
+    case "createGadget": return i18n.t("chat:tools.progressCount.createGadget", { count });
+    case "observeUserChanges": return i18n.t("chat:tools.progressCount.observeUserChanges", { count });
+    case "giveUp": return i18n.t("chat:tools.progressCount.giveUp", { count });
+    case "listBlueprints": return i18n.t("chat:tools.progressCount.listBlueprints", { count });
+    case "listConnectableResources": return i18n.t("chat:tools.progressCount.listConnectableResources", { count });
+    case "requestConnection": return i18n.t("chat:tools.progressCount.requestConnection", { count });
   }
   const _exhaustive: never = toolName;
   return _exhaustive;
@@ -1599,7 +1606,7 @@ const ToolCallDetails = memo(function ToolCallDetails(
           {tc.output && (
             <>
               <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">
-                Output
+                Result
               </span>
               <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
                 {tc.output}
@@ -8192,7 +8199,7 @@ function ChatInterface({
                                           )}
                                           {toolCall.output && (
                                             <>
-                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Output</span>
+                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Result</span>
                                               <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
                                                 {toolCall.output}
                                               </pre>

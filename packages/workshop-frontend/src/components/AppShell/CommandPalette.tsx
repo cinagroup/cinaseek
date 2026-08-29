@@ -12,6 +12,7 @@ import type { GadgetMetadataWithTimestamps, OutputFormatOffer } from '@gadgets/w
 import { FormatGlyph } from '../format/FormatVisuals'
 import { createFromFormat } from '../format/useOutputFormats'
 import { isImeComposing } from '../../keyboardEvent'
+import { useTranslation } from '../../i18n'
 
 // A ⌘K command palette: jump to a workspace or a primary destination. Because it's keyboard-driven
 // and opened many times a day, it deliberately has *no* open/close animation (instant feels faster
@@ -44,12 +45,13 @@ let paletteCache: { data: PaletteData; fetchedAt: number } | null = null
 function mergeBlueprints(
   own: { id: string; title: string; lastUpdated: Date }[],
   library: { id: string; metadata: { title: string }; addedAt: Date }[],
+  untitledTemplate: string,
 ): BlueprintEntry[] {
   const map = new Map<string, BlueprintEntry>()
   for (const b of library) {
     map.set(b.id, {
       id: b.id,
-      title: b.metadata.title || 'Untitled blueprint',
+      title: b.metadata.title || untitledTemplate,
       recency: b.addedAt.getTime(),
     })
   }
@@ -57,7 +59,7 @@ function mergeBlueprints(
     const prev = map.get(b.id)
     map.set(b.id, {
       id: b.id,
-      title: b.title || prev?.title || 'Untitled blueprint',
+      title: b.title || prev?.title || untitledTemplate,
       recency: Math.max(prev?.recency ?? 0, b.lastUpdated.getTime()),
     })
   }
@@ -144,6 +146,7 @@ export default function CommandPalette({
   const { authenticatedApi } = useAuthenticatedApi()
   const navigate = useNavigate()
   const toasts = useKumoToastManager()
+  const { t } = useTranslation('shell')
 
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
@@ -188,7 +191,7 @@ export default function CommandPalette({
         .then(([gadgetList, own, library, formatList]) => {
           const data: PaletteData = {
             gadgets: gadgetList,
-            blueprints: mergeBlueprints(own, library),
+            blueprints: mergeBlueprints(own, library, t('command.untitledBlueprint')),
             formats: formatList,
           }
           paletteCache = { data, fetchedAt: Date.now() }
@@ -203,7 +206,7 @@ export default function CommandPalette({
       cancelled = true
       cancelAnimationFrame(id)
     }
-  }, [open, authenticatedApi])
+  }, [open, authenticatedApi, t])
 
   const go = useCallback(
     (run: () => void) => {
@@ -228,8 +231,8 @@ export default function CommandPalette({
     // general starting point; the format shortcuts follow it in the admin's configured order.
     const formatCommands: Command[] = formats.map((format) => ({
       id: `format-${format.blueprintId}`,
-      label: `New ${format.output.noun}`,
-      hint: 'Format',
+      label: t('command.newFormat', { noun: format.output.noun }),
+      hint: t('command.formatHint'),
       icon: <FormatGlyph output={format.output} size="md" />,
       run: () => { void createFormat(format) },
     }))
@@ -237,20 +240,20 @@ export default function CommandPalette({
     const nav: Command[] = [
       {
         id: 'nav-new',
-        label: 'New workspace',
+        label: t('command.newWorkspace'),
         icon: <Plus size={15} weight="bold" />,
         run: () => navigate({ to: '/' }),
       },
       ...formatCommands,
       {
         id: 'nav-workspaces',
-        label: 'Workspaces',
+        label: t('nav.workspaces'),
         icon: <SquaresFour size={15} />,
         run: () => navigate({ to: '/workspaces' }),
       },
       {
         id: 'nav-blueprints',
-        label: 'Blueprints',
+        label: t('nav.blueprints'),
         icon: <Blueprint size={15} />,
         run: () => navigate({ to: '/explore' }),
       },
@@ -260,8 +263,8 @@ export default function CommandPalette({
       .toSorted((a, b) => b.lastActive.getTime() - a.lastActive.getTime())
       .map((g) => ({
         id: `ws-${g.id}`,
-        label: g.title || 'Untitled workspace',
-        hint: 'Workspace',
+        label: g.title || t('workspace.untitled'),
+        hint: t('command.workspaceHint'),
         icon: <SquaresFour size={15} className="text-kumo-inactive" />,
         run: () => navigate({ to: '/workspace/$id', params: { id: g.id } }),
       }))
@@ -271,7 +274,7 @@ export default function CommandPalette({
       .map((b) => ({
         id: `bp-${b.id}`,
         label: b.title,
-        hint: 'Blueprint',
+        hint: t('command.blueprintHint'),
         icon: <Blueprint size={15} className="text-kumo-inactive" />,
         run: () => navigate({ to: '/blueprint/$id', params: { id: b.id } }),
       }))
@@ -291,19 +294,19 @@ export default function CommandPalette({
 
     const built: Group[] = searching
       ? [
-          { heading: 'Actions', items: refine(nav, nav.length) },
-          { heading: 'Workspaces', items: refine(wsBase, 8) },
-          { heading: 'Blueprints', items: refine(bpBase, 8) },
+          { heading: t('command.actionsHeading'), items: refine(nav, nav.length) },
+          { heading: t('command.workspacesHeading'), items: refine(wsBase, 8) },
+          { heading: t('command.blueprintsHeading'), items: refine(bpBase, 8) },
         ]
       : [
-          { heading: 'Actions', items: refine(nav, nav.length) },
-          { heading: 'Recent workspaces', items: refine(wsBase, 4) },
+          { heading: t('command.actionsHeading'), items: refine(nav, nav.length) },
+          { heading: t('command.recentWorkspacesHeading'), items: refine(wsBase, 4) },
         ]
 
-    const groups = built.filter((g) => g.items.length > 0)
-    const flat = groups.flatMap((g) => g.items)
-    return { groups, flat }
-  }, [query, gadgets, blueprints, formats, navigate, createFormat])
+    const visibleGroups = built.filter((group) => group.items.length > 0)
+    const visibleCommands = visibleGroups.flatMap((group) => group.items)
+    return { groups: visibleGroups, flat: visibleCommands }
+  }, [query, gadgets, blueprints, formats, navigate, createFormat, t])
 
   // Keep the active index in range as the result set changes.
   useEffect(() => {
@@ -344,7 +347,7 @@ export default function CommandPalette({
       className="fixed inset-0 z-[1500] flex items-start justify-center px-4 pt-[12vh]"
       role="dialog"
       aria-modal="true"
-      aria-label="Command palette"
+      aria-label={t('command.dialogLabel')}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
@@ -358,7 +361,7 @@ export default function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search workspaces and actions…"
+            placeholder={t('command.searchPlaceholder')}
             className="h-12 w-full bg-transparent text-[14px] leading-5 tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive focus:outline-none"
           />
           <kbd className="shrink-0 rounded border border-kumo-line px-1.5 py-0.5 font-sans text-[10px] leading-none text-kumo-inactive">
@@ -368,7 +371,7 @@ export default function CommandPalette({
 
         <div ref={listRef} className="sidebar-scroll max-h-[min(60vh,420px)] overflow-y-auto p-1.5">
           {flat.length === 0 ? (
-            <p className="px-3 py-6 text-center text-[13px] text-kumo-inactive">No results.</p>
+            <p className="px-3 py-6 text-center text-[13px] text-kumo-inactive">{t('command.noResults')}</p>
           ) : (
             groups.map((group, gi) => {
               // Compute the flat index offset for this group so keyboard nav stays in sync.
@@ -413,15 +416,15 @@ export default function CommandPalette({
           <span className="flex items-center gap-1">
             <kbd className="rounded border border-kumo-line px-1 py-0.5 font-sans leading-none">↑</kbd>
             <kbd className="rounded border border-kumo-line px-1 py-0.5 font-sans leading-none">↓</kbd>
-            navigate
+            {t('command.navigate')}
           </span>
           <span className="flex items-center gap-1">
             <kbd className="rounded border border-kumo-line px-1 py-0.5 font-sans leading-none">↵</kbd>
-            open
+            {t('command.open')}
           </span>
           <span className="flex items-center gap-1">
             <kbd className="rounded border border-kumo-line px-1 py-0.5 font-sans leading-none">esc</kbd>
-            close
+            {t('command.close')}
           </span>
         </div>
       </div>

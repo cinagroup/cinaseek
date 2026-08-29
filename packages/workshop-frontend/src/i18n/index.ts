@@ -8,17 +8,19 @@ import {
   resolveLocale,
   type SupportedLocale,
 } from './locales'
+import { terminologyPostProcessor } from './terminology'
 
 const loadedLocales = new Set<SupportedLocale>(['en'])
 const i18n = createInstance()
 
-const baseInitialization = i18n.use(initReactI18next).init({
+const baseInitialization = i18n.use(terminologyPostProcessor).use(initReactI18next).init({
   lng: 'en',
   fallbackLng: 'en',
   defaultNS: 'common',
   ns: Object.keys(en),
   resources: { en },
   interpolation: { escapeValue: false },
+  postProcess: ['cinaseekTerminology'],
   initAsync: false,
   react: { useSuspense: false },
 })

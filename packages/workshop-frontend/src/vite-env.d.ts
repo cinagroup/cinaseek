@@ -24,7 +24,7 @@ interface CinaSeekDesktopMenuAnchor {
 }
 
 interface CinaSeekDesktopBridge {
-  openMenu(menuId: CinaSeekDesktopMenuId, anchor: CinaSeekDesktopMenuAnchor): void;
+  openMenu(menuId: CinaSeekDesktopMenuId, anchor: CinaSeekDesktopMenuAnchor, locale: 'en' | 'zh-CN' | 'zh-TW'): void;
   setTheme(theme: 'light' | 'dark'): void;
 }
 

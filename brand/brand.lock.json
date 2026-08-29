@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "package": "@cinagroup/brand",
+    "repository": "https://github.com/cinagroup/cinabrand",
+    "version": "1.1.0"
+  },
+  "files": {
+    "assets/logo.png": "1434d0a85a9b265e01fc3f1e2dc15438ef3e2ed571dfba2304954ec58528eee2",
+    "brand/cinaseek.json": "85ab9885a3f28787fd3008bb74a92674650199392a71efb2ce3dc8b57d1d85c6",
+    "brand/terminology.json": "d2543f1342b3c94e6ca513baa3002f78681ecf8234733384915a1488a8f0cc4e",
+    "packages/app-electron/build/icon.ico": "8c16d72c33655505bd6eab1e9c7e1594a6bd2435d509f5b89530938591e6f7db",
+    "packages/app-electron/build/logo-rounded-3px.png": "56c9bef8607f61f792a005ceb8bbe694ce0862041d5cdbf810414a406b7bcec1",
+    "packages/app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png": "4e085c242d62ae31a74cd734a4ef307a9b70b44110d6c6899b914424d37224e5",
+    "packages/workshop-frontend/public/apple-touch-icon.png": "8235936bdf785a80cf31ad883b4a26f11fd609e81709065a7cb7b5cbed0e0cdb",
+    "packages/workshop-frontend/public/favicon-16.png": "888c1a12bf07613d3648195d2649993b42912f56e495bc09293ab816654bfd40",
+    "packages/workshop-frontend/public/favicon-32.png": "af2cc1af2d2ed652ded816083013ad87c96cd02ccff7d1ba8d9622d3debcc41a",
+    "packages/workshop-frontend/public/favicon.ico": "8c16d72c33655505bd6eab1e9c7e1594a6bd2435d509f5b89530938591e6f7db",
+    "packages/workshop-frontend/public/logo-transparent.png": "ee54ec4212edfb1600dec47989b501608775323955644eddb29c8f8b83a3dfbd",
+    "packages/workshop-frontend/public/logo.png": "1434d0a85a9b265e01fc3f1e2dc15438ef3e2ed571dfba2304954ec58528eee2",
+    "packages/workshop-frontend/public/pwa-192.png": "e1af4cf3af78dadd81ae5faf8063a7bf3c72b17526d4c4da6a3e46819e112942",
+    "packages/workshop-frontend/public/pwa-512.png": "5e91a58860a97f833e88492988a0a9447739473231f7986fc3bd6548c6aa9cd9"
+  }
+}

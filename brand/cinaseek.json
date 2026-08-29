@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "brandVersion": "1.1.0",
+  "product": {
+    "name": "CinaSeek",
+    "slug": "cinaseek",
+    "parentBrand": "CinaGroup",
+    "homepage": "https://cinaseek.ai",
+    "accountPortal": "https://accounts.cinaseek.ai",
+    "authIssuer": "https://auth.cinaseek.ai",
+    "source": "https://github.com/cinagroup/cinaseek",
+    "support": "https://github.com/cinagroup/cinaseek/issues"
+  },
+  "positioning": {
+    "en": {
+      "tagline": "Build what you need. Keep control.",
+      "description": "Turn ideas into secure, controllable, and shareable AI apps and agents connected only to the tools and data you choose."
+    },
+    "zh-CN": {
+      "tagline": "构建所需，始终可控。",
+      "description": "把想法变成安全、可控、可共享的 AI 应用与智能体，只连接你明确选择的工具与数据。"
+    },
+    "zh-TW": {
+      "tagline": "建構所需，始終可控。",
+      "description": "把想法變成安全、可控、可分享的 AI 應用程式與代理，只連接你明確選擇的工具與資料。"
+    }
+  },
+  "visual": {
+    "logoCornerRadiusPx": 3,
+    "colors": {
+      "accent": "#007CA8",
+      "accentHover": "#006A90",
+      "accentBright": "#19B5E6",
+      "splash": "#5DBFE3",
+      "canvas": "#FCFCFB",
+      "canvasDark": "#101016",
+      "ink": "#100F0D",
+      "cloud": "#FBFBFA"
+    }
+  },
+  "assets": {
+    "logo": "../../assets/logo/cinagroup-logo.png",
+    "logoRounded3px": "../../assets/logo/cinagroup-logo-rounded-3px.png",
+    "markBlack": "../../assets/logo/cinagroup-mark-black.png",
+    "markWhite": "../../assets/logo/cinagroup-mark-white.png",
+    "favicon": "../../assets/icons/web/favicon.ico",
+    "favicon16": "../../assets/icons/web/favicon-16.png",
+    "favicon32": "../../assets/icons/web/favicon-32.png",
+    "appleTouchIcon": "../../assets/icons/web/apple-touch-icon.png",
+    "pwa192": "../../assets/icons/web/pwa-192.png",
+    "pwa512": "../../assets/icons/web/pwa-512.png",
+    "windowsIcon": "../../assets/icons/windows/cinagroup.ico",
+    "appIcon1024": "../../assets/icons/app/cinagroup-app-icon-1024.png"
+  },
+  "terminology": "terminology.json"
+}

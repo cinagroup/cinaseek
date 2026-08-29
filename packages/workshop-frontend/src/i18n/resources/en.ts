@@ -16,16 +16,24 @@ const en = {
       description: 'Choose the language used by the CinaSeek interface on this device.',
     },
   },
+  desktopMenu: {
+    applicationMenu: 'Application menu',
+    file: 'File',
+    edit: 'Edit',
+    view: 'View',
+    help: 'Help',
+  },
   shell: {
+    brand: { poweredBy: 'Powered by CinaSeek' },
     nav: {
       primary: 'Primary',
       home: 'Home',
       workspaces: 'Workspaces',
       blueprints: 'Blueprints',
       outputs: 'Outputs',
-      explore: 'Explore',
+      explore: 'Discover',
       gatekeepers: 'Gatekeepers',
-      providers: 'Providers',
+      providers: 'AI Models',
       profile: 'Profile',
       admin: 'Admin',
     },
@@ -107,8 +115,8 @@ const en = {
   home: {
     pageTitle: 'Home',
     hero: {
-      title: 'What are we working on?',
-      subtitle: 'Ask a question, create an output, or create an app that works with your tools and data.',
+      title: 'Build what you need. Keep control.',
+      subtitle: 'Turn an idea into a secure app, agent, or result—connected only to the tools and data you choose.',
     },
     composer: {
       placeholder: 'Start a new conversation…',
@@ -155,6 +163,11 @@ const en = {
     },
   },
   auth: {
+    popup: {
+      waiting: 'Continue in the secure sign-in window.',
+      refocus: 'Open sign-in window',
+      cancel: 'Cancel sign-in',
+    },
     complete: {
       failedTitle: 'Sign in was not completed',
       successTitle: 'Signed in successfully',
@@ -627,7 +640,12 @@ const en = {
   },
   resourceConfigurator: { unavailable: 'Configurator is no longer available.', notReady: 'Configurator is not ready.', missingResourceUrl: 'Configurator did not provide its resource URL. Please try again.', frameTitle: 'Resource configurator' },
   connectionConfigField: { optional: 'Optional' },
-  gadgetExport: { failed: 'Failed to export PDF', exporting: 'Exporting to PDF', export: 'Export to PDF' },
+  gadgetExport: {
+    failed: 'Failed to export PDF', exporting: 'Exporting to PDF', export: 'Export to PDF',
+    failedFormat: 'Failed to export {{format}}', exportingFormat: 'Exporting to {{format}}', exportApp: 'Export app',
+    loadingFormats: 'Loading export formats', loadFailed: 'Export formats could not be loaded.', retry: 'Try again',
+    unsupported: 'This app does not support exports.',
+  },
   gadgetUse: { home: 'Home', byOwner: 'by {{name}}', gadgetFallback: 'Gadget', empty: 'This workspace has no gadgets yet.' },
   actionControls: {
     approve: 'Approve', deny: 'Deny', alwaysApprove: 'Always approve',
@@ -1333,9 +1351,10 @@ const en = {
     usernamePlaceholder: 'your-username',
     password: 'Password',
     or: 'or',
+    securedBy: 'Secured by CinaAuth',
     login: {
       pageTitle: 'Sign in',
-      subtitle: 'Sign in to your account',
+      subtitle: 'Sign in to {{siteName}}',
       submit: 'Sign in',
       invalidCredentials: 'Invalid username or password',
       failed: 'Login failed',
@@ -1344,7 +1363,7 @@ const en = {
     },
     signup: {
       pageTitle: 'Create account',
-      subtitle: 'Create your account',
+      subtitle: 'Create your {{siteName}} account',
       usernameRules: 'Letters, numbers, underscores, and hyphens only',
       passwordMinimum: 'Must be at least 8 characters',
       passwordMismatch: 'Passwords do not match',
@@ -1361,6 +1380,57 @@ const en = {
       cancelled: 'Sign-in was cancelled.',
       failed: 'Could not sign in',
       continueWith: 'Continue with {{provider}}',
+    },
+  },
+  trust: {
+    byCinaGroup: 'A CinaGroup product',
+    updated: 'Last updated: 29 August 2026',
+    navigation: 'Product information',
+    privacy: {
+      shortTitle: 'Privacy',
+      title: 'Privacy notice',
+      intro: 'How the default CinaSeek service handles information needed to build and run your AI apps and agents.',
+      sections: {
+        scope: { title: 'Scope', body: 'This notice describes the default CinaSeek deployment. An organization operating its own deployment may publish additional terms or configure different providers; its notice takes precedence for that deployment.' },
+        data: { title: 'Information processed', body: 'CinaSeek may process account identifiers supplied by the sign-in service, prompts and files you submit, generated results, connection metadata, and limited operational logs. Connected-service content is requested only through connections you authorize.' },
+        use: { title: 'Why it is processed', body: 'Information is used to authenticate you, provide the requested product features, route requests to the AI model and services you select, prevent abuse, diagnose failures, and maintain service reliability.' },
+        control: { title: 'Your choices', body: 'You can disconnect services, manage profile and workspace data, and ask the deployment operator about access, export, retention, or deletion. Third-party AI and connection providers apply their own notices when you choose to use them.' },
+      },
+    },
+    terms: {
+      shortTitle: 'Terms',
+      title: 'Terms of use',
+      intro: 'The basic rules for using CinaSeek responsibly and keeping control of the apps, agents, and connections you create.',
+      sections: {
+        account: { title: 'Accounts and access', body: 'Use an account you are authorized to control, keep credentials secure, and follow any access rules set by the operator of your deployment. You are responsible for activity performed through your account.' },
+        use: { title: 'Acceptable use', body: 'Do not use CinaSeek to violate law, infringe rights, bypass security controls, distribute malware, or access systems or data without permission. Automated actions remain subject to the rules of connected services.' },
+        content: { title: 'Your content and connections', body: 'You retain responsibility for prompts, files, apps, and results you provide or create. Only connect tools and data you are permitted to use, and review generated work before relying on or publishing it.' },
+        availability: { title: 'Service changes', body: 'AI models and connected services can be unavailable, change behavior, or produce incorrect results. Features may evolve. Open-source code is governed separately by the license included in the source repository.' },
+      },
+    },
+    security: {
+      shortTitle: 'Security',
+      title: 'Security at CinaSeek',
+      intro: 'CinaSeek is designed around explicit identity, isolated execution, and capability-based access to external tools and data.',
+      report: 'Report a vulnerability privately',
+      sections: {
+        model: { title: 'Sandboxed execution', body: 'User-built apps and agent code run inside constrained environments. The platform kernel and shared RPC boundary are reviewed separately from user-authored code.' },
+        identity: { title: 'Identity and sessions', body: 'Production deployments can use CinaAuth and Cloudflare Access for identity, MFA, device posture, session management, and access logs. CinaSeek consumes the verified identity and applies product authorization.' },
+        connections: { title: 'Connections by capability', body: 'External services are reached through scoped connections. Apps receive only the capabilities selected by a user or administrator, and sensitive write operations can require explicit approval.' },
+        reporting: { title: 'Responsible disclosure', body: 'Please do not publish an unpatched vulnerability. Include impact, affected component, reproduction steps, and any suggested mitigation in a private GitHub security advisory.' },
+      },
+    },
+    support: {
+      shortTitle: 'Support',
+      title: 'Support',
+      intro: 'Start with the channel that matches the issue so account, product, and security requests reach the right place.',
+      openIssue: 'Open a GitHub issue',
+      sections: {
+        help: { title: 'Product help', body: 'For setup, deployment, and product questions, check the documentation in the CinaSeek repository. Organization-managed deployments should also provide an operator support channel.' },
+        issues: { title: 'Bugs and feature requests', body: 'Use GitHub Issues for reproducible product bugs and public feature requests. Remove tokens, prompts, private files, and personal information before posting.' },
+        account: { title: 'Account and sign-in', body: 'For CinaAuth or organization-access problems, include the sign-in method, approximate time, and non-sensitive error text. Never send passwords, verification codes, client secrets, or tokens.' },
+        response: { title: 'Security issues', body: 'Security vulnerabilities should use the private reporting link on the Security page, not a public issue or ordinary support email.' },
+      },
     },
   },
   workpiecePicker: {
@@ -1488,17 +1558,17 @@ const en = {
       description: 'When off, existing users can still log in but no new accounts can be created.',
     },
     siteName: {
-      title: 'Site name',
-      description: 'Shown next to the logo in the top bar. Leave empty to use the default (“{{defaultName}}”). Applies on each user’s next connection.',
+      title: 'Deployment name',
+      description: 'Your organization or deployment identity, shown beside its logo. Leave empty to use “{{defaultName}}”. Customized deployments retain CinaSeek product attribution. Applies on each user’s next connection.',
     },
     logo: {
-      title: 'Logo',
-      description: 'Shown in the app chrome, sign-in screens, and browser tab. Images are scaled without cropping and converted to a static PNG. Square images work best. Applies on each user’s next connection.',
+      title: 'Deployment logo',
+      description: 'Shown with the deployment name in app chrome and sign-in screens. Images are scaled without cropping and converted to a static PNG; square images work best. The canonical CinaSeek mark remains in product attribution and public trust pages.',
       change: 'Change logo', upload: 'Upload logo', restore: 'Restore default',
     },
     theme: {
       title: 'Theme',
-      description: 'Accent color used for buttons, links, and highlights. Changes preview live here; click Save to apply for everyone on their next connection. Backgrounds keep the default warm theme.',
+      description: 'Deployment accent used for buttons, links, and highlights. Changes preview live here; click Save to apply for everyone on their next connection. CinaSeek’s neutral canvas and accessibility behavior remain unchanged.',
       custom: 'Custom', defaultSuffix: 'default',
       presets: { default: 'Default', blue: 'Blue', green: 'Green', purple: 'Purple', pink: 'Pink', teal: 'Teal' },
     },

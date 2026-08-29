@@ -1485,8 +1485,8 @@ export default function GadgetEditor() {
           <WorkshopIconButton
             onClick={() => setBlueprintModalOpen(true)}
             disabled={!selectedGadgetStub}
-            title="Blueprints"
-            aria-label="Blueprints"
+            title="Templates"
+            aria-label="Templates"
           >
             <Blueprint size={16} />
           </WorkshopIconButton>
@@ -1509,7 +1509,7 @@ export default function GadgetEditor() {
           <span className="md:hidden">
             <GadgetExportMenu
               gadget={selectedGadgetStub}
-              gadgetTitle={selectedGadgetSummary?.title ?? 'Gadget'}
+              gadgetTitle={selectedGadgetSummary?.title ?? 'App'}
               chatId={previewChatId}
             />
           </span>
@@ -1604,7 +1604,7 @@ export default function GadgetEditor() {
               onClick={() => setBlueprintModalOpen(true)}
               className={MENU_ITEM}
             >
-              Blueprints
+              Templates
             </DropdownMenu.Item>
             <DropdownMenu.Item
               disabled={!mobilePreviewActive}
@@ -1773,7 +1773,7 @@ export default function GadgetEditor() {
               {!paneShowsActivity && (
                 <GadgetExportMenu
                   gadget={selectedGadgetStub}
-                  gadgetTitle={selectedGadgetSummary?.title ?? 'Gadget'}
+                  gadgetTitle={selectedGadgetSummary?.title ?? 'App'}
                   chatId={previewChatId}
                 />
               )}
@@ -1832,7 +1832,7 @@ export default function GadgetEditor() {
               tabIndex={isGadgetFullscreen ? -1 : undefined}
               role={isGadgetFullscreen ? 'dialog' : undefined}
               aria-modal={isGadgetFullscreen ? true : undefined}
-              aria-label={isGadgetFullscreen ? 'Gadget full screen' : undefined}
+              aria-label={isGadgetFullscreen ? 'App full screen' : undefined}
               className={
                 activeTab !== 'app' || previewMode
                   ? 'hidden'

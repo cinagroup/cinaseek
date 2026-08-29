@@ -86,7 +86,7 @@ export default function ToolCallCard({ tool }: { tool: ToolCall }) {
           )}
           {tool.output && (
             <div>
-              <span className="font-mono text-[10px] text-kumo-subtle uppercase tracking-wider">Output</span>
+              <span className="font-mono text-[10px] text-kumo-subtle uppercase tracking-wider">Result</span>
               <p className="text-xs text-kumo-subtle mt-1">{tool.output}</p>
             </div>
           )}

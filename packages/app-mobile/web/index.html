@@ -1,13 +1,13 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-    <meta name="theme-color" content="#59c4e2" />
+    <meta name="theme-color" content="#5dbfe3" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src https://cinaseek.ai" />
     <title>CinaSeek</title>
     <style>
-      :root { color-scheme: light dark; font-family: system-ui, sans-serif; background: #59c4e2; }
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; background: #5dbfe3; }
       body { min-height: 100vh; margin: 0; display: grid; place-items: center; color: #07181d; }
       main { text-align: center; padding: 24px; }
       img { width: 112px; height: 112px; border-radius: 28px; }
@@ -17,8 +17,20 @@
   <body>
     <main>
       <img src="logo.png" alt="CinaSeek" />
-      <p>正在安全连接 CinaSeek…</p>
+      <p id="status">Connecting securely to CinaSeek…</p>
     </main>
-    <script>window.location.replace('https://cinaseek.ai/')</script>
+    <script>
+      const language = navigator.languages.some((item) => /^(zh-TW|zh-HK|zh-MO)/i.test(item))
+        ? 'zh-TW'
+        : navigator.languages.some((item) => /^zh/i.test(item)) ? 'zh-CN' : 'en'
+      const status = {
+        en: 'Connecting securely to CinaSeek…',
+        'zh-CN': '正在安全连接 CinaSeek…',
+        'zh-TW': '正在安全連線 CinaSeek…',
+      }
+      document.documentElement.lang = language
+      document.getElementById('status').textContent = status[language]
+      window.location.replace('https://cinaseek.ai/')
+    </script>
   </body>
 </html>

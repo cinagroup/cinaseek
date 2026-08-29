@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "terms": {
+    "workspace": {
+      "internal": "Workspace",
+      "en": "Workspace",
+      "zh-CN": "工作区",
+      "zh-TW": "工作區"
+    },
+    "gadget": {
+      "internal": "Gadget",
+      "en": "App",
+      "zh-CN": "应用",
+      "zh-TW": "應用程式"
+    },
+    "blueprint": {
+      "internal": "Blueprint",
+      "en": "Template",
+      "zh-CN": "模板",
+      "zh-TW": "範本"
+    },
+    "gatekeeper": {
+      "internal": "Gatekeeper",
+      "en": "Connection",
+      "zh-CN": "连接与权限",
+      "zh-TW": "連線與權限"
+    },
+    "output": {
+      "internal": "Output",
+      "en": "Result",
+      "zh-CN": "成果",
+      "zh-TW": "成果"
+    },
+    "provider": {
+      "internal": "Provider",
+      "en": "AI model",
+      "zh-CN": "AI 模型",
+      "zh-TW": "AI 模型"
+    }
+  },
+  "compatibility": {
+    "preserveInternalIdentifiers": true,
+    "preserveArchiveExtension": ".gadget",
+    "archiveDisplayName": "CinaSeek App Package"
+  }
+}

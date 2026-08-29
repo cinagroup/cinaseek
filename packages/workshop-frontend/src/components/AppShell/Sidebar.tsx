@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { DEFAULT_SITE_NAME } from '@gadgets/workshop-shared/api'
 import {
   Blueprint,
   BookOpen,
@@ -47,6 +48,7 @@ export default function Sidebar({
 }) {
   const { t } = useTranslation('shell')
   const siteName = useSiteName()
+  const customDeploymentName = siteName !== DEFAULT_SITE_NAME
   const auth = useOptionalAuthenticatedApi()
   // Gatekeeper-served management apps the user can reach now (one per gatekeeper that provides a UI
   // and is connected / enabled for everyone). Disabled or not-yet-connected ones aren't returned, so
@@ -71,13 +73,24 @@ export default function Sidebar({
           collapsed ? 'justify-center px-1.5' : 'justify-between gap-2 px-3',
         ].join(' ')}
       >
-        <Link to="/" aria-label={siteName} className="flex min-w-0 items-center gap-2">
+        <Link
+          to="/"
+          aria-label={customDeploymentName ? `${siteName}, ${t('brand.poweredBy')}` : siteName}
+          className="flex min-w-0 items-center gap-2"
+        >
           <SiteLogo size={20} className="shrink-0">
             <Hexagon size={20} weight="bold" className="text-kumo-brand shrink-0" />
           </SiteLogo>
           {!collapsed && (
-            <span className="truncate text-[14px] leading-5 font-semibold tracking-[-0.25px] text-kumo-default">
-              {siteName}
+            <span className="min-w-0">
+              <span className="block truncate text-[14px] leading-4 font-semibold tracking-[-0.25px] text-kumo-default">
+                {siteName}
+              </span>
+              {customDeploymentName && (
+                <span className="block truncate text-[10px] leading-3 text-kumo-inactive">
+                  {t('brand.poweredBy')}
+                </span>
+              )}
             </span>
           )}
         </Link>

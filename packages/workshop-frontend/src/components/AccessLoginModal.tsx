@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ShieldCheck } from '@phosphor-icons/react'
+import { ArrowSquareOut, Hexagon, ShieldCheck, X } from '@phosphor-icons/react'
 import {
   ACCESS_LOGIN_COMPLETE_MESSAGE,
   ACCESS_LOGIN_COMPLETE_PATH,
@@ -9,8 +9,10 @@ import {
 } from '../accessSession'
 import { useTranslation } from '../i18n'
 import { isCinaSeekMobileShell } from '../nativeShell'
+import SiteLogo from './SiteLogo'
 
 type LoginRequestDetail = { returnTo?: unknown }
+type AttemptStatus = 'idle' | 'waiting'
 
 const POPUP_WIDTH = 520
 const POPUP_HEIGHT = 760
@@ -79,15 +81,18 @@ export default function AccessLoginController({
   onFullPageAuthentication?: (returnTo: string) => void
   preferFullPageAuthentication?: boolean
 }) {
+  const { t } = useTranslation('auth')
   const popupRef = useRef<Window | null>(null)
   const requestIdRef = useRef<string | null>(null)
   const returnToRef = useRef('/')
+  const [attemptStatus, setAttemptStatus] = useState<AttemptStatus>('idle')
 
   const clearAttempt = useCallback((closePopup: boolean) => {
     const popup = popupRef.current
     const requestId = requestIdRef.current
     popupRef.current = null
     requestIdRef.current = null
+    setAttemptStatus('idle')
     if (closePopup) popup?.close()
     if (requestId) {
       try { localStorage.removeItem(completionStorageKey(requestId)) } catch {}
@@ -106,6 +111,7 @@ export default function AccessLoginController({
 
     if (popupRef.current && !popupRef.current.closed) {
       popupRef.current.focus()
+      setAttemptStatus('waiting')
       return
     }
 
@@ -128,6 +134,7 @@ export default function AccessLoginController({
     }
     popupRef.current = popup
     popup.focus()
+    setAttemptStatus('waiting')
   }, [clearAttempt, createRequestId, onFullPageAuthentication, openWindow, preferFullPageAuthentication])
 
   useEffect(() => {
@@ -171,7 +178,36 @@ export default function AccessLoginController({
 
   useEffect(() => () => clearAttempt(true), [clearAttempt])
 
-  return null
+  if (attemptStatus === 'idle') return null
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-4 right-4 z-[100] flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-xl border border-kumo-line bg-kumo-overlay px-3 py-2.5 text-kumo-default shadow-lg"
+    >
+      <SiteLogo size={24} className="shrink-0">
+        <Hexagon size={24} weight="bold" className="shrink-0 text-kumo-brand" />
+      </SiteLogo>
+      <span className="min-w-0 text-sm">{t('popup.waiting')}</span>
+      <button
+        type="button"
+        onClick={() => popupRef.current?.focus()}
+        className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium text-kumo-brand hover:bg-kumo-tint"
+      >
+        <ArrowSquareOut size={14} />
+        <span className="hidden sm:inline">{t('popup.refocus')}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => clearAttempt(true)}
+        aria-label={t('popup.cancel')}
+        title={t('popup.cancel')}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-kumo-inactive hover:bg-kumo-tint hover:text-kumo-default"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  )
 }
 
 /** Minimal status surface shown only inside the same-origin Access completion popup. */

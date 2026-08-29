@@ -53,12 +53,12 @@ function formatRelativeTime(date: Date): string {
 
 const ROLE_LABELS: Record<CollaboratorRole, string> = {
   build: 'Workspace',
-  use: 'Gadget only',
+  use: 'App only',
 }
 
 const ROLE_DESCRIPTIONS: Record<CollaboratorRole, string> = {
-  build: 'Edit gadgets, use chat, and manage access.',
-  use: 'Use gadgets without agent chat or editing.',
+  build: 'Edit apps, use chat, and manage access.',
+  use: 'Use apps without agent chat or editing.',
 }
 
 function roleLabel(role: CollaboratorRole | undefined): string {

@@ -9,10 +9,18 @@ const zhTW: TranslationCatalog = {
       description: '選擇此裝置上 CinaSeek 介面使用的語言。',
     },
   },
+  desktopMenu: {
+    applicationMenu: '應用程式選單',
+    file: '檔案',
+    edit: '編輯',
+    view: '檢視',
+    help: '說明',
+  },
   shell: {
+    brand: { poweredBy: '由 CinaSeek 提供支援' },
     nav: {
       primary: '主導覽', home: '首頁', workspaces: '工作區', blueprints: '藍圖', outputs: '輸出',
-      explore: '探索', gatekeepers: '連接器', providers: '模型供應商', profile: '個人資料', admin: '管理後台',
+      explore: '範本中心', gatekeepers: '連線與權限', providers: 'AI 模型', profile: '個人資料', admin: '管理後台',
     },
     sidebar: {
       search: '搜尋', searchWithShortcut: '搜尋（⌘K）', collapse: '收合側欄', expand: '展開側欄',
@@ -49,7 +57,7 @@ const zhTW: TranslationCatalog = {
   },
   home: {
     pageTitle: '首頁',
-    hero: { title: '今天想做些什麼？', subtitle: '提出問題、產生內容，或建立能使用你的工具與資料的應用程式。' },
+    hero: { title: '建構所需，始終可控。', subtitle: '把想法變成安全的應用程式、代理或成果，只連接你明確選擇的工具與資料。' },
     composer: {
       placeholder: '開始新的對話…', promptLabel: '輸入內容', uploadSignIn: '登入後上傳檔案', addResource: '新增資源',
       modelSignIn: '登入後選擇模型', chooseModel: '登入後選擇模型', sendSignIn: '登入並傳送訊息',
@@ -81,6 +89,7 @@ const zhTW: TranslationCatalog = {
     },
   },
   auth: {
+    popup: { waiting: '請在安全登入視窗中繼續。', refocus: '開啟登入視窗', cancel: '取消登入' },
     complete: {
       failedTitle: '登入未完成', successTitle: '登入成功', finishingTitle: '正在完成登入…',
       failedDescription: '請關閉此視窗，然後從 CinaSeek 重試。', successDescription: '你可以關閉此視窗並返回 CinaSeek。',
@@ -302,7 +311,11 @@ const zhTW: TranslationCatalog = {
   },
   resourceConfigurator: { unavailable: '設定器已無法使用。', notReady: '設定器尚未就緒。', missingResourceUrl: '設定器未提供資源 URL，請再試一次。', frameTitle: '資源設定器' },
   connectionConfigField: { optional: '可選' },
-  gadgetExport: { failed: '匯出 PDF 失敗', exporting: '正在匯出 PDF', export: '匯出為 PDF' },
+  gadgetExport: {
+    failed: '匯出 PDF 失敗', exporting: '正在匯出 PDF', export: '匯出為 PDF',
+    failedFormat: '匯出 {{format}} 失敗', exportingFormat: '正在匯出為 {{format}}', exportApp: '匯出應用程式',
+    loadingFormats: '正在載入匯出格式', loadFailed: '無法載入匯出格式。', retry: '重試', unsupported: '此應用程式不支援匯出。',
+  },
   gadgetUse: { home: '首頁', byOwner: '作者：{{name}}', gadgetFallback: '應用程式', empty: '此工作區尚無應用程式。' },
   actionControls: {
     approve: '核准', deny: '拒絕', alwaysApprove: '一律核准', disableHookDescription: '停用此掛鉤。', enableHookDescription: '啟用此掛鉤。', disableHook: '停用掛鉤', enableHook: '啟用掛鉤',
@@ -534,18 +547,57 @@ const zhTW: TranslationCatalog = {
   outputFormats: { createFailed: '無法新增{{noun}}' },
   authPages: {
     deploymentSettingsFailed: '無法載入部署設定。', reload: '重新載入', serverUnreachable: '無法連接伺服器，正在重試…', loading: '正在載入…',
-    username: '使用者名稱', usernamePlaceholder: '請輸入使用者名稱', password: '密碼', or: '或',
+    username: '使用者名稱', usernamePlaceholder: '請輸入使用者名稱', password: '密碼', or: '或', securedBy: '由 CinaAuth 提供安全身分驗證',
     login: {
-      pageTitle: '登入', subtitle: '登入你的帳戶', submit: '登入', invalidCredentials: '使用者名稱或密碼無效', failed: '登入失敗',
+      pageTitle: '登入', subtitle: '登入 {{siteName}}', submit: '登入', invalidCredentials: '使用者名稱或密碼無效', failed: '登入失敗',
       noAccount: '還沒有帳戶？', createOne: '建立帳戶',
     },
     signup: {
-      pageTitle: '建立帳戶', subtitle: '建立你的帳戶', usernameRules: '只能使用英文字母、數字、底線和連字號',
+      pageTitle: '建立帳戶', subtitle: '建立 {{siteName}} 帳戶', usernameRules: '只能使用英文字母、數字、底線和連字號',
       passwordMinimum: '至少需要 8 個字元', passwordMismatch: '兩次輸入的密碼不相符', usernameExists: '使用者名稱已存在',
       failed: '建立帳戶失敗', closedTitle: '註冊已關閉', closedDescription: '此部署目前已停用新帳戶註冊。',
       confirmPassword: '確認密碼', submit: '建立帳戶', hasAccount: '已有帳戶？',
     },
     oauth: { popupBlocked: '彈出視窗遭瀏覽器封鎖，請允許彈出視窗後再試。', cancelled: '登入已取消。', failed: '無法登入', continueWith: '使用 {{provider}} 繼續' },
+  },
+  trust: {
+    byCinaGroup: 'CinaGroup 旗下產品', updated: '最後更新：2026 年 8 月 29 日', navigation: '產品資訊',
+    privacy: {
+      shortTitle: '隱私', title: '隱私說明', intro: '說明預設 CinaSeek 服務如何處理建構及執行 AI 應用程式與代理程式所需的資訊。',
+      sections: {
+        scope: { title: '適用範圍', body: '本說明適用於預設 CinaSeek 部署。自行營運部署的組織可能發布補充條款或設定不同的服務供應商；該組織的說明優先適用於其部署。' },
+        data: { title: '處理的資訊', body: 'CinaSeek 可能處理登入服務提供的帳戶識別、你提交的提示詞與檔案、產生的成果、連線中繼資料，以及有限的運作記錄。僅透過你授權的連線請求外部服務內容。' },
+        use: { title: '處理目的', body: '相關資訊用於驗證身分、提供所要求的產品功能、向你選擇的 AI 模型和服務傳送請求、防止濫用、診斷故障並維持服務可靠性。' },
+        control: { title: '你的選擇', body: '你可以中斷服務、管理個人資料與工作區資料，並向部署營運方申請存取、匯出、保留或刪除資料。你選擇的第三方 AI 與連線服務適用其各自的隱私說明。' },
+      },
+    },
+    terms: {
+      shortTitle: '條款', title: '使用條款', intro: '負責任地使用 CinaSeek，並持續掌控你建立的應用程式、代理程式與連線。',
+      sections: {
+        account: { title: '帳戶與存取', body: '請使用你有權控制的帳戶，妥善保護憑證，並遵守部署營運方設定的存取規則。你需要對透過帳戶執行的活動負責。' },
+        use: { title: '可接受使用', body: '不得使用 CinaSeek 違法、侵權、繞過安全控制、散布惡意軟體，或未經授權存取系統與資料。自動化操作仍需遵守所連線服務的規則。' },
+        content: { title: '內容與連線', body: '你需要對自己提供或建立的提示詞、檔案、應用程式與成果負責。只連線獲准使用的工具和資料，並在依賴或發布生成內容前進行審核。' },
+        availability: { title: '服務變更', body: 'AI 模型與外部服務可能無法使用、改變行為或產生錯誤結果，產品功能也可能演進。開源程式碼另行遵循原始碼儲存庫中附帶的授權條款。' },
+      },
+    },
+    security: {
+      shortTitle: '安全', title: 'CinaSeek 安全', intro: 'CinaSeek 圍繞明確身分、隔離執行環境，以及面向外部工具與資料的能力授權進行設計。', report: '私密回報安全漏洞',
+      sections: {
+        model: { title: '沙箱執行', body: '使用者建立的應用程式與代理程式程式碼在受限制的環境中執行。平台核心和共用 RPC 邊界與使用者撰寫的程式碼分開審查。' },
+        identity: { title: '身分與工作階段', body: '正式環境部署可使用 CinaAuth 與 Cloudflare Access 提供身分驗證、MFA、裝置狀態、工作階段管理和存取記錄；CinaSeek 讀取已驗證身分並執行產品授權。' },
+        connections: { title: '基於能力的連線', body: '外部服務透過限定範圍的連線存取。應用程式只獲得使用者或管理員選定的能力；敏感寫入操作可以要求明確核准。' },
+        reporting: { title: '負責任揭露', body: '請勿公開尚未修復的漏洞。請在 GitHub 私密安全公告中提供影響、受影響元件、重現步驟及建議的緩解措施。' },
+      },
+    },
+    support: {
+      shortTitle: '支援', title: '支援', intro: '請根據問題類型選擇管道，讓帳戶、產品與安全問題得到正確處理。', openIssue: '提交 GitHub Issue',
+      sections: {
+        help: { title: '產品協助', body: '部署、設定及產品使用問題，請先查看 CinaSeek 儲存庫文件。由組織管理的部署還應提供營運方支援管道。' },
+        issues: { title: '錯誤與功能建議', body: '可重現的產品錯誤和公開功能建議請使用 GitHub Issues。提交前請移除權杖、提示詞、私密檔案與個人資訊。' },
+        account: { title: '帳戶與登入', body: 'CinaAuth 或組織存取問題，請提供登入方式、大致時間和不含敏感資訊的錯誤文字。切勿傳送密碼、驗證碼、用戶端密鑰或權杖。' },
+        response: { title: '安全問題', body: '安全漏洞請使用「安全」頁面的私密回報連結，不要建立公開 Issue 或傳送一般支援郵件。' },
+      },
+    },
   },
   workpiecePicker: {
     collapse: '收合輸出', expand: '展開輸出', outputs: '輸出', saveName: '儲存應用程式名稱', cancelRename: '取消重新命名',
@@ -618,13 +670,13 @@ const zhTW: TranslationCatalog = {
       characterCount: '{{current}} / {{maximum}} 個字元',
     },
     access: { title: '允許新使用者註冊', description: '關閉後，現有使用者仍可登入，但無法建立新帳戶。' },
-    siteName: { title: '網站名稱', description: '顯示於頂端列標誌旁。留空則使用預設名稱「{{defaultName}}」。將於使用者下次連線時生效。' },
+    siteName: { title: '部署名稱', description: '作為組織或部署識別顯示於部署標誌旁。留空則使用「{{defaultName}}」。自訂部署仍會保留 CinaSeek 產品歸屬，並於使用者下次連線時生效。' },
     logo: {
-      title: '標誌', description: '顯示於應用程式介面、登入頁面和瀏覽器分頁中。圖片會在不裁切的情況下縮放並轉換為靜態 PNG，建議使用方形圖片。將於使用者下次連線時生效。',
+      title: '部署標誌', description: '與部署名稱一起顯示於應用程式介面和登入頁面。圖片會在不裁切的情況下縮放並轉換為靜態 PNG，建議使用方形圖片。CinaSeek 標誌仍會用於產品歸屬和公開信任頁面。',
       change: '更換標誌', upload: '上傳標誌', restore: '還原預設',
     },
     theme: {
-      title: '主題', description: '用於按鈕、連結和強調內容的品牌色。變更會在此即時預覽；儲存後將於所有使用者下次連線時生效。背景仍使用預設暖色主題。',
+      title: '主題', description: '用於按鈕、連結和強調內容的部署強調色。變更會在此即時預覽；儲存後將於所有使用者下次連線時生效。CinaSeek 的中性畫布與無障礙行為保持不變。',
       custom: '自訂', defaultSuffix: '預設',
       presets: { default: '預設', blue: '藍色', green: '綠色', purple: '紫色', pink: '粉紅色', teal: '青色' },
     },

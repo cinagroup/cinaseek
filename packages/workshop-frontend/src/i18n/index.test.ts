@@ -14,7 +14,7 @@ describe('setLocale', () => {
     window.history.replaceState({}, '', '/?lang=en&prompt=hello')
     await setLocale('zh-CN')
 
-    expect(i18n.t('home:hero.title')).toBe('今天想做点什么？')
+    expect(i18n.t('home:hero.title')).toBe('构建所需，始终可控。')
     expect(document.documentElement.lang).toBe('zh-CN')
     expect(document.documentElement.dir).toBe('ltr')
     expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('zh-CN')

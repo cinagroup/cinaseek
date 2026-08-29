@@ -10,7 +10,7 @@
     "test": "node scripts/verify-version.mjs",
     "prepare:web": "node scripts/prepare-web.mjs",
     "sync": "pnpm run prepare:web && cap sync",
-    "assets": "capacitor-assets generate --ios --assetPath ../workshop-frontend/public --iconBackgroundColor \"#59c4e2\" --iconBackgroundColorDark \"#59c4e2\" --splashBackgroundColor \"#59c4e2\" --splashBackgroundColorDark \"#59c4e2\" && capacitor-assets generate --android --assetPath ../workshop-frontend/public --iconBackgroundColor \"#59c4e2\" --iconBackgroundColorDark \"#59c4e2\" --splashBackgroundColor \"#59c4e2\" --splashBackgroundColorDark \"#59c4e2\"",
+    "assets": "capacitor-assets generate --ios --assetPath ../workshop-frontend/public --iconBackgroundColor \"#5dbfe3\" --iconBackgroundColorDark \"#5dbfe3\" --splashBackgroundColor \"#5dbfe3\" --splashBackgroundColorDark \"#5dbfe3\" && capacitor-assets generate --android --assetPath ../workshop-frontend/public --iconBackgroundColor \"#5dbfe3\" --iconBackgroundColorDark \"#5dbfe3\" --splashBackgroundColor \"#5dbfe3\" --splashBackgroundColorDark \"#5dbfe3\"",
     "open:android": "cap open android",
     "open:ios": "cap open ios",
     "build:android:debug": "node scripts/run-gradle.mjs assembleDebug",

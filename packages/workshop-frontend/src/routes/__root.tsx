@@ -15,12 +15,14 @@ import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
 import { beginAccessLogin, currentReturnTo } from '../accessSession'
 import { AccessLoginComplete } from '../components/AccessLoginModal'
+import { useTranslation } from '../i18n'
 
 export const Route = createRootRoute({
   component: RootComponent,
 })
 
 function RootComponent() {
+  const { t } = useTranslation(['shell', 'common'])
   const { stub: rpcStub, connectionLost, accessSessionStatus } = useRpcContext()
   const { isAuthenticated, authenticatedApi, isLoading, error, logout, login } =
     useAuth(rpcStub, accessSessionStatus)
@@ -29,11 +31,13 @@ function RootComponent() {
   // Routes that don't require auth (public routes)
   const isSignup = pathname === '/signup'
   const isBlueprint = pathname.startsWith('/blueprint/')
+  const isTrustPage = pathname === '/legal/privacy' || pathname === '/legal/terms' ||
+    pathname === '/security' || pathname === '/support'
 
   // A standalone (no app shell) render is used only for signed-out visitors of public routes.
   // Signed-in users get the full app chrome so public pages (esp. the blueprint detail) feel
   // native — sidebar and all — instead of floating on a bare page.
-  const standalone = !CF_ACCESS_MODE && (isSignup || (isBlueprint && !isAuthenticated))
+  const standalone = isTrustPage || (!CF_ACCESS_MODE && (isSignup || (isBlueprint && !isAuthenticated)))
   const publicGuestHome = CF_ACCESS_MODE && pathname === '/' && !isAuthenticated
   const accessLoginComplete = CF_ACCESS_MODE && pathname === '/auth/complete'
 
@@ -57,7 +61,9 @@ function RootComponent() {
     return (
       <div className="flex min-h-full items-center justify-center flex-col gap-4 bg-kumo-base">
         <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-kumo-subtle">{connectionLost ? 'Waiting for server…' : 'Loading...'}</p>
+        <p className="text-sm text-kumo-subtle">
+          {connectionLost ? t('shell:status.waitingForServer') : t('shell:status.loading')}
+        </p>
       </div>
     )
   }
@@ -66,12 +72,12 @@ function RootComponent() {
   if (error && !standalone && !publicGuestHome) {
     return (
       <div className="flex min-h-full items-center justify-center flex-col gap-4 bg-kumo-base p-6">
-        <p className="text-sm text-kumo-danger">Authentication error: {error}</p>
+        <p className="text-sm text-kumo-danger">{t('shell:status.authenticationError', { error })}</p>
         <button
           onClick={() => window.location.reload()}
           className="px-4 py-2 text-sm font-medium text-kumo-inverse bg-kumo-brand rounded-lg hover:bg-kumo-brand-hover transition-colors"
         >
-          Retry
+          {t('common:actions.retry')}
         </button>
       </div>
     )
@@ -139,11 +145,12 @@ function RootComponent() {
 }
 
 function AccessLoginRedirect() {
+  const { t } = useTranslation('shell')
   useEffect(() => beginAccessLogin(currentReturnTo()), [])
   return (
     <div className="flex min-h-full items-center justify-center flex-col gap-4 bg-kumo-base">
       <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-      <p className="text-sm text-kumo-subtle">Opening sign in…</p>
+      <p className="text-sm text-kumo-subtle">{t('status.openingSignIn')}</p>
     </div>
   )
 }

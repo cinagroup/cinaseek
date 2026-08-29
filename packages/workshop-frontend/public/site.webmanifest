@@ -1,0 +1,26 @@
+{
+  "name": "CinaSeek",
+  "short_name": "CinaSeek",
+  "description": "Build what you need. Keep control. Create secure AI apps and agents connected only to the tools and data you choose.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#FCFCFB",
+  "theme_color": "#007CA8",
+  "icons": [
+    {
+      "src": "/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

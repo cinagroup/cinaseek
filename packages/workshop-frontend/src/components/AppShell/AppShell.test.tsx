@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 /* eslint-disable react/react-in-jsx-scope */
 
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@tanstack/react-router', () => ({ useRouterState: () => '/' }))
+vi.mock('@tanstack/react-router', () => ({
+  useRouterState: () => '/',
+  Link: ({ children }: { children: ReactNode }) => <a href="/">{children}</a>,
+}))
 
 vi.mock('../../RpcContext', () => ({ useConnectionLost: () => false }))
 vi.mock('../../TopBarNotice', () => ({ default: () => null }))

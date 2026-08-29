@@ -11,10 +11,18 @@ const zhCN: TranslationCatalog = {
       description: '选择此设备上 CinaSeek 界面使用的语言。',
     },
   },
+  desktopMenu: {
+    applicationMenu: '应用菜单',
+    file: '文件',
+    edit: '编辑',
+    view: '视图',
+    help: '帮助',
+  },
   shell: {
+    brand: { poweredBy: '由 CinaSeek 提供支持' },
     nav: {
       primary: '主导航', home: '首页', workspaces: '工作区', blueprints: '蓝图', outputs: '输出',
-      explore: '探索', gatekeepers: '连接器', providers: '模型提供商', profile: '个人资料', admin: '管理后台',
+      explore: '模板中心', gatekeepers: '连接与权限', providers: 'AI 模型', profile: '个人资料', admin: '管理后台',
     },
     sidebar: {
       search: '搜索', searchWithShortcut: '搜索（⌘K）', collapse: '收起侧栏', expand: '展开侧栏',
@@ -51,7 +59,7 @@ const zhCN: TranslationCatalog = {
   },
   home: {
     pageTitle: '首页',
-    hero: { title: '今天想做点什么？', subtitle: '提出问题、生成内容，或创建能使用你的工具与数据的应用。' },
+    hero: { title: '构建所需，始终可控。', subtitle: '把想法变成安全的应用、智能体或成果，只连接你明确选择的工具与数据。' },
     composer: {
       placeholder: '开始新的对话…', promptLabel: '输入内容', uploadSignIn: '登录后上传文件', addResource: '添加资源',
       modelSignIn: '登录后选择模型', chooseModel: '登录后选择模型', sendSignIn: '登录并发送消息',
@@ -83,6 +91,7 @@ const zhCN: TranslationCatalog = {
     },
   },
   auth: {
+    popup: { waiting: '请在安全登录窗口中继续。', refocus: '打开登录窗口', cancel: '取消登录' },
     complete: {
       failedTitle: '登录未完成', successTitle: '登录成功', finishingTitle: '正在完成登录…',
       failedDescription: '请关闭此窗口，然后从 CinaSeek 重试。', successDescription: '你可以关闭此窗口并返回 CinaSeek。',
@@ -304,7 +313,11 @@ const zhCN: TranslationCatalog = {
   },
   resourceConfigurator: { unavailable: '配置器已不可用。', notReady: '配置器尚未就绪。', missingResourceUrl: '配置器未提供资源 URL，请重试。', frameTitle: '资源配置器' },
   connectionConfigField: { optional: '可选' },
-  gadgetExport: { failed: '导出 PDF 失败', exporting: '正在导出 PDF', export: '导出为 PDF' },
+  gadgetExport: {
+    failed: '导出 PDF 失败', exporting: '正在导出 PDF', export: '导出为 PDF',
+    failedFormat: '导出 {{format}} 失败', exportingFormat: '正在导出为 {{format}}', exportApp: '导出应用',
+    loadingFormats: '正在加载导出格式', loadFailed: '无法加载导出格式。', retry: '重试', unsupported: '此应用不支持导出。',
+  },
   gadgetUse: { home: '首页', byOwner: '作者：{{name}}', gadgetFallback: '应用', empty: '此工作区还没有应用。' },
   actionControls: {
     approve: '批准', deny: '拒绝', alwaysApprove: '始终批准', disableHookDescription: '禁用此挂钩。', enableHookDescription: '启用此挂钩。', disableHook: '禁用挂钩', enableHook: '启用挂钩',
@@ -536,18 +549,57 @@ const zhCN: TranslationCatalog = {
   outputFormats: { createFailed: '无法新建{{noun}}' },
   authPages: {
     deploymentSettingsFailed: '无法加载部署设置。', reload: '重新加载', serverUnreachable: '无法连接服务器，正在重试…', loading: '正在加载…',
-    username: '用户名', usernamePlaceholder: '请输入用户名', password: '密码', or: '或',
+    username: '用户名', usernamePlaceholder: '请输入用户名', password: '密码', or: '或', securedBy: '由 CinaAuth 提供安全身份认证',
     login: {
-      pageTitle: '登录', subtitle: '登录你的账户', submit: '登录', invalidCredentials: '用户名或密码无效', failed: '登录失败',
+      pageTitle: '登录', subtitle: '登录 {{siteName}}', submit: '登录', invalidCredentials: '用户名或密码无效', failed: '登录失败',
       noAccount: '还没有账户？', createOne: '创建账户',
     },
     signup: {
-      pageTitle: '创建账户', subtitle: '创建你的账户', usernameRules: '只能使用字母、数字、下划线和连字符',
+      pageTitle: '创建账户', subtitle: '创建 {{siteName}} 账户', usernameRules: '只能使用字母、数字、下划线和连字符',
       passwordMinimum: '至少需要 8 个字符', passwordMismatch: '两次输入的密码不一致', usernameExists: '用户名已存在',
       failed: '创建账户失败', closedTitle: '注册已关闭', closedDescription: '此部署当前已禁止注册新账户。',
       confirmPassword: '确认密码', submit: '创建账户', hasAccount: '已有账户？',
     },
     oauth: { popupBlocked: '弹窗被浏览器阻止，请允许弹窗后重试。', cancelled: '登录已取消。', failed: '无法登录', continueWith: '使用 {{provider}} 继续' },
+  },
+  trust: {
+    byCinaGroup: 'CinaGroup 旗下产品', updated: '最后更新：2026 年 8 月 29 日', navigation: '产品信息',
+    privacy: {
+      shortTitle: '隐私', title: '隐私说明', intro: '说明默认 CinaSeek 服务如何处理构建和运行 AI 应用与智能体所需的信息。',
+      sections: {
+        scope: { title: '适用范围', body: '本说明适用于默认 CinaSeek 部署。自行运营部署的组织可能发布补充条款或配置不同的服务提供商；该组织的说明优先适用于其部署。' },
+        data: { title: '处理的信息', body: 'CinaSeek 可能处理登录服务提供的账户标识、你提交的提示词和文件、生成的成果、连接元数据，以及有限的运行日志。仅通过你授权的连接请求外部服务内容。' },
+        use: { title: '处理目的', body: '相关信息用于验证身份、提供所请求的产品功能、向你选择的 AI 模型和服务路由请求、防止滥用、诊断故障并维持服务可靠性。' },
+        control: { title: '你的选择', body: '你可以断开服务、管理个人资料与工作区数据，并向部署运营方申请访问、导出、保留或删除数据。你选择的第三方 AI 与连接服务适用其各自的隐私说明。' },
+      },
+    },
+    terms: {
+      shortTitle: '条款', title: '使用条款', intro: '负责任地使用 CinaSeek，并持续掌控你创建的应用、智能体和连接。',
+      sections: {
+        account: { title: '账户与访问', body: '请使用你有权控制的账户，妥善保护凭据，并遵守部署运营方设置的访问规则。你需要对通过账户执行的活动负责。' },
+        use: { title: '可接受使用', body: '不得使用 CinaSeek 违法、侵权、绕过安全控制、传播恶意软件，或未经授权访问系统和数据。自动化操作仍需遵守所连接服务的规则。' },
+        content: { title: '内容与连接', body: '你需要对自己提供或创建的提示词、文件、应用和成果负责。只连接获准使用的工具和数据，并在依赖或发布生成内容前进行审核。' },
+        availability: { title: '服务变更', body: 'AI 模型和外部服务可能不可用、改变行为或产生错误结果，产品功能也可能演进。开源代码另行遵循源代码仓库中附带的许可证。' },
+      },
+    },
+    security: {
+      shortTitle: '安全', title: 'CinaSeek 安全', intro: 'CinaSeek 围绕明确身份、隔离执行环境，以及面向外部工具和数据的能力授权进行设计。', report: '私密报告安全漏洞',
+      sections: {
+        model: { title: '沙箱执行', body: '用户构建的应用和智能体代码在受约束的环境中运行。平台内核和共享 RPC 边界与用户编写代码分开审查。' },
+        identity: { title: '身份与会话', body: '生产部署可使用 CinaAuth 与 Cloudflare Access 提供身份认证、MFA、设备状态、会话管理和访问日志；CinaSeek 读取已验证身份并执行产品授权。' },
+        connections: { title: '基于能力的连接', body: '外部服务通过限定范围的连接访问。应用只获得用户或管理员选定的能力；敏感写入操作可以要求明确批准。' },
+        reporting: { title: '负责任披露', body: '请勿公开尚未修复的漏洞。请在 GitHub 私密安全通告中提供影响、受影响组件、复现步骤和建议的缓解措施。' },
+      },
+    },
+    support: {
+      shortTitle: '支持', title: '支持', intro: '请根据问题类型选择渠道，让账户、产品和安全问题得到正确处理。', openIssue: '提交 GitHub Issue',
+      sections: {
+        help: { title: '产品帮助', body: '部署、设置和产品使用问题，请先查看 CinaSeek 仓库文档。由组织管理的部署还应提供运营方支持渠道。' },
+        issues: { title: '缺陷与功能建议', body: '可复现的产品缺陷和公开功能建议请使用 GitHub Issues。提交前请移除令牌、提示词、私密文件和个人信息。' },
+        account: { title: '账户与登录', body: 'CinaAuth 或组织访问问题，请提供登录方式、大致时间和不含敏感信息的错误文本。切勿发送密码、验证码、客户端密钥或令牌。' },
+        response: { title: '安全问题', body: '安全漏洞请使用“安全”页面的私密报告链接，不要创建公开 Issue 或发送普通支持邮件。' },
+      },
+    },
   },
   workpiecePicker: {
     collapse: '收起输出', expand: '展开输出', outputs: '输出', saveName: '保存应用名称', cancelRename: '取消重命名',
@@ -620,13 +672,13 @@ const zhCN: TranslationCatalog = {
       characterCount: '{{current}} / {{maximum}} 个字符',
     },
     access: { title: '允许新用户注册', description: '关闭后，现有用户仍可登录，但无法创建新账户。' },
-    siteName: { title: '站点名称', description: '显示在顶部栏徽标旁。留空则使用默认名称“{{defaultName}}”。将在用户下次连接时生效。' },
+    siteName: { title: '部署名称', description: '作为组织或部署标识显示在部署徽标旁。留空则使用“{{defaultName}}”。自定义部署仍会保留 CinaSeek 产品归属，并在用户下次连接时生效。' },
     logo: {
-      title: '徽标', description: '显示在应用界面、登录页面和浏览器标签页中。图片会在不裁剪的情况下缩放并转换为静态 PNG，建议使用方形图片。将在用户下次连接时生效。',
+      title: '部署徽标', description: '与部署名称一起显示在应用界面和登录页面。图片会在不裁剪的情况下缩放并转换为静态 PNG，建议使用方形图片。CinaSeek 徽标仍会用于产品归属和公开信任页面。',
       change: '更换徽标', upload: '上传徽标', restore: '恢复默认',
     },
     theme: {
-      title: '主题', description: '用于按钮、链接和强调内容的品牌色。更改会在此实时预览；保存后将在所有用户下次连接时生效。背景仍使用默认暖色主题。',
+      title: '主题', description: '用于按钮、链接和强调内容的部署强调色。更改会在此实时预览；保存后将在所有用户下次连接时生效。CinaSeek 的中性画布与无障碍行为保持不变。',
       custom: '自定义', defaultSuffix: '默认',
       presets: { default: '默认', blue: '蓝色', green: '绿色', purple: '紫色', pink: '粉色', teal: '青色' },
     },

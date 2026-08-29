@@ -5,7 +5,7 @@
   "type": "module",
   "desktopName": "cinaseek.desktop",
   "author": {
-    "name": "Cina Group",
+    "name": "CinaGroup",
     "email": "cinagroup@users.noreply.github.com"
   },
   "homepage": "https://cinaseek.ai",
@@ -31,6 +31,7 @@
   "build": {
     "appId": "ai.cinaseek.desktop",
     "productName": "CinaSeek",
+    "copyright": "Copyright © CinaGroup",
     "artifactName": "CinaSeek-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "electronFuses": {

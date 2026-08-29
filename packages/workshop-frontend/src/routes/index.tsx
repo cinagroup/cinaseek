@@ -1,6 +1,6 @@
 import { classifyRpcError, logRpcFailure } from "../rpcErrors";
 import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { CaretDown, Plug, Plus } from "@phosphor-icons/react";
 import { ChatInput } from "../ChatInterface";
@@ -58,6 +58,7 @@ function AuthenticatedHomePage({ prompt }: HomeSearch) {
 
 function GuestHomePage({ prompt }: HomeSearch) {
   const { t } = useTranslation('home');
+  const { t: trustT } = useTranslation('trust');
   useDocumentTitle(t('pageTitle'));
   const navigate = useNavigate();
   const [input, setInput] = useState(() => prompt ?? peekPendingHomePrompt() ?? "");
@@ -174,16 +175,24 @@ function GuestHomePage({ prompt }: HomeSearch) {
 
         <HomeTaskSuggestions onPick={updateInput} />
       </div>
+      <footer className="mt-14 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-kumo-inactive">
+        <Link to="/legal/privacy" className="hover:text-kumo-brand">{trustT('privacy.shortTitle')}</Link>
+        <Link to="/legal/terms" className="hover:text-kumo-brand">{trustT('terms.shortTitle')}</Link>
+        <Link to="/security" className="hover:text-kumo-brand">{trustT('security.shortTitle')}</Link>
+        <Link to="/support" className="hover:text-kumo-brand">{trustT('support.shortTitle')}</Link>
+        <span>© {new Date().getFullYear()} CinaGroup</span>
+      </footer>
     </div>
   );
 }
 
 export function HomePageContent({ prompt }: HomeSearch) {
-  useDocumentTitle("Home");
+  const { t } = useTranslation('home');
+  useDocumentTitle(t('pageTitle'));
 
   const { authenticatedApi, currentUser } = useAuthenticatedApi();
   const navigate = useNavigate();
-  const toasts = useKumoToastManager();
+  const { add: addToast } = useKumoToastManager();
 
   const [models, setModels] = useState<AiChatAuthorInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -209,13 +218,13 @@ export function HomePageContent({ prompt }: HomeSearch) {
         // Toast unless it's a connection error (reconnect refetches); a do-reset here already
         // survived the Worker's same-colo retry, so the user should hear about it.
         if (classifyRpcError(err) !== "connection") {
-          toasts.add({ title: "Couldn't load AI models", variant: "error" });
+          addToast({ title: t('errors.models'), variant: "error" });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [authenticatedApi]);
+  }, [authenticatedApi, addToast, t]);
 
   const handleModelChange = useCallback((value: string | null) => {
     setSelectedModel(value);
@@ -269,12 +278,12 @@ export function HomePageContent({ prompt }: HomeSearch) {
           provisionalOverseerRef.current = null;
         }
         if (!transient) {
-          toasts.add({ title: "Failed to create workspace", variant: "error" });
+          addToast({ title: t('errors.createWorkspace'), variant: "error" });
         }
         throw err;
       }
     },
-    [ensureProvisionalGadget, navigate, toasts],
+    [addToast, ensureProvisionalGadget, navigate, t],
   );
 
   const getOverseer = useCallback((): RpcStub<Overseer> => {
@@ -312,10 +321,10 @@ export function HomePageContent({ prompt }: HomeSearch) {
         {/* Hero */}
         <header className="text-center">
           <h1 className="text-3xl font-semibold tracking-tight leading-tight text-kumo-default sm:text-4xl">
-            What are we working on?
+            {t('hero.title')}
           </h1>
           <p className="mx-auto mt-3 max-w-md text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-            Ask a question, create an output, or create an app that works with your tools and data.
+            {t('hero.subtitle')}
           </p>
         </header>
 

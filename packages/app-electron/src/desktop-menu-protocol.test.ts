@@ -8,8 +8,18 @@ test('accepts and rounds a known desktop menu request', () => {
     anchor: { x: 12.4, y: 4.8, width: 30.1, height: 27.7 },
   }), {
     menuId: 'file',
+    locale: 'en',
     anchor: { x: 12, y: 5, width: 30, height: 28 },
   })
+})
+
+test('accepts a supported locale and falls back to English', () => {
+  assert.equal(parseDesktopMenuRequest({
+    menuId: 'help', locale: 'zh-CN', anchor: { x: 0, y: 0, width: 20, height: 20 },
+  })?.locale, 'zh-CN')
+  assert.equal(parseDesktopMenuRequest({
+    menuId: 'help', locale: 'fr', anchor: { x: 0, y: 0, width: 20, height: 20 },
+  })?.locale, 'en')
 })
 
 test('rejects unknown menus and malformed anchors', () => {

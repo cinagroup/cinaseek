@@ -48,6 +48,8 @@ describe('AccessLoginController', () => {
     await act(async () => requestAccessLogin('/workspaces'))
 
     expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent)
+      .toContain('Continue in the secure sign-in window.')
     expect(openWindow).toHaveBeenCalledWith(
       '/auth/login?returnTo=%2Fauth%2Fcomplete%3Frequest%3Dtest-request-id',
       'cinaseek-access-sign-in',

@@ -1,25 +1,44 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-    <meta name="theme-color" content="#59c4e2" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'" />
-    <title>CinaSeek 暂时离线</title>
+    <meta name="theme-color" content="#5dbfe3" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>CinaSeek is offline</title>
     <style>
-      :root { color-scheme: light dark; font-family: system-ui, sans-serif; background: #59c4e2; }
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; background: #5dbfe3; }
       body { min-height: 100vh; margin: 0; display: grid; place-items: center; color: #07181d; }
       main { max-width: 320px; text-align: center; padding: 24px; }
       img { width: 96px; height: 96px; border-radius: 24px; }
       h1 { font-size: 20px; }
       p { line-height: 1.55; }
+      button { border: 0; border-radius: 10px; padding: 10px 16px; background: #07181d; color: #fff; font: inherit; font-weight: 650; }
     </style>
   </head>
   <body>
     <main>
       <img src="logo.png" alt="CinaSeek" />
-      <h1>暂时无法连接</h1>
-      <p>请检查网络连接，然后重新打开 CinaSeek。</p>
+      <h1 id="title">You’re offline</h1>
+      <p id="description">Check your network connection, then try CinaSeek again.</p>
+      <button id="retry" type="button">Try again</button>
     </main>
+    <script>
+      const language = navigator.languages.some((item) => /^(zh-TW|zh-HK|zh-MO)/i.test(item))
+        ? 'zh-TW'
+        : navigator.languages.some((item) => /^zh/i.test(item)) ? 'zh-CN' : 'en'
+      const messages = {
+        en: { title: 'You’re offline', description: 'Check your network connection, then try CinaSeek again.', retry: 'Try again', pageTitle: 'CinaSeek is offline' },
+        'zh-CN': { title: '暂时无法连接', description: '请检查网络连接，然后重试 CinaSeek。', retry: '重试', pageTitle: 'CinaSeek 暂时离线' },
+        'zh-TW': { title: '暫時無法連線', description: '請檢查網路連線，然後重試 CinaSeek。', retry: '重試', pageTitle: 'CinaSeek 暫時離線' },
+      }
+      const message = messages[language]
+      document.documentElement.lang = language
+      document.title = message.pageTitle
+      document.getElementById('title').textContent = message.title
+      document.getElementById('description').textContent = message.description
+      document.getElementById('retry').textContent = message.retry
+      document.getElementById('retry').addEventListener('click', () => window.location.replace('https://cinaseek.ai/'))
+    </script>
   </body>
 </html>

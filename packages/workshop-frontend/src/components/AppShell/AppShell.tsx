@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRouterState } from '@tanstack/react-router'
-import { List, SidebarSimple, X } from '@phosphor-icons/react'
+import { Link, useRouterState } from '@tanstack/react-router'
+import { Hexagon, List, SidebarSimple, X } from '@phosphor-icons/react'
 import TopBarNotice from '../../TopBarNotice'
 import ReconnectingChip from '../ReconnectingChip'
 import { useConnectionLost } from '../../RpcContext'
@@ -12,6 +12,9 @@ import AccessLoginController from '../AccessLoginModal'
 import { useTranslation } from '../../i18n'
 import { isCinaSeekDesktopShell } from '../../nativeShell'
 import DesktopMenuBar from './DesktopMenuBar'
+import { useSiteName } from '../../ServerConfigContext'
+import SiteLogo from '../SiteLogo'
+import { DEFAULT_SITE_NAME } from '@gadgets/workshop-shared/api'
 
 const STORAGE_KEY_COLLAPSED = 'gadgets:sidebar-collapsed'
 
@@ -43,6 +46,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const connectionLost = useConnectionLost()
   const desktopShell = isCinaSeekDesktopShell()
+  const siteName = useSiteName()
+  const customDeploymentName = siteName !== DEFAULT_SITE_NAME
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => {
@@ -166,6 +171,25 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             >
               {mobileOpen ? <X size={16} /> : <List size={16} />}
             </button>
+            <Link
+              to="/"
+              aria-label={siteName}
+              className="flex min-w-0 items-center gap-2 md:hidden"
+            >
+              <SiteLogo size={20} className="shrink-0">
+                <Hexagon size={20} weight="bold" className="shrink-0 text-kumo-brand" />
+              </SiteLogo>
+              <span className="min-w-0">
+                <span className="block truncate text-[14px] leading-4 font-semibold tracking-[-0.25px] text-kumo-default">
+                  {siteName}
+                </span>
+                {customDeploymentName && (
+                  <span className="block truncate text-[10px] leading-3 text-kumo-inactive">
+                    {t('brand.poweredBy')}
+                  </span>
+                )}
+              </span>
+            </Link>
             {desktopShell ? (
               <>
                 <button

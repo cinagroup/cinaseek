@@ -22,6 +22,7 @@ import {
 import {
   parseDesktopMenuRequest,
   type DesktopMenuId,
+  type DesktopMenuLocale,
 } from './desktop-menu-protocol.js'
 
 const SESSION_PARTITION = 'persist:cinaseek'
@@ -38,6 +39,30 @@ const TITLE_BAR_COLORS = {
   dark: { color: '#1b1920', symbolColor: '#f0eef3' },
 } as const
 const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen'])
+
+const DESKTOP_MENU_LABELS = {
+  en: {
+    newWindow: 'New Window', openInBrowser: 'Open in Browser', closeWindow: 'Close Window', exit: 'Exit',
+    undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
+    reload: 'Reload', actualSize: 'Actual Size', zoomIn: 'Zoom In', zoomOut: 'Zoom Out', fullScreen: 'Toggle Full Screen',
+    home: 'CinaSeek Home', privacy: 'Privacy', security: 'Security', support: 'Support', report: 'Report an Issue',
+    about: 'About CinaSeek', version: 'Version', product: 'A CinaGroup product', ok: 'OK',
+  },
+  'zh-CN': {
+    newWindow: '新建窗口', openInBrowser: '在浏览器中打开', closeWindow: '关闭窗口', exit: '退出',
+    undo: '撤销', redo: '重做', cut: '剪切', copy: '复制', paste: '粘贴', selectAll: '全选',
+    reload: '重新加载', actualSize: '实际大小', zoomIn: '放大', zoomOut: '缩小', fullScreen: '切换全屏',
+    home: 'CinaSeek 首页', privacy: '隐私', security: '安全', support: '支持', report: '报告问题',
+    about: '关于 CinaSeek', version: '版本', product: 'CinaGroup 旗下产品', ok: '确定',
+  },
+  'zh-TW': {
+    newWindow: '新增視窗', openInBrowser: '在瀏覽器中開啟', closeWindow: '關閉視窗', exit: '結束',
+    undo: '還原', redo: '重做', cut: '剪下', copy: '複製', paste: '貼上', selectAll: '全選',
+    reload: '重新載入', actualSize: '實際大小', zoomIn: '放大', zoomOut: '縮小', fullScreen: '切換全螢幕',
+    home: 'CinaSeek 首頁', privacy: '隱私', security: '安全', support: '支援', report: '回報問題',
+    about: '關於 CinaSeek', version: '版本', product: 'CinaGroup 旗下產品', ok: '確定',
+  },
+} as const
 
 function secureWebPreferences() {
   return {
@@ -136,56 +161,61 @@ function configureSession(): void {
 function createDesktopMenuTemplate(
   menuId: DesktopMenuId,
   window: BrowserWindow,
+  locale: DesktopMenuLocale,
 ): MenuItemConstructorOptions[] {
+  const label = DESKTOP_MENU_LABELS[locale]
   switch (menuId) {
     case 'file':
       return [
-        { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => createMainWindow() },
+        { label: label.newWindow, accelerator: 'CmdOrCtrl+N', click: () => createMainWindow() },
         {
-          label: 'Open in Browser',
+          label: label.openInBrowser,
           click: () => openInSystemBrowser(currentAppPageWithoutCredentials(window)),
         },
         { type: 'separator' },
-        { label: 'Close Window', role: 'close' },
-        { label: 'Exit', role: 'quit' },
+        { label: label.closeWindow, role: 'close' },
+        { label: label.exit, role: 'quit' },
       ]
     case 'edit':
       return [
-        { label: 'Undo', role: 'undo' },
-        { label: 'Redo', role: 'redo' },
+        { label: label.undo, role: 'undo' },
+        { label: label.redo, role: 'redo' },
         { type: 'separator' },
-        { label: 'Cut', role: 'cut' },
-        { label: 'Copy', role: 'copy' },
-        { label: 'Paste', role: 'paste' },
-        { label: 'Select All', role: 'selectAll' },
+        { label: label.cut, role: 'cut' },
+        { label: label.copy, role: 'copy' },
+        { label: label.paste, role: 'paste' },
+        { label: label.selectAll, role: 'selectAll' },
       ]
     case 'view':
       return [
-        { label: 'Reload', role: 'reload' },
+        { label: label.reload, role: 'reload' },
         { type: 'separator' },
-        { label: 'Actual Size', role: 'resetZoom' },
-        { label: 'Zoom In', role: 'zoomIn' },
-        { label: 'Zoom Out', role: 'zoomOut' },
+        { label: label.actualSize, role: 'resetZoom' },
+        { label: label.zoomIn, role: 'zoomIn' },
+        { label: label.zoomOut, role: 'zoomOut' },
         { type: 'separator' },
-        { label: 'Toggle Full Screen', role: 'togglefullscreen' },
+        { label: label.fullScreen, role: 'togglefullscreen' },
       ]
     case 'help':
       return [
-        { label: 'CinaSeek Home', click: () => openInSystemBrowser(CINASEEK_APP_ORIGIN) },
+        { label: label.home, click: () => openInSystemBrowser(CINASEEK_APP_ORIGIN) },
+        { label: label.privacy, click: () => openInSystemBrowser(`${CINASEEK_APP_ORIGIN}/legal/privacy`) },
+        { label: label.security, click: () => openInSystemBrowser(`${CINASEEK_APP_ORIGIN}/security`) },
+        { label: label.support, click: () => openInSystemBrowser(`${CINASEEK_APP_ORIGIN}/support`) },
         {
-          label: 'Report an Issue',
+          label: label.report,
           click: () => openExternalUrl('https://github.com/cinagroup/cinaseek/issues'),
         },
         { type: 'separator' },
         {
-          label: 'About CinaSeek',
+          label: label.about,
           click: () => {
             void dialog.showMessageBox(window, {
               type: 'info',
-              title: 'About CinaSeek',
+              title: label.about,
               message: 'CinaSeek',
-              detail: `Version ${app.getVersion()}\nhttps://cinaseek.ai`,
-              buttons: ['OK'],
+              detail: `${label.version} ${app.getVersion()}\n${label.product}\nhttps://cinaseek.ai`,
+              buttons: [label.ok],
             })
           },
         },
@@ -204,7 +234,7 @@ function registerDesktopShellIpc(): void {
     const request = parseDesktopMenuRequest(value)
     if (!window || !request) return
 
-    const menu = Menu.buildFromTemplate(createDesktopMenuTemplate(request.menuId, window))
+    const menu = Menu.buildFromTemplate(createDesktopMenuTemplate(request.menuId, window, request.locale))
     menu.popup({
       window,
       x: request.anchor.x,

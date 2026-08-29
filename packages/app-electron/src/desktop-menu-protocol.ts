@@ -4,6 +4,12 @@ export const DESKTOP_MENU_IDS = ['file', 'edit', 'view', 'help'] as const
 /** Identifier for one of the desktop application's native menus. */
 export type DesktopMenuId = (typeof DESKTOP_MENU_IDS)[number]
 
+/** Interface locales supported by the desktop shell menus. */
+export const DESKTOP_MENU_LOCALES = ['en', 'zh-CN', 'zh-TW'] as const
+
+/** Locale used for one native desktop menu request. */
+export type DesktopMenuLocale = (typeof DESKTOP_MENU_LOCALES)[number]
+
 /** Renderer-relative rectangle used to anchor a native menu below its trigger. */
 export interface DesktopMenuAnchor {
   x: number
@@ -15,6 +21,7 @@ export interface DesktopMenuAnchor {
 /** A validated request to open one of the desktop application's native menus. */
 export interface DesktopMenuRequest {
   menuId: DesktopMenuId
+  locale: DesktopMenuLocale
   anchor: DesktopMenuAnchor
 }
 
@@ -25,7 +32,7 @@ function boundDesktopMenuCoordinate(item: number): number {
 /** Returns a bounded native-menu request, or null for malformed renderer input. */
 export function parseDesktopMenuRequest(value: unknown): DesktopMenuRequest | null {
   if (!value || typeof value !== 'object') return null
-  const candidate = value as { menuId?: unknown; anchor?: unknown }
+  const candidate = value as { menuId?: unknown; locale?: unknown; anchor?: unknown }
   if (!DESKTOP_MENU_IDS.includes(candidate.menuId as DesktopMenuId)) return null
   if (!candidate.anchor || typeof candidate.anchor !== 'object') return null
 
@@ -36,6 +43,9 @@ export function parseDesktopMenuRequest(value: unknown): DesktopMenuRequest | nu
 
   return {
     menuId: candidate.menuId as DesktopMenuId,
+    locale: DESKTOP_MENU_LOCALES.includes(candidate.locale as DesktopMenuLocale)
+      ? candidate.locale as DesktopMenuLocale
+      : 'en',
     anchor: {
       x: boundDesktopMenuCoordinate(anchor.x as number),
       y: boundDesktopMenuCoordinate(anchor.y as number),

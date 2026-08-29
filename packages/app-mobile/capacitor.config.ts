@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'CinaSeek',
   webDir: 'web',
   appendUserAgent: ' CinaSeekMobile/1.0',
-  backgroundColor: '#59c4e2',
+  backgroundColor: '#5dbfe3',
   loggingBehavior: 'debug',
   includePlugins: [],
   server: {

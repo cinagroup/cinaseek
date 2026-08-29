@@ -8,7 +8,7 @@ const MAX_VISIBLE = 3
 
 const ROLE_LABELS: Record<PresenceParticipant['role'], string> = {
   build: 'Workspace',
-  use: 'Gadget only',
+  use: 'App only',
 }
 
 export function GadgetPresence({
