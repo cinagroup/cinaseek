@@ -1,12 +1,13 @@
 {
   "name": "@cinaseek/app-mobile",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "private": true,
   "type": "module",
   "description": "Restricted CinaSeek Capacitor shell for iOS and Android",
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "types:check": "tsc -p tsconfig.json --noEmit",
+    "test": "node scripts/verify-version.mjs",
     "prepare:web": "node scripts/prepare-web.mjs",
     "sync": "pnpm run prepare:web && cap sync",
     "assets": "capacitor-assets generate --ios --assetPath ../workshop-frontend/public --iconBackgroundColor \"#59c4e2\" --iconBackgroundColorDark \"#59c4e2\" --splashBackgroundColor \"#59c4e2\" --splashBackgroundColorDark \"#59c4e2\" && capacitor-assets generate --android --assetPath ../workshop-frontend/public --iconBackgroundColor \"#59c4e2\" --iconBackgroundColorDark \"#59c4e2\" --splashBackgroundColor \"#59c4e2\" --splashBackgroundColorDark \"#59c4e2\"",
