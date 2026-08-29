@@ -1,6 +1,6 @@
 {
   "name": "@cinaseek/app-electron",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "type": "module",
   "desktopName": "cinaseek.desktop",
@@ -54,19 +54,21 @@
     ],
     "extraResources": [
       {
-        "from": "../app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png",
+        "from": "build/logo-rounded-3px.png",
         "to": "logo.png"
       }
     ],
     "win": {
       "target": ["nsis"],
-      "icon": "../app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     },
     "mac": {
       "target": ["dmg", "zip"],

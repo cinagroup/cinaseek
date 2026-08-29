@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useServerConfig } from '../ServerConfigContext'
 
-export const DEFAULT_SITE_LOGO_URL = '/logo-transparent.png'
+export const DEFAULT_SITE_LOGO_URL = '/logo.png'
 
 export default function SiteLogo({
   size,
@@ -19,7 +19,6 @@ export default function SiteLogo({
   const src = srcOverride === undefined
     ? configuredUrl ?? DEFAULT_SITE_LOGO_URL
     : srcOverride ?? DEFAULT_SITE_LOGO_URL
-  const isDefaultLogo = src === DEFAULT_SITE_LOGO_URL
   const [failed, setFailed] = useState(false)
 
   useEffect(() => setFailed(false), [src, serverConfig])
@@ -31,7 +30,7 @@ export default function SiteLogo({
       alt=""
       width={size}
       height={size}
-      className={`rounded-[3px] object-contain ${isDefaultLogo ? 'cinaseek-default-site-logo' : ''} ${className ?? ''}`}
+      className={`rounded-[3px] object-contain ${className ?? ''}`}
       onError={() => setFailed(true)}
     />
   )

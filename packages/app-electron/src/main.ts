@@ -31,7 +31,7 @@ const DESKTOP_TITLE_BAR_HEIGHT = 56
 const PRELOAD_SCRIPT = fileURLToPath(new URL('./preload.cjs', import.meta.url))
 const APP_ICON = app.isPackaged
   ? join(process.resourcesPath, 'logo.png')
-  : fileURLToPath(new URL('../../app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png', import.meta.url))
+  : fileURLToPath(new URL('../build/logo-rounded-3px.png', import.meta.url))
 const MAIN_WINDOW_BACKGROUND = '#f4fbfd'
 const TITLE_BAR_COLORS = {
   light: { color: '#fcfcfb', symbolColor: '#1c1a18' },

@@ -842,9 +842,3 @@ body:has([role="dialog"], [role="alertdialog"]) .app-header {
 .cinaseek-desktop-no-drag * {
   app-region: no-drag;
 }
-
-/* The bundled mark is black on transparency; invert only that default asset in dark mode. Admin
-   supplied logos retain their authored colors. */
-[data-mode="dark"] .cinaseek-default-site-logo {
-  filter: invert(1);
-}
