@@ -11,10 +11,10 @@
     "types:check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test dist/**/*.test.js",
     "dev": "pnpm run build && electron .",
-    "package": "pnpm run build && electron-builder",
-    "package:win": "pnpm run build && electron-builder --win nsis",
-    "package:mac": "pnpm run build && electron-builder --mac dmg zip",
-    "package:linux": "pnpm run build && electron-builder --linux AppImage deb",
+    "package": "pnpm run build && electron-builder --publish never",
+    "package:win": "pnpm run build && electron-builder --win nsis --publish never",
+    "package:mac": "pnpm run build && electron-builder --mac dmg zip --publish never",
+    "package:linux": "pnpm run build && electron-builder --linux AppImage deb --publish never",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true});require('node:fs').rmSync('release',{recursive:true,force:true})\""
   },
   "devDependencies": {
@@ -28,7 +28,6 @@
     "productName": "CinaSeek",
     "artifactName": "CinaSeek-${version}-${os}-${arch}.${ext}",
     "asar": true,
-    "electronDist": "node_modules/electron/dist",
     "electronFuses": {
       "runAsNode": false,
       "enableCookieEncryption": true,
