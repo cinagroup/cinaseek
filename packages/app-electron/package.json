@@ -1,0 +1,80 @@
+{
+  "name": "@cinaseek/app-electron",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "author": "Cina Group",
+  "description": "Secure CinaSeek desktop shell",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "types:check": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test dist/**/*.test.js",
+    "dev": "pnpm run build && electron .",
+    "package": "pnpm run build && electron-builder",
+    "package:win": "pnpm run build && electron-builder --win nsis",
+    "package:mac": "pnpm run build && electron-builder --mac dmg zip",
+    "package:linux": "pnpm run build && electron-builder --linux AppImage deb",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true});require('node:fs').rmSync('release',{recursive:true,force:true})\""
+  },
+  "devDependencies": {
+    "@types/node": "26.1.0",
+    "electron": "44.0.0",
+    "electron-builder": "26.15.3",
+    "typescript": "^5.9.3"
+  },
+  "build": {
+    "appId": "ai.cinaseek.desktop",
+    "productName": "CinaSeek",
+    "artifactName": "CinaSeek-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "loadBrowserProcessSpecificV8Snapshot": true,
+      "grantFileProtocolExtraPrivileges": false
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*.js",
+      "!dist/**/*.test.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png",
+        "to": "logo.png"
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "../app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "../app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "../app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png",
+      "category": "Development"
+    }
+  }
+}

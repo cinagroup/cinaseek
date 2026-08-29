@@ -113,18 +113,35 @@ describe('AccessLoginController', () => {
   })
 
   it('falls back to full-page authentication when the browser blocks the popup', async () => {
-    const onPopupBlocked = vi.fn<(returnTo: string) => void>()
+    const onFullPageAuthentication = vi.fn<(returnTo: string) => void>()
     await act(async () => root.render(
       <AccessLoginController
         openWindow={() => null}
-        onPopupBlocked={onPopupBlocked}
+        onFullPageAuthentication={onFullPageAuthentication}
         createRequestId={() => 'test-request-id'}
       />,
     ))
 
     await act(async () => requestAccessLogin('/profile?tab=usage'))
 
-    expect(onPopupBlocked).toHaveBeenCalledWith('/profile?tab=usage')
+    expect(onFullPageAuthentication).toHaveBeenCalledWith('/profile?tab=usage')
     expect(container.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('uses same-window authentication inside the mobile shell', async () => {
+    const openWindow = vi.fn<(url: string, target: string, features: string) => Window | null>()
+    const onFullPageAuthentication = vi.fn<(returnTo: string) => void>()
+    await act(async () => root.render(
+      <AccessLoginController
+        openWindow={openWindow}
+        onFullPageAuthentication={onFullPageAuthentication}
+        preferFullPageAuthentication
+      />,
+    ))
+
+    await act(async () => requestAccessLogin('/workspaces'))
+
+    expect(openWindow).not.toHaveBeenCalled()
+    expect(onFullPageAuthentication).toHaveBeenCalledWith('/workspaces')
   })
 })

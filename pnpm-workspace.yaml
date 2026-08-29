@@ -11,6 +11,8 @@ overrides:
   # - @lezer/markdown is a deep transitive of @codemirror/lang-markdown.
   '@types/node': 26.1.0
   '@lezer/markdown': 1.6.4
+  # electron-builder 26.15.x uses the cache-mode API added in @electron/get 3.1.
+  '@electron/get@^3.0.0': 3.1.0
 
 # Reject dependency versions published within this many minutes (24h), matching the
 # CI supply-chain policy so local installs can't commit a too-fresh lockfile.
@@ -25,6 +27,8 @@ minimumReleaseAgeExclude:
 allowBuilds:
   '@google/genai': true
   core-js-pure: true
+  electron: true
+  electron-winstaller: true
   esbuild: true
   protobufjs: true
   sharp: true

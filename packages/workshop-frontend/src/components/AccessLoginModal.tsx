@@ -8,6 +8,7 @@ import {
   type AccessSessionStatus,
 } from '../accessSession'
 import { useTranslation } from '../i18n'
+import { isCinaSeekMobileShell } from '../nativeShell'
 
 type LoginRequestDetail = { returnTo?: unknown }
 
@@ -69,12 +70,14 @@ export default function AccessLoginController({
   onAuthenticated = navigateAfterAuthentication,
   openWindow = openAuthenticationWindow,
   createRequestId = createLoginRequestId,
-  onPopupBlocked = navigateToAuthentication,
+  onFullPageAuthentication = navigateToAuthentication,
+  preferFullPageAuthentication = isCinaSeekMobileShell(),
 }: {
   onAuthenticated?: (returnTo: string) => void
   openWindow?: (url: string, target: string, features: string) => Window | null
   createRequestId?: () => string
-  onPopupBlocked?: (returnTo: string) => void
+  onFullPageAuthentication?: (returnTo: string) => void
+  preferFullPageAuthentication?: boolean
 }) {
   const popupRef = useRef<Window | null>(null)
   const requestIdRef = useRef<string | null>(null)
@@ -107,6 +110,10 @@ export default function AccessLoginController({
     }
 
     clearAttempt(false)
+    if (preferFullPageAuthentication) {
+      onFullPageAuthentication(returnTo)
+      return
+    }
     const requestId = createRequestId()
     requestIdRef.current = requestId
     const popup = openWindow(
@@ -116,12 +123,12 @@ export default function AccessLoginController({
     )
     if (!popup) {
       requestIdRef.current = null
-      onPopupBlocked(returnTo)
+      onFullPageAuthentication(returnTo)
       return
     }
     popupRef.current = popup
     popup.focus()
-  }, [clearAttempt, createRequestId, onPopupBlocked, openWindow])
+  }, [clearAttempt, createRequestId, onFullPageAuthentication, openWindow, preferFullPageAuthentication])
 
   useEffect(() => {
     const handleRequest = (event: Event) => {

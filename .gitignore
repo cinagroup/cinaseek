@@ -3,6 +3,15 @@ node_modules/
 
 # Build outputs
 dist/
+packages/app-electron/release/
+packages/app-mobile/android/.gradle/
+packages/app-mobile/android/app/build/
+packages/app-mobile/android/build/
+packages/app-mobile/ios/App/DerivedData/
+packages/app-mobile/web/logo.png
+# Orphan PWA/default splash outputs from the native asset generator.
+packages/app-mobile/icons/
+packages/app-mobile/ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732*.png
 # Generated gatekeeper UI bundles, rebuilt as a prerequisite of build/types:check/deploy
 packages/gatekeeper-*/src/generated/*-configurator-ui.txt
 packages/gatekeeper-*/src/generated/*-configurator-ui.js*

@@ -1,0 +1,100 @@
+name: Native apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'app-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Electron (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            runner: windows-latest
+            command: package:win
+          - name: macOS
+            runner: macos-26
+            command: package:mac
+          - name: Linux
+            runner: ubuntu-24.04
+            command: package:linux
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cinaseek/app-electron ${{ matrix.command }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cinaseek-electron-${{ matrix.name }}
+          path: packages/app-electron/release/*
+          if-no-files-found: error
+
+  android:
+    name: Android debug APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cinaseek/app-mobile sync
+      - run: pnpm --filter @cinaseek/app-mobile assets
+      - run: chmod +x packages/app-mobile/android/gradlew
+      - run: pnpm --filter @cinaseek/app-mobile build:android:debug
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cinaseek-android-debug
+          path: packages/app-mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS Simulator app
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cinaseek/app-mobile sync
+      - run: pnpm --filter @cinaseek/app-mobile assets
+      - name: Build unsigned Simulator app
+        run: >-
+          xcodebuild
+          -project packages/app-mobile/ios/App/App.xcodeproj
+          -scheme App
+          -configuration Debug
+          -sdk iphonesimulator
+          -derivedDataPath packages/app-mobile/ios/build
+          CODE_SIGNING_ALLOWED=NO
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cinaseek-ios-simulator
+          path: packages/app-mobile/ios/build/Build/Products/Debug-iphonesimulator/App.app
+          if-no-files-found: error

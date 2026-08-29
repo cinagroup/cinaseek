@@ -1,0 +1,30 @@
+{
+  "name": "@cinaseek/app-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Restricted CinaSeek Capacitor shell for iOS and Android",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "types:check": "tsc -p tsconfig.json --noEmit",
+    "prepare:web": "node scripts/prepare-web.mjs",
+    "sync": "pnpm run prepare:web && cap sync",
+    "assets": "capacitor-assets generate --ios --assetPath ../workshop-frontend/public --iconBackgroundColor \"#59c4e2\" --iconBackgroundColorDark \"#59c4e2\" --splashBackgroundColor \"#59c4e2\" --splashBackgroundColorDark \"#59c4e2\" && capacitor-assets generate --android --assetPath ../workshop-frontend/public --iconBackgroundColor \"#59c4e2\" --iconBackgroundColorDark \"#59c4e2\" --splashBackgroundColor \"#59c4e2\" --splashBackgroundColorDark \"#59c4e2\"",
+    "open:android": "cap open android",
+    "open:ios": "cap open ios",
+    "build:android:debug": "node scripts/run-gradle.mjs assembleDebug",
+    "build:android:release": "node scripts/run-gradle.mjs bundleRelease",
+    "build:ios:release": "cap build ios --scheme App --configuration Release",
+    "clean": "node -e \"require('node:fs').rmSync('android/app/build',{recursive:true,force:true});require('node:fs').rmSync('ios/App/DerivedData',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.0",
+    "@capacitor/core": "8.5.0",
+    "@capacitor/ios": "8.5.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "3.0.5",
+    "@capacitor/cli": "8.5.0",
+    "typescript": "^5.9.3"
+  }
+}
