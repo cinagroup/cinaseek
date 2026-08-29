@@ -37,6 +37,22 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @cinaseek/app-electron ${{ matrix.command }}
+      - name: Smoke test packaged Windows app
+        if: matrix.name == 'Windows'
+        shell: pwsh
+        run: |
+          $appPath = Resolve-Path 'packages/app-electron/release/win-unpacked/CinaSeek.exe'
+          $appProcess = Start-Process -FilePath $appPath -PassThru
+          try {
+            Start-Sleep -Seconds 10
+            if ($appProcess.HasExited) {
+              throw "Packaged application exited during startup with code $($appProcess.ExitCode)."
+            }
+          } finally {
+            if (-not $appProcess.HasExited) {
+              Stop-Process -Id $appProcess.Id
+            }
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: cinaseek-electron-${{ matrix.name }}

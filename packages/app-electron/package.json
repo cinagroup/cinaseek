@@ -1,6 +1,6 @@
 {
   "name": "@cinaseek/app-electron",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "desktopName": "cinaseek.desktop",
@@ -40,7 +40,7 @@
       "enableNodeCliInspectArguments": false,
       "enableEmbeddedAsarIntegrityValidation": true,
       "onlyLoadAppFromAsar": true,
-      "loadBrowserProcessSpecificV8Snapshot": true,
+      "loadBrowserProcessSpecificV8Snapshot": false,
       "grantFileProtocolExtraPrivileges": false
     },
     "directories": {
