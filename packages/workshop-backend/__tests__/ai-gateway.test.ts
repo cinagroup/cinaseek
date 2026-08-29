@@ -50,6 +50,32 @@ describe("AI Gateway configuration", () => {
       CF_AI_GATEWAY_PROVIDERS: "anthropic,ollama",
     }))).toThrow("Unsupported CF_AI_GATEWAY_PROVIDERS entry: ollama.");
   });
+
+  it("supports a dedicated Workers AI gateway or direct binding mode", () => {
+    const dedicated = getAiGatewayConfig(env({
+      CF_AI_GATEWAY_ACCOUNT_ID: "account-id",
+      CF_AI_GATEWAY_API_TOKEN: "token",
+      CF_AI_GATEWAY_WAI: "workers-ai-gateway",
+    }));
+    expect(dedicated?.workersAiGateway).toBe("workers-ai-gateway");
+    expect(dedicated?.workersAiDirect).toBe(false);
+
+    const direct = getAiGatewayConfig(env({
+      CF_AI_GATEWAY_ACCOUNT_ID: "account-id",
+      CF_AI_GATEWAY_API_TOKEN: "token",
+      CF_AI_GATEWAY_WAI_DIRECT: "true",
+    }));
+    expect(direct?.workersAiGateway).toBeUndefined();
+    expect(direct?.workersAiDirect).toBe(true);
+
+    expect(() => getAiGatewayConfig(env({
+      CF_AI_GATEWAY_ACCOUNT_ID: "account-id",
+      CF_AI_GATEWAY_API_TOKEN: "token",
+      CF_AI_GATEWAY_WAI: "workers-ai-gateway",
+      CF_AI_GATEWAY_WAI_DIRECT: "true",
+    }))).toThrow(
+        "CF_AI_GATEWAY_WAI and CF_AI_GATEWAY_WAI_DIRECT cannot be configured together.");
+  });
 });
 
 describe("getAiGatewayLogCost", () => {

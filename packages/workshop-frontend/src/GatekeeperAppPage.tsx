@@ -10,8 +10,10 @@ function disposeFrame(frame: GatekeeperUiFrame | null) {
   (frame?.ui as { [Symbol.dispose]?(): void } | undefined)?.[Symbol.dispose]?.()
 }
 
-// Renders a gatekeeper's full-page management app (a sandboxed SPA the gatekeeper serves).
-// Fetches the app frame (iframe HTML + `ui` capability) from the backend and hosts it.
+/**
+ * Renders a gatekeeper's full-page management app (a sandboxed SPA the gatekeeper serves).
+ * Fetches the app frame (iframe HTML + `ui` capability) from the backend and hosts it.
+ */
 export default function GatekeeperAppPage({ appId }: { appId: string }) {
   const { t: translate } = useTranslation('gatekeeperApp')
   const translateRef = useRef(translate)
@@ -61,9 +63,9 @@ export default function GatekeeperAppPage({ appId }: { appId: string }) {
     return <div className="px-4 py-16 text-center text-sm text-kumo-subtle">{translate('loading')}</div>
   }
 
-  // Fill the viewport below the header so the embedded app can manage its own internal layout.
+  // Fill the routed area below the header so the embedded app can manage its own internal layout.
   return (
-    <div style={{ height: 'calc(100vh - 56px)' }}>
+    <div className="h-full">
       <SandboxedGatekeeperApp frame={state.frame} gatekeeperVendorId={appId} />
     </div>
   )

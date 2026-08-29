@@ -15,7 +15,7 @@ export default function UserMenu() {
       <button
         type="button"
         onClick={() => requestAccessLogin(currentReturnTo())}
-        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-kumo-tint text-kumo-strong transition-colors hover:bg-kumo-fill"
+        className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full bg-kumo-tint text-kumo-strong transition-colors hover:bg-kumo-fill md:h-7 md:w-7"
         title={t('user.signIn')}
         aria-label={t('user.signIn')}
       >
@@ -42,7 +42,7 @@ function AuthenticatedUserMenu() {
       <DropdownMenu.Trigger
         render={
           <button
-            className="w-7 h-7 cursor-pointer rounded-full flex items-center justify-center bg-kumo-tint hover:bg-kumo-fill transition-colors overflow-hidden"
+            className="flex h-11 w-11 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-kumo-tint transition-colors hover:bg-kumo-fill md:h-7 md:w-7"
             title={t('user.openMenu')}
             aria-label={t('user.openMenu')}
           >

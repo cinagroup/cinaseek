@@ -1,6 +1,6 @@
+import { logRpcFailure } from '../rpcErrors'
 import { createFileRoute } from '@tanstack/react-router'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from '../i18n'
+import { useEffect, useMemo, useState } from 'react'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import {
   MagnifyingGlass,
@@ -12,7 +12,6 @@ import {
   Plugs,
 } from '@phosphor-icons/react'
 import ViewToggle from '../components/ViewToggle'
-import { RpcTarget } from 'capnweb'
 import { useAuthenticatedApi } from '../AuthContext'
 import { refreshGatekeeperApps } from '../useGatekeeperApps'
 import { EmptyState } from '../components/EmptyState'
@@ -22,9 +21,10 @@ import {
   SupportedResource,
   VendorDescription,
 } from '@gadgets/workshop-shared/gatekeeper'
-import { ConnectedAccountsSubscriber, GatekeeperVendorInfo } from '@gadgets/workshop-shared/api'
+import { GatekeeperVendorInfo } from '@gadgets/workshop-shared/api'
 import { useDocumentTitle } from '../useDocumentTitle'
 import { useSiteName } from '../ServerConfigContext'
+import { AccountsSubscriberAdapter } from '../accountsSubscriber'
 
 export const Route = createFileRoute('/gatekeepers')({
   component: ConnectorsPage,
@@ -103,7 +103,6 @@ function ConnectorCard({
   reconnectBusy = false,
   view = 'grid',
 }: ConnectorCardProps) {
-  const { t } = useTranslation('gatekeepers')
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.currentTarget !== event.target) return
     if (event.key === 'Enter' || event.key === ' ') {
@@ -129,7 +128,7 @@ function ConnectorCard({
     <span
       className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] leading-3 font-semibold uppercase tracking-[0.4px] ${
         badge.tone === 'new'
-          ? 'bg-kumo-brand/10 text-kumo-brand'
+          ? 'bg-[rgba(255,72,1,0.10)] text-kumo-brand'
           : 'bg-kumo-tint text-kumo-subtle'
       }`}
     >
@@ -149,7 +148,7 @@ function ConnectorCard({
         className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-line bg-kumo-base px-3 text-[12px] leading-4 font-medium tracking-[-0.2px] text-kumo-default transition-[background-color,border-color,opacity,transform] duration-150 ease-out hover:border-kumo-fill hover:bg-kumo-tint active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
       >
         <ArrowsClockwise size={12} weight="bold" />
-        {reconnectBusy ? t('opening') : t('reconnect')}
+        {reconnectBusy ? 'Opening...' : 'Reconnect'}
       </button>
     ) : (
       <div className="grid h-7 w-7 place-items-center text-kumo-inactive transition-colors group-hover:text-kumo-default">
@@ -262,7 +261,6 @@ function ConnectorsHeroDiagram({
   vendors: VendorEntry[]
   siteName: string
 }) {
-  const { t } = useTranslation('gatekeepers')
   const [hoveredSource, setHoveredSource] = useState<number | null>(null)
   const seen = new Set<string>()
   const nodes = [
@@ -404,7 +402,7 @@ function ConnectorsHeroDiagram({
         <button
           type="button"
           className="themed-card-hover-shadow grid h-[52px] w-[52px] place-items-center rounded-2xl border border-kumo-line bg-kumo-base text-kumo-brand transition-[border-color,box-shadow] hover:border-kumo-fill focus:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring focus-visible:ring-offset-2 focus-visible:ring-offset-kumo-base"
-          aria-label={t('hero.aria')}
+          aria-label="Gatekeeper keeps Gadget access limited to connected resources"
         >
           <ShieldCheck size={21} weight="duotone" />
         </button>
@@ -415,10 +413,10 @@ function ConnectorsHeroDiagram({
             </div>
             <div className="min-w-0">
               <p className="m-0 text-[12px] leading-4 font-semibold tracking-[-0.2px] text-kumo-default">
-                {t('hero.title')}
+                Gatekeeper
               </p>
               <p className="mt-1 text-[11px] leading-4 font-normal tracking-[-0.1px] text-kumo-subtle">
-                {t('hero.description')}
+                Keeps each workspace limited to the resources you connect and ensures every user has the required permissions before accessing them.
               </p>
             </div>
           </div>
@@ -444,14 +442,11 @@ type ModalTarget =
   | null
 
 function ConnectorsPage() {
-  const { t } = useTranslation('gatekeepers')
-  useDocumentTitle(t('pageTitle'))
+  useDocumentTitle('Gatekeepers')
   const siteName = useSiteName()
 
   const { authenticatedApi } = useAuthenticatedApi()
   const toasts = useKumoToastManager()
-  const tRef = useRef(t)
-  tRef.current = t
 
   const [search, setSearch] = useState('')
   const [view, setView] = useState<'grid' | 'list'>(() => {
@@ -479,8 +474,6 @@ function ConnectorsPage() {
     localStorage.setItem('gatekeepers-view', view)
   }, [view])
 
-  const subscriptionRef = useRef<{ [Symbol.dispose](): void } | null>(null)
-
   useEffect(() => {
     let cancelled = false
     const accountMap = new Map<number, AccountEntry>()
@@ -488,23 +481,21 @@ function ConnectorsPage() {
     setAccountsLoaded(false)
     setVendorsLoaded(false)
 
-    authenticatedApi
-      .listAddableGatekeepers()
+    authenticatedApi.listAddableGatekeepers()
       .then((list) => {
         if (!cancelled) setAddable(list)
       })
       .catch((err) => {
-        console.error('Failed to load addable gatekeepers:', err)
+        logRpcFailure('Failed to load addable gatekeepers:', err)
       })
 
-    authenticatedApi
-      .listGatekeeperVendors()
+    authenticatedApi.listGatekeeperVendors()
       .then((vendorList) => {
         if (cancelled) return
         const unavailable = vendorList.filter((v) => v.unavailable)
         if (unavailable.length > 0) {
           toasts.add({
-            title: tRef.current('messages.unavailable', { services: unavailable.map((v) => v.id).join(', ') }),
+            title: `Some services are temporarily unavailable: ${unavailable.map((v) => v.id).join(', ')}`,
             variant: 'warning',
           })
         }
@@ -520,22 +511,12 @@ function ConnectorsPage() {
         setVendorsLoaded(true)
       })
       .catch((err) => {
-        console.error('Failed to load available services:', err)
+        logRpcFailure('Failed to load available services:', err)
         if (!cancelled) setLoadError(true)
       })
 
-    class AccountsSubscriber
-      extends RpcTarget
-      implements ConnectedAccountsSubscriber
-    {
-      add(
-        id: number,
-        description: AccountDescription,
-        vendor: VendorDescription,
-        supportedResources: SupportedResource[] = [],
-        credentialsValid: boolean = true,
-        vendorId: string = '',
-      ) {
+    const subscriber = new AccountsSubscriberAdapter({
+      add({ id, description, vendor, supportedResources, credentialsValid, vendorId }) {
         if (cancelled) return
         accountMap.set(id, {
           id,
@@ -546,36 +527,26 @@ function ConnectorsPage() {
           credentialsValid,
         })
         setAccounts(Array.from(accountMap.values()))
-      }
-      remove(id: number) {
+      },
+      remove(id) {
         accountMap.delete(id)
         if (!cancelled) setAccounts(Array.from(accountMap.values()))
-      }
+      },
       ready() {
         if (!cancelled) setAccountsLoaded(true)
-      }
-    }
+      },
+    })
 
-    const subscriber = new AccountsSubscriber()
-
-    authenticatedApi
-      .subscribeConnectedAccounts(subscriber)
-      .then((stub) => {
-        if (cancelled) {
-          stub[Symbol.dispose]()
-        } else {
-          subscriptionRef.current = stub
-        }
-      })
-      .catch((err) => {
-        console.error('Failed to subscribe to connected accounts:', err)
-        if (!cancelled) setLoadError(true)
-      })
+    const subscription = authenticatedApi.subscribeConnectedAccounts(subscriber)
+    subscription.catch((err) => {
+      if (cancelled) return
+      logRpcFailure('Failed to subscribe to connected accounts:', err)
+      setLoadError(true)
+    })
 
     return () => {
       cancelled = true
-      subscriptionRef.current?.[Symbol.dispose]()
-      subscriptionRef.current = null
+      subscription[Symbol.dispose]()
     }
   }, [authenticatedApi])
 
@@ -611,7 +582,7 @@ function ConnectorsPage() {
       handleCloseModal()
     } catch (err) {
       console.error('Failed to connect account:', err)
-      toasts.add({ title: t('messages.connectFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to start connection', variant: 'error' })
     } finally {
       setConnecting(false)
     }
@@ -632,7 +603,7 @@ function ConnectorsPage() {
       // once `grantedResourceUrlPatterns` updates.
     } catch (err) {
       console.error('Failed to expand account access:', err)
-      toasts.add({ title: t('messages.accessFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to request additional access', variant: 'error' })
     } finally {
       setEnsuringResourceUrlPatterns((prev) =>
         prev.filter((p) => !resourceUrlPatterns.includes(p)),
@@ -653,7 +624,7 @@ function ConnectorsPage() {
       handleCloseModal()
     } catch (err) {
       console.error('Failed to disconnect account:', err)
-      toasts.add({ title: t('messages.disconnectFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to disconnect account', variant: 'error' })
     } finally {
       setDisconnecting(false)
     }
@@ -666,7 +637,7 @@ function ConnectorsPage() {
       window.open(url, '_blank', 'noopener,noreferrer')
     } catch (err) {
       console.error('Failed to reconnect account:', err)
-      toasts.add({ title: t('messages.reconnectFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to reconnect account', variant: 'error' })
     } finally {
       setReconnectingAccountId(null)
     }
@@ -744,15 +715,16 @@ function ConnectorsPage() {
     accounts.length === 0
 
   return (
-    <div className="min-h-[calc(100vh-3.5rem-1px)] bg-kumo-base">
-      <div className="mx-auto w-full max-w-5xl px-4 py-12 sm:px-8 sm:py-14">
+    <div className="h-full overflow-y-auto bg-kumo-base">
+      <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8 sm:py-14">
         <header className="mb-8 grid gap-8 lg:grid-cols-[minmax(0,540px)_444px] lg:items-center lg:justify-between">
           <div>
             <h1 className="m-0 text-3xl font-semibold leading-tight tracking-tight text-kumo-default sm:text-[34px]">
-              {t('title')}
+              Gatekeepers
             </h1>
             <p className="mt-2 text-[14px] leading-[20px] font-normal tracking-[-0.25px] text-kumo-subtle">
-              {t('subtitle')}
+              Add the apps and accounts your workspaces can use. Connect once, then wire
+              them into anything you build.
             </p>
           </div>
           <ConnectorsHeroDiagram accounts={accounts} vendors={vendors} siteName={siteName} />
@@ -768,7 +740,7 @@ function ConnectorsPage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('search')}
+              placeholder="Search gatekeepers…"
               className="h-10 w-full rounded-lg border border-kumo-line bg-kumo-base pl-9 pr-4 text-[14px] leading-5 tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15"
             />
           </div>
@@ -778,29 +750,29 @@ function ConnectorsPage() {
         {loadError && (
           <div className="rounded-2xl border border-kumo-line bg-kumo-base px-4 py-6 text-center">
             <p className="m-0 text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-danger">
-              {t('loadError')}
+              Something went wrong loading your gatekeepers.
             </p>
             <p className="mt-1 text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
-              {t('loadErrorHint')}
+              Check your connection and try refreshing the page.
             </p>
           </div>
         )}
 
         {initialLoading && (
           <div className="rounded-2xl border border-kumo-line bg-kumo-base px-4 py-8 text-center text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-            {t('loading')}
+            Loading gatekeepers...
           </div>
         )}
 
         {filteredAccounts.length > 0 && (
           <section className="mb-10">
-            <SectionEyebrow label={t('connected')} count={filteredAccounts.length} />
+            <SectionEyebrow label="Connected" count={filteredAccounts.length} />
             <div className={sectionGridClass}>
               {filteredAccounts.map((account) => {
                 const displayName =
                   account.accountDescription.displayName ??
                   account.accountDescription.uniqueName ??
-                  t('connected')
+                  'Connected'
                 const tagline = account.vendorDescription.tagline
                 return (
                   <ConnectorCard
@@ -817,7 +789,7 @@ function ConnectorsPage() {
                       >
                         {account.credentialsValid
                           ? displayName
-                          : t('credentialsExpired')}
+                          : 'Credentials expired'}
                       </span>
                     }
                     tagline={tagline}
@@ -835,7 +807,7 @@ function ConnectorsPage() {
 
         {filteredAvailable.length > 0 && (
           <section className="mb-10">
-            <SectionEyebrow label={t('available')} />
+            <SectionEyebrow label="Available" />
             <div className={sectionGridClass}>
 
               {filteredAvailable.map((vendor) => (
@@ -862,13 +834,13 @@ function ConnectorsPage() {
             <EmptyState
               title={
                 search
-                  ? t('noMatches')
-                  : t('empty')
+                  ? 'No gatekeepers match'
+                  : 'No gatekeepers yet'
               }
               description={
                 search
-                  ? t('noMatchesDescription')
-                  : t('emptyDescription')
+                  ? "We couldn't find anything matching your search."
+                  : 'Gatekeepers will appear here as they become available in your workspace.'
               }
               icon={Plugs}
             />

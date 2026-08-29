@@ -3,8 +3,10 @@ import { RpcStub } from 'capnweb'
 import { PublicApi } from '@gadgets/workshop-shared/api'
 import type { AccessSessionStatus } from './accessSession'
 
-// Context to provide the RPC stub and connection state throughout the app.
-// The stub is wrapped in an object to avoid React's callable-state-setter issue.
+/**
+ * Context to provide the RPC stub and connection state throughout the app.
+ * The stub is wrapped in an object to avoid React's callable-state-setter issue.
+ */
 export type RpcContextValue = {
   stub: RpcStub<PublicApi> | null
   connectionLost: boolean

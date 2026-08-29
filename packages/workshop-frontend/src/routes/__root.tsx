@@ -1,10 +1,10 @@
+import { logRpcFailure } from '../rpcErrors'
 import { useState, useEffect } from 'react'
 import { createRootRoute, Outlet, useRouterState } from '@tanstack/react-router'
 import { TooltipProvider, Toasty } from '@cloudflare/kumo'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
 import { useRpcContext } from '../RpcContext'
-import { markConnectionRestored } from '../main'
 import { useAuth, CF_ACCESS_MODE } from '../useAuth'
 import { AuthProvider } from '../AuthContext'
 import { FeatureFlagsProvider } from '../FeatureFlagsContext'
@@ -15,33 +15,16 @@ import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
 import { beginAccessLogin, currentReturnTo } from '../accessSession'
 import { AccessLoginComplete } from '../components/AccessLoginModal'
-import { useTranslation } from '../i18n'
 
 export const Route = createRootRoute({
   component: RootComponent,
 })
 
-function ConnectionLostBanner() {
-  const { t } = useTranslation('shell')
-  return (
-    <div className="sticky top-0 z-[100] bg-kumo-warning-tint border-b border-kumo-warning/30 px-4 py-2 text-center text-sm text-kumo-warning">
-      {t('status.connectionLost')}
-    </div>
-  )
-}
-
 function RootComponent() {
-  const { t } = useTranslation('shell')
-  const { t: commonT } = useTranslation('common')
   const { stub: rpcStub, connectionLost, accessSessionStatus } = useRpcContext()
   const { isAuthenticated, authenticatedApi, isLoading, error, logout, login } =
     useAuth(rpcStub, accessSessionStatus)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-
-  // When authenticatedApi becomes available, the connection is proven alive.
-  useEffect(() => {
-    if (authenticatedApi) markConnectionRestored()
-  }, [authenticatedApi])
 
   // Routes that don't require auth (public routes)
   const isSignup = pathname === '/signup'
@@ -72,10 +55,9 @@ function RootComponent() {
   // Loading state
   if (isLoading && !standalone && !publicGuestHome) {
     return (
-      <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
-        {connectionLost && <ConnectionLostBanner />}
+      <div className="flex min-h-full items-center justify-center flex-col gap-4 bg-kumo-base">
         <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-kumo-subtle">{connectionLost ? t('status.waitingForServer') : t('status.loading')}</p>
+        <p className="text-sm text-kumo-subtle">{connectionLost ? 'Waiting for server…' : 'Loading...'}</p>
       </div>
     )
   }
@@ -83,20 +65,20 @@ function RootComponent() {
   // Auth error
   if (error && !standalone && !publicGuestHome) {
     return (
-      <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base p-6">
-        <p className="text-sm text-kumo-danger">{t('status.authenticationError', { error })}</p>
+      <div className="flex min-h-full items-center justify-center flex-col gap-4 bg-kumo-base p-6">
+        <p className="text-sm text-kumo-danger">Authentication error: {error}</p>
         <button
           onClick={() => window.location.reload()}
           className="px-4 py-2 text-sm font-medium text-kumo-inverse bg-kumo-brand rounded-lg hover:bg-kumo-brand-hover transition-colors"
         >
-          {commonT('actions.retry')}
+          Retry
         </button>
       </div>
     )
   }
 
-  // The original home and app chrome are public in Access mode. Capability-bearing components use
-  // the optional auth context and remain unavailable until the protected session probe succeeds.
+  // The home shell is public in Access mode. Capability-bearing controls remain unavailable until
+  // the protected session probe and RPC authentication both succeed.
   if (publicGuestHome) {
     return (
       <TooltipProvider>
@@ -109,8 +91,8 @@ function RootComponent() {
     )
   }
 
-  // Direct navigation to a protected SPA route must perform a real document navigation so
-  // Cloudflare Access can challenge it; client-side routing alone would never reach the edge.
+  // Client-side routing cannot trigger an Access challenge, so protected routes use a real
+  // document navigation while the home page keeps the hybrid popup experience.
   if (!isAuthenticated && CF_ACCESS_MODE && !standalone) return <AccessLoginRedirect />
 
   // Not authenticated and not a public route — show login
@@ -125,8 +107,12 @@ function RootComponent() {
     return (
       <TooltipProvider>
         <Toasty>
-          {showHeader && <Header />}
-          <Outlet />
+          <div className="flex h-full min-h-0 flex-col">
+            {showHeader && <Header />}
+            <main className="min-h-0 flex-1 overflow-y-auto">
+              <Outlet />
+            </main>
+          </div>
         </Toasty>
       </TooltipProvider>
     )
@@ -143,7 +129,6 @@ function RootComponent() {
           <Toasty>
             <AuthenticatedShell
               authenticatedApi={authenticatedApi}
-              connectionLost={connectionLost}
               isWorkspaceEditor={isWorkspaceEditor}
             />
           </Toasty>
@@ -154,12 +139,11 @@ function RootComponent() {
 }
 
 function AccessLoginRedirect() {
-  const { t } = useTranslation('shell')
   useEffect(() => beginAccessLogin(currentReturnTo()), [])
   return (
-    <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
+    <div className="flex min-h-full items-center justify-center flex-col gap-4 bg-kumo-base">
       <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-      <p className="text-sm text-kumo-subtle">{t('status.openingSignIn')}</p>
+      <p className="text-sm text-kumo-subtle">Opening sign in…</p>
     </div>
   )
 }
@@ -171,11 +155,9 @@ function AccessLoginRedirect() {
  */
 function AuthenticatedShell({
   authenticatedApi,
-  connectionLost,
   isWorkspaceEditor,
 }: {
   authenticatedApi: RpcStub<AuthenticatedApi>
-  connectionLost: boolean
   isWorkspaceEditor: boolean
 }) {
   // null = still checking, true = needs onboarding, false = onboarding done
@@ -186,7 +168,7 @@ function AuthenticatedShell({
     authenticatedApi.isOnboardingCompleted().then((completed) => {
       if (!cancelled) setOnboardingNeeded(!completed)
     }).catch((err) => {
-      console.error('Failed to check onboarding status:', err)
+      logRpcFailure('Failed to check onboarding status:', err)
       // If the check fails, skip onboarding to avoid blocking the user
       if (!cancelled) setOnboardingNeeded(false)
     })
@@ -196,7 +178,7 @@ function AuthenticatedShell({
   // Still checking onboarding status
   if (onboardingNeeded === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
+      <div className="flex min-h-full items-center justify-center flex-col gap-4 bg-kumo-base">
         <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
       </div>
     )
@@ -208,14 +190,14 @@ function AuthenticatedShell({
   }
 
   // Normal app shell. The workspace editor is rendered fullscreen (no chrome); everything else
-  // gets the persistent left-rail AppShell.
+  // gets the persistent left-rail AppShell. Connection loss is surfaced by a chip in whichever of
+  // those two top bars is showing, never by a banner that reflows the page (see ReconnectingChip).
   const fullscreen = isWorkspaceEditor
   return (
     <>
-      {connectionLost && <ConnectionLostBanner />}
       <AccountSelectionModal />
       {fullscreen ? (
-        <main>
+        <main className="h-full min-h-0">
           <Outlet />
         </main>
       ) : (

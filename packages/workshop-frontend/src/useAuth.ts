@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { RpcStub } from 'capnweb'
 import { PublicApi, AuthenticatedApi } from '@gadgets/workshop-shared/api'
+import { setReportedUserId } from './errorReporting'
 import type { AccessSessionStatus } from './accessSession'
 
 const CF_ACCESS_MODE = import.meta.env.VITE_CF_ACCESS_MODE === 'true'
@@ -22,64 +23,31 @@ export function useAuth(
     token: null,
     authenticatedApi: null,
     isLoading: true,
-    error: null
+    error: null,
   })
 
-  // Track current authenticated API stub for cleanup on unmount.
-  // State closures go stale in cleanup functions, so we use a ref.
+  // State closures go stale in cleanup functions, so retain only the current capability here.
   const authenticatedApiRef = useRef<RpcStub<AuthenticatedApi> | null>(null)
   authenticatedApiRef.current = authState.authenticatedApi
+
+  useEffect(() => {
+    const authenticatedApi = authState.authenticatedApi
+    if (!authenticatedApi) return
+    let cancelled = false
+    authenticatedApi.whoami().then((info) => {
+      if (!cancelled && info.type === 'user') setReportedUserId(info.id)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [authState.authenticatedApi])
 
   useEffect(() => {
     let cancelled = false
     let pendingAccessApi: RpcStub<AuthenticatedApi> | null = null
 
-    const authenticateWithCfAccess = async () => {
-      if (!publicApi) return
-      setAuthState(prev => {
-        prev.authenticatedApi?.[Symbol.dispose]()
-        return { token: null, authenticatedApi: null, isLoading: true, error: null }
-      })
-
-      // Promise-pipeline whoami() through authentication. The UI only becomes authenticated after
-      // Access verification and the resulting user capability have both succeeded.
-      const authenticatedApi = publicApi.authenticateFromCfAccess()
-      pendingAccessApi = authenticatedApi
-      try {
-        await authenticatedApi.whoami()
-        if (cancelled) {
-          authenticatedApi[Symbol.dispose]()
-          return
-        }
-        setAuthState({
-          token: null,
-          authenticatedApi,
-          isLoading: false,
-          error: null
-        })
-        if (pendingAccessApi === authenticatedApi) pendingAccessApi = null
-      } catch (error) {
-        authenticatedApi[Symbol.dispose]()
-        if (pendingAccessApi === authenticatedApi) pendingAccessApi = null
-        if (!cancelled) {
-          setAuthState({
-            token: null,
-            authenticatedApi: null,
-            isLoading: false,
-            error: error instanceof Error && error.message
-              ? error.message
-              : 'Cloudflare Access authentication failed.'
-          })
-        }
-      }
-    }
-
     if (CF_ACCESS_MODE) {
-      if (accessSessionStatus === 'authenticated' && publicApi) {
-        void authenticateWithCfAccess()
-      } else {
-        setAuthState(prev => {
-          prev.authenticatedApi?.[Symbol.dispose]()
+      if (accessSessionStatus !== 'authenticated' || !publicApi) {
+        setAuthState((previous) => {
+          previous.authenticatedApi?.[Symbol.dispose]()
           return {
             token: null,
             authenticatedApi: null,
@@ -89,84 +57,88 @@ export function useAuth(
               : null,
           }
         })
+      } else {
+        setAuthState((previous) => {
+          previous.authenticatedApi?.[Symbol.dispose]()
+          return { token: null, authenticatedApi: null, isLoading: true, error: null }
+        })
+
+        // Pipeline whoami through Access authentication, but expose the capability only after the
+        // server has verified the Access JWT and confirmed the account is allowed to sign in.
+        const authenticatedApi = publicApi.authenticateFromCfAccess()
+        pendingAccessApi = authenticatedApi
+        authenticatedApi.whoami().then(() => {
+          if (cancelled) {
+            authenticatedApi[Symbol.dispose]()
+            return
+          }
+          pendingAccessApi = null
+          setAuthState({ token: null, authenticatedApi, isLoading: false, error: null })
+        }).catch((error: unknown) => {
+          authenticatedApi[Symbol.dispose]()
+          pendingAccessApi = null
+          if (!cancelled) {
+            setAuthState({
+              token: null,
+              authenticatedApi: null,
+              isLoading: false,
+              error: error instanceof Error && error.message
+                ? error.message
+                : 'Cloudflare Access authentication failed.',
+            })
+          }
+        })
       }
+    } else if (!publicApi) {
+      setAuthState((previous) => ({
+        ...previous,
+        isLoading: false,
+        error: 'RPC connection unavailable.',
+      }))
     } else {
-      if (!publicApi) {
-        setAuthState(prev => ({ ...prev, isLoading: false, error: 'RPC connection unavailable.' }))
-        return
-      }
       const storedToken = localStorage.getItem('authToken')
       if (storedToken) {
-        authenticateWithToken(storedToken)
+        const authenticatedApi = publicApi.authenticate(storedToken)
+        setAuthState({ token: storedToken, authenticatedApi, isLoading: false, error: null })
       } else {
-        setAuthState(prev => ({ ...prev, isLoading: false }))
+        setAuthState((previous) => ({ ...previous, isLoading: false }))
       }
     }
+
     return () => {
       cancelled = true
       pendingAccessApi?.[Symbol.dispose]()
-      // The authenticateWithXxx functions also dispose the old stub via their setAuthState
-      // updater, so this may double-dispose on reconnect. That's fine — dispose is idempotent.
       authenticatedApiRef.current?.[Symbol.dispose]()
     }
   }, [publicApi, accessSessionStatus])
 
   const authenticateWithToken = (token: string) => {
     if (!publicApi) return
-    setAuthState(prev => {
-      // Dispose the previous authenticated API stub if it exists
-      if (prev.authenticatedApi) {
-        prev.authenticatedApi[Symbol.dispose]()
-      }
-      return {
-        ...prev,
-        authenticatedApi: null, // Clear the disposed stub
-        isLoading: true,
-        error: null
-      }
+    setAuthState((previous) => {
+      previous.authenticatedApi?.[Symbol.dispose]()
+      return { ...previous, authenticatedApi: null, isLoading: true, error: null }
     })
-
-    // Use promise pipelining - we can use the returned promise as a stub immediately
-    // without awaiting. Authentication errors will be handled when the stub is actually used.
     const authenticatedApi = publicApi.authenticate(token)
-    setAuthState({
-      token,
-      authenticatedApi,
-      isLoading: false,
-      error: null
-    })
-  }
-
-  const login = (token: string) => {
-    authenticateWithToken(token)
+    setAuthState({ token, authenticatedApi, isLoading: false, error: null })
   }
 
   const logout = () => {
+    setReportedUserId(undefined)
     if (CF_ACCESS_MODE) {
       window.location.assign('/cdn-cgi/access/logout')
       return
     }
-
-    // Use functional updater to read current state (avoids stale closure).
-    setAuthState(prev => {
-      if (prev.authenticatedApi) {
-        prev.authenticatedApi[Symbol.dispose]()
-      }
-      return {
-        token: null,
-        authenticatedApi: null,
-        isLoading: false,
-        error: null
-      }
+    setAuthState((previous) => {
+      previous.authenticatedApi?.[Symbol.dispose]()
+      return { token: null, authenticatedApi: null, isLoading: false, error: null }
     })
-
     localStorage.removeItem('authToken')
   }
 
   return {
     ...authState,
-    login,
+    login: authenticateWithToken,
     logout,
-    isAuthenticated: !!authState.authenticatedApi
+    isAuthenticated: !!authState.authenticatedApi,
   }
 }

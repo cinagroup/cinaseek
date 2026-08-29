@@ -9,8 +9,7 @@ import { useAvatar, invalidateAvatarCache } from './useAvatar'
 import { compressAvatar, avatarBlobUrl } from './avatarUtils'
 import UsageSettings from './components/billing/UsageSettings'
 import { useDocumentTitle } from './useDocumentTitle'
-import { useTranslation } from './i18n'
-import { LanguageSelect } from './i18n/LanguageSwitcher'
+import { isImeComposing } from './keyboardEvent'
 
 // Shared, on-language control classes (match the rest of the app: Workspaces/Blueprints headers,
 // the gatekeepers toolbar, the command palette). Kept here so the profile page reads as part of the
@@ -20,7 +19,7 @@ const PRIMARY_BTN =
 const ICON_BTN =
   'press grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-lg text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default'
 const INPUT =
-  'h-9 w-full rounded-lg border border-kumo-line bg-kumo-base px-3 text-[14px] tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15'
+  'h-10 w-full rounded-lg border border-kumo-line bg-kumo-base px-3 text-[16px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15 sm:h-9 sm:text-[14px]'
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -55,7 +54,6 @@ function PasswordField({
   error?: string | null
   autoComplete?: string
 }) {
-  const { t } = useTranslation('settings')
   const [show, setShow] = useState(false)
   return (
     <div>
@@ -72,7 +70,7 @@ function PasswordField({
         <button
           type="button"
           onClick={() => setShow((s) => !s)}
-          aria-label={show ? t('security.hidePassword') : t('security.showPassword')}
+          aria-label={show ? 'Hide password' : 'Show password'}
           className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 cursor-pointer place-items-center rounded-md text-kumo-inactive transition-colors hover:text-kumo-default"
         >
           {show ? <EyeSlash size={15} /> : <Eye size={15} />}
@@ -88,12 +86,10 @@ function PasswordField({
 }
 
 export default function SettingsPage() {
-  const { t } = useTranslation('settings')
-  const { t: commonT } = useTranslation('common')
-  useDocumentTitle(t('pageTitle'))
+  useDocumentTitle('Profile')
 
   const { authenticatedApi } = useAuthenticatedApi()
-  const { add: addToast } = useKumoToastManager()
+  const toasts = useKumoToastManager()
   const [userInfo, setUserInfo] = useState<AiChatAuthorInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [isEditingName, setIsEditingName] = useState(false)
@@ -142,7 +138,7 @@ export default function SettingsPage() {
         setNameInput(info.name)
       } catch (error) {
         console.error('Failed to fetch user info:', error)
-        if (!cancelled) addToast({ title: t('messages.loadFailed'), variant: 'error' })
+        if (!cancelled) toasts.add({ title: 'Failed to load user information', variant: 'error' })
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -150,11 +146,11 @@ export default function SettingsPage() {
 
     fetchUserInfo()
     return () => { cancelled = true }
-  }, [addToast, authenticatedApi, t])
+  }, [authenticatedApi])
 
   const handleSaveName = async () => {
     if (!nameInput.trim()) {
-      addToast({ title: t('messages.emptyDisplayName'), variant: 'error' })
+      toasts.add({ title: 'Display name cannot be empty', variant: 'error' })
       return
     }
 
@@ -162,10 +158,10 @@ export default function SettingsPage() {
       await authenticatedApi.setOwnDisplayName(nameInput.trim())
       setUserInfo(prev => prev ? { ...prev, name: nameInput.trim() } : null)
       setIsEditingName(false)
-      addToast({ title: t('messages.displayNameUpdated'), variant: 'success' })
+      toasts.add({ title: 'Display name updated', variant: 'success' })
     } catch (err) {
       console.error('Failed to update display name:', err)
-      addToast({ title: t('messages.displayNameUpdateFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to update display name', variant: 'error' })
     }
   }
 
@@ -178,15 +174,15 @@ export default function SettingsPage() {
     if (!userInfo?.id) return
     try {
       await navigator.clipboard.writeText(userInfo.id)
-      addToast({ title: t('messages.userIdCopied'), variant: 'success' })
+      toasts.add({ title: 'User ID copied', variant: 'success' })
     } catch {
-      addToast({ title: t('messages.copyFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to copy', variant: 'error' })
     }
   }
 
   const handleAvatarUpload = async (file: File) => {
     if (!file.type.startsWith('image/')) {
-      addToast({ title: t('messages.imageRequired'), variant: 'error' })
+      toasts.add({ title: 'Please select an image file', variant: 'error' })
       return
     }
     setAvatarUploading(true)
@@ -199,11 +195,11 @@ export default function SettingsPage() {
       await authenticatedApi.setAvatar(compressed)
       // Invalidate cache so the hook refetches
       if (userInfo?.id) invalidateAvatarCache(userInfo.id)
-      addToast({ title: t('messages.avatarUpdated'), variant: 'success' })
+      toasts.add({ title: 'Avatar updated', variant: 'success' })
     } catch (err) {
       console.error('Failed to upload avatar:', err)
       setLocalAvatarPreview(null)
-      addToast({ title: t('messages.avatarUpdateFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to upload avatar', variant: 'error' })
     } finally {
       setAvatarUploading(false)
     }
@@ -213,11 +209,11 @@ export default function SettingsPage() {
     if (!userInfo) return
     if (!currentPassword || !newPassword || !confirmPassword) return
     if (newPassword.length < 8) {
-      setPasswordError(t('messages.passwordTooShort'))
+      setPasswordError('Password must be at least 8 characters')
       return
     }
     if (newPassword !== confirmPassword) {
-      setPasswordError(t('messages.passwordsMismatch'))
+      setPasswordError('Passwords do not match')
       return
     }
 
@@ -228,13 +224,13 @@ export default function SettingsPage() {
       const oldHash = await hashPassword(userInfo.id, currentPassword)
       const newHash = await hashPassword(userInfo.id, newPassword)
       await authenticatedApi.changePassword(oldHash, newHash)
-      addToast({ title: t('messages.passwordChanged'), variant: 'success' })
+      toasts.add({ title: 'Password changed successfully', variant: 'success' })
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
     } catch (err) {
-      console.error('Failed to change password:', err)
-      setPasswordError(t('messages.passwordChangeFailed'))
+      const errorMessage = err instanceof Error ? err.message : 'Failed to change password'
+      setPasswordError(errorMessage)
     } finally {
       setPasswordLoading(false)
     }
@@ -245,24 +241,24 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="flex min-h-[60vh] flex-1 items-center justify-center">
-        <p className="text-[13px] tracking-[-0.25px] text-kumo-subtle">{t('loading')}</p>
+        <p className="text-[13px] tracking-[-0.25px] text-kumo-subtle">Loading profile…</p>
       </div>
     )
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-2xl flex-col px-6 pb-16 sm:px-10">
-      <header className="px-1 pb-2 pt-10">
-        <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">{t('title')}</h1>
+    <div className="mx-auto flex h-full w-full max-w-2xl flex-col px-4 pb-16 sm:px-10">
+      <header className="px-1 pb-2 pt-6 sm:pt-10">
+        <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">Profile</h1>
         <p className="mt-1 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-          {t('subtitle')}
+          Manage your account details, avatar, and security.
         </p>
       </header>
 
       <div className="mt-6 flex flex-col gap-9">
         {/* Account */}
         <section className="flex flex-col gap-3">
-          <SectionLabel>{t('account.section')}</SectionLabel>
+          <SectionLabel>Account</SectionLabel>
           <div className="divide-y divide-kumo-line overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">
             {/* Avatar */}
             <div className="flex items-center gap-4 px-5 py-4">
@@ -273,11 +269,11 @@ export default function SettingsPage() {
                 className="press group relative flex h-16 w-16 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-kumo-fill disabled:cursor-wait"
               >
                 {displayAvatarUrl ? (
-                  <img src={displayAvatarUrl} alt={t('account.avatarAlt')} className="h-full w-full object-cover" />
+                  <img src={displayAvatarUrl} alt="Avatar" className="h-full w-full object-cover" />
                 ) : (
                   <User size={28} className="text-kumo-subtle" />
                 )}
-                <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                   <Camera size={18} className="text-white" />
                 </div>
                 {avatarUploading && (
@@ -302,7 +298,7 @@ export default function SettingsPage() {
                   {userInfo?.name}
                 </p>
                 <p className="mt-0.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle">
-                  {t('account.avatarHint')}
+                  Click the avatar to upload a new photo
                 </p>
               </div>
             </div>
@@ -310,16 +306,17 @@ export default function SettingsPage() {
             {/* Display name */}
             <div className="flex items-end gap-2 px-5 py-4">
               <div className="min-w-0 flex-1">
-                <FieldLabel>{t('account.displayName')}</FieldLabel>
+                <FieldLabel>Display name</FieldLabel>
                 {isEditingName ? (
                   <input
                     value={nameInput}
                     onChange={(e) => setNameInput(e.target.value)}
                     onKeyDown={(e) => {
+                      if (isImeComposing(e)) return
                       if (e.key === 'Enter') handleSaveName()
                       if (e.key === 'Escape') handleCancelEdit()
                     }}
-                    placeholder={t('account.displayNamePlaceholder')}
+                    placeholder="Enter display name"
                     autoFocus
                     className={`mt-1.5 ${INPUT}`}
                   />
@@ -335,16 +332,16 @@ export default function SettingsPage() {
                     type="button"
                     onClick={handleSaveName}
                     disabled={!nameInput.trim()}
-                    aria-label={t('account.saveDisplayName')}
+                    aria-label="Save display name"
                     className={PRIMARY_BTN}
                   >
                     <Check size={15} weight="bold" />
-                    {commonT('actions.save')}
+                    Save
                   </button>
                   <button
                     type="button"
                     onClick={handleCancelEdit}
-                    aria-label={commonT('actions.cancel')}
+                    aria-label="Cancel"
                     className={ICON_BTN}
                   >
                     <X size={15} />
@@ -354,7 +351,7 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={() => setIsEditingName(true)}
-                  aria-label={t('account.editDisplayName')}
+                  aria-label="Edit display name"
                   className={ICON_BTN}
                 >
                   <Pencil size={14} />
@@ -365,7 +362,7 @@ export default function SettingsPage() {
             {/* User ID */}
             <div className="flex items-center gap-2 px-5 py-4">
               <div className="min-w-0 flex-1">
-                <FieldLabel>{t('account.userId')}</FieldLabel>
+                <FieldLabel>User ID</FieldLabel>
                 <p className="mt-1 truncate font-mono text-[12px] tracking-[-0.1px] text-kumo-subtle">
                   {userInfo?.id}
                 </p>
@@ -373,19 +370,12 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={handleCopyId}
-                aria-label={t('account.copyUserId')}
+                aria-label="Copy user ID"
                 className={ICON_BTN}
               >
                 <Copy size={14} />
               </button>
             </div>
-          </div>
-        </section>
-
-        <section className="flex flex-col gap-3">
-          <SectionLabel>{t('preferences.section')}</SectionLabel>
-          <div className="rounded-xl border border-kumo-line bg-kumo-base p-5">
-            <LanguageSelect />
           </div>
         </section>
 
@@ -395,31 +385,31 @@ export default function SettingsPage() {
         {/* Security — only for password accounts (hidden under CF Access or gatekeeper sign-in) */}
         {!CF_ACCESS_MODE && hasPassword === true && (
           <section className="flex flex-col gap-3">
-            <SectionLabel>{t('security.section')}</SectionLabel>
+            <SectionLabel>Security</SectionLabel>
             <div className="rounded-xl border border-kumo-line bg-kumo-base p-5">
               <div className="flex max-w-sm flex-col gap-4">
                 <PasswordField
-                  label={t('security.currentPassword')}
+                  label="Current password"
                   value={currentPassword}
                   onChange={setCurrentPassword}
-                  placeholder={t('security.currentPasswordPlaceholder')}
+                  placeholder="Enter current password"
                   autoComplete="current-password"
                 />
 
                 <PasswordField
-                  label={t('security.newPassword')}
+                  label="New password"
                   value={newPassword}
                   onChange={setNewPassword}
-                  placeholder={t('security.newPasswordPlaceholder')}
-                  description={t('security.passwordHint')}
+                  placeholder="Enter new password"
+                  description="Must be at least 8 characters"
                   autoComplete="new-password"
                 />
 
                 <PasswordField
-                  label={t('security.confirmPassword')}
+                  label="Confirm new password"
                   value={confirmPassword}
                   onChange={setConfirmPassword}
-                  placeholder={t('security.confirmPasswordPlaceholder')}
+                  placeholder="Confirm new password"
                   autoComplete="new-password"
                   error={passwordError}
                 />
@@ -432,7 +422,7 @@ export default function SettingsPage() {
                     className={PRIMARY_BTN}
                   >
                     <Lock size={14} weight="bold" />
-                    {passwordLoading ? t('security.changing') : t('security.changePassword')}
+                    {passwordLoading ? 'Changing…' : 'Change password'}
                   </button>
                 </div>
               </div>

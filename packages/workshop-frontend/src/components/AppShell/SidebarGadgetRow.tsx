@@ -4,7 +4,7 @@ import { DropdownMenu } from '@cloudflare/kumo'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from '../menuStyles'
 import { useState, useEffect, useRef } from 'react'
 import type { GadgetMetadataWithTimestamps } from '@gadgets/workshop-shared/api'
-import { useTranslation } from '../../i18n'
+import { isImeComposing } from '../../keyboardEvent'
 
 function initials(title: string | undefined): string {
   const t = (title || 'Untitled').trim()
@@ -13,9 +13,11 @@ function initials(title: string | undefined): string {
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || t.slice(0, 2).toUpperCase()
 }
 
-// One row in the sidebar's Favorites / Recent list. Compact, with a monogram avatar, a truncated
-// title, and an overflow menu (favorite, rename, share, delete). Favorite/rename/share/delete
-// callbacks are passed in by the parent so this row stays a pure presentational component.
+/**
+ * One row in the sidebar's Favorites / Recent list. Compact, with a monogram avatar, a truncated
+ * title, and an overflow menu (favorite, rename, share, delete). Favorite/rename/share/delete
+ * callbacks are passed in by the parent so this row stays a pure presentational component.
+ */
 export default function SidebarGadgetRow({
   gadget,
   collapsed = false,
@@ -31,7 +33,6 @@ export default function SidebarGadgetRow({
   onShare: (g: GadgetMetadataWithTimestamps) => void
   onDelete: (g: GadgetMetadataWithTimestamps) => void
 }) {
-  const { t } = useTranslation('shell')
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(gadget.title || '')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -60,7 +61,7 @@ export default function SidebarGadgetRow({
       onClick={(e) => {
         if (renaming) e.preventDefault()
       }}
-      title={collapsed ? gadget.title || t('workspace.untitled') : undefined}
+      title={collapsed ? gadget.title || 'Untitled workspace' : undefined}
     >
       <div
         className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-kumo-fill text-[10px] font-medium text-kumo-subtle"
@@ -78,6 +79,7 @@ export default function SidebarGadgetRow({
               onChange={(e) => setRenameValue(e.target.value)}
               onBlur={commit}
               onKeyDown={(e) => {
+                if (isImeComposing(e)) return
                 if (e.key === 'Enter') commit()
                 if (e.key === 'Escape') setRenaming(false)
               }}
@@ -85,7 +87,7 @@ export default function SidebarGadgetRow({
               onClick={(e) => e.preventDefault()}
             />
           ) : (
-            <span className="min-w-0 flex-1 truncate">{gadget.title || t('workspace.untitled')}</span>
+            <span className="min-w-0 flex-1 truncate">{gadget.title || 'Untitled workspace'}</span>
           )}
 
           {/* Inside the row's <Link>: stopPropagation blocks the Link's SPA handler, so preventDefault
@@ -96,7 +98,7 @@ export default function SidebarGadgetRow({
                 render={
                   <button
                     type="button"
-                    aria-label={t('workspace.actions')}
+                    aria-label="Workspace actions"
                     className="flex h-6 w-6 items-center justify-center rounded-md text-kumo-subtle opacity-0 transition-[opacity,color,background-color] group-hover:opacity-100 hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100"
                   >
                     <DotsThree size={14} weight="bold" />
@@ -108,20 +110,20 @@ export default function SidebarGadgetRow({
                   onClick={startRename}
                   className={MENU_ITEM}
                 >
-                  <Pencil size={13} className="mr-2" /> {t('workspace.rename')}
+                  <Pencil size={13} className="mr-2" /> Rename
                 </DropdownMenu.Item>
                 <DropdownMenu.Item
                   onClick={() => onTogglePin(gadget)}
                   className={MENU_ITEM}
                 >
                   <Star size={13} className="mr-2" weight={gadget.pinned ? 'fill' : 'regular'} />
-                  {gadget.pinned ? t('workspace.unfavorite') : t('workspace.favorite')}
+                  {gadget.pinned ? 'Unfavorite' : 'Favorite'}
                 </DropdownMenu.Item>
                 <DropdownMenu.Item
                   onClick={() => onShare(gadget)}
                   className={MENU_ITEM}
                 >
-                  <ShareNetwork size={13} className="mr-2" /> {t('workspace.share')}
+                  <ShareNetwork size={13} className="mr-2" /> Share
                 </DropdownMenu.Item>
                 <DropdownMenu.Separator />
                 <DropdownMenu.Item
@@ -130,7 +132,7 @@ export default function SidebarGadgetRow({
                   className={MENU_ITEM_DANGER}
                 >
                   <Trash size={13} className="mr-2" />
-                  {gadget.owner ? t('workspace.dismiss') : t('workspace.delete')}
+                  {gadget.owner ? 'Dismiss' : 'Delete'}
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu>
@@ -139,7 +141,7 @@ export default function SidebarGadgetRow({
       )}
 
       {/* Collapsed rows show only the monogram (aria-hidden), so name the link for screen readers. */}
-      {collapsed && <span className="sr-only">{gadget.title || t('workspace.untitled')}</span>}
+      {collapsed && <span className="sr-only">{gadget.title || 'Untitled workspace'}</span>}
     </Link>
   )
 }

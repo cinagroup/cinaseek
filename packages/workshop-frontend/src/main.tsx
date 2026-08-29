@@ -1,7 +1,7 @@
 import { StrictMode, useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from '@tanstack/react-router'
-import { RpcStub, newWebSocketRpcSession } from 'capnweb'
+import { RpcPromise, RpcStub, newWebSocketRpcSession } from 'capnweb'
 import { PublicApi, ServerConfig } from '@gadgets/workshop-shared/api'
 import { RpcContext } from './RpcContext'
 import { ServerConfigContext, ServerConfigErrorContext } from './ServerConfigContext'
@@ -60,106 +60,144 @@ async function devAutoLogin(stub: RpcStub<PublicApi>): Promise<void> {
 //
 // Anyway, I pulled the connection management out into these globals instead.
 let lastConnectTime: number = 0;
-let backoff: number = 1000;
+
+const INITIAL_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 10000;
+// Generous probe deadlines let a slow-but-alive backend settle instead of connect/dispose looping
+// (or, on wake, tearing down a healthy socket under load).
+const RECONNECT_PROBE_TIMEOUT_MS = 20000;
+const WAKE_PROBE_TIMEOUT_MS = 10000;
+const WAKE_PROBE_MIN_IDLE_MS = 15000;
+
+// Callbacks to call whenever `currentStub` or connection state is updated.
+const subscribers = new Set<() => void>();
+const notifySubscribers = () => subscribers.forEach(cb => cb());
+let isConnectionLost = false;
+let probing = false;
+let lastProvenAt = Date.now();
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
 
 function getBackendHost(): string {
-  const backendHost = import.meta.env.VITE_BACKEND_HOST?.trim();
-  if (backendHost) return backendHost;
-
-  // When opening the Vite dev server directly (localhost:3000), the backend is at localhost:8787.
-  // Otherwise, the API is on the same host as the frontend.
-  return window.location.hostname === 'localhost' ? 'localhost:8787' : window.location.host;
+  // Only the Vite dev server is hosted separately from the backend. Built assets are served from
+  // the same origin in both production and run-local mode.
+  if (import.meta.env.DEV) {
+    return import.meta.env.VITE_BACKEND_HOST?.trim() || 'localhost:8787';
+  }
+  return window.location.host;
 }
 
 function startConnection(): RpcStub<PublicApi> {
   lastConnectTime = Date.now();
   const apiHost = getBackendHost();
   const wsUrl = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + apiHost + '/api';
-  return newWebSocketRpcSession<PublicApi>(wsUrl);
+  const stub = newWebSocketRpcSession<PublicApi>(wsUrl);
+  stub.onRpcBroken(handleBroken);
+  return stub;
 }
 
-function notifyConnectionStateChanged() {
-  for (const cb of notifyCurrentStubUpdated) cb()
-}
+const disposeQuietly = (stub: RpcStub<PublicApi>) => {
+  try { stub[Symbol.dispose](); } catch { /* already broken */ }
+};
 
-function openConnection(): RpcStub<PublicApi> {
-  const stub = startConnection()
-  stub.onRpcBroken((error) => handleBroken(stub, error))
-  return stub
-}
-
-async function handleBroken(brokenStub: RpcStub<PublicApi>, error: unknown) {
-  if (currentStub !== brokenStub) return
-  console.warn('RPC connection lost:', error);
-
-  isConnectionLost = true;
-  notifyConnectionStateChanged()
-
-  // A public shell must not reconnect forever after the Access application session expires.
-  // Re-check the protected HTTP endpoint first; a guest transition tears down the RPC state while
-  // a transient probe failure keeps the ordinary reconnect path alive.
+// Connects with jittered backoff until a candidate answers a probe, and resolves only to that
+// proven connection: capnweb queues sends while a socket is still CONNECTING, so an unproven stub
+// looks fine right up until everything pipelined onto it fails at once.
+async function reconnect(): Promise<RpcStub<PublicApi>> {
   if (CF_ACCESS_MODE) {
     const status = await probeAccessSession()
-    if (currentStub !== brokenStub) return
+    accessSessionStatus = status
     if (status === 'guest') {
       currentStub = null
-      accessSessionStatus = 'guest'
       isConnectionLost = false
-      notifyConnectionStateChanged()
-      return
+      notifySubscribers()
+      return await new Promise<RpcStub<PublicApi>>(() => {})
     }
-    if (status === 'authenticated') accessSessionStatus = 'authenticated'
   }
 
-  let timeSinceConnect = Date.now() - lastConnectTime;
-  if (timeSinceConnect < backoff) {
-    let waitTime = backoff - timeSinceConnect;
-    console.warn(`Will try again in ${Math.round(waitTime / 1000)} seconds...`)
-    await new Promise(resolve => setTimeout(resolve, waitTime));
-    console.warn(`Retrying connection...`);
-    backoff = Math.min(backoff * 2, 10000);
-  } else {
-    backoff = 1000;
+  // Fast recovery from one-off blips: skip the first backoff if the dying connection was up a while.
+  let skipSleep = Date.now() - lastConnectTime >= INITIAL_BACKOFF_MS;
+  let backoff = INITIAL_BACKOFF_MS;
+  for (;;) {
+    if (!skipSleep) {
+      await sleep(backoff * (0.85 + 0.3 * Math.random()));  // jittered against stampedes
+      backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+    }
+    skipSleep = false;
+
+    const candidate = startConnection();
+    try {
+      await withTimeout(candidate.ping(), RECONNECT_PROBE_TIMEOUT_MS);
+    } catch (probeError) {
+      console.debug('Reconnect attempt failed:', probeError);
+      disposeQuietly(candidate);
+      continue;
+    }
+
+    lastProvenAt = Date.now();
+    isConnectionLost = false;
+    console.warn('RPC connection restored.');
+    notifySubscribers();
+    return candidate;
   }
-
-  if (currentStub !== brokenStub) return
-  currentStub = openConnection();
-
-  // Don't clear isConnectionLost here — the new connection hasn't proven
-  // it works yet. It gets cleared by markConnectionRestored() once the
-  // app successfully communicates with the backend.
-  notifyConnectionStateChanged()
 }
 
-// Callbacks to call whenever `currentStub` or connection state is updated.
-let notifyCurrentStubUpdated: Set<() => void> = new Set();
-let isConnectionLost = false;
-let currentStub: RpcStub<PublicApi> | null = null
-let accessSessionStatus: AccessSessionStatus = CF_ACCESS_MODE ? 'checking' : 'not-applicable'
-let accessSessionInitialization: Promise<void> | null = null
+// Subscribers hear exactly twice per outage — lost here, restored in `reconnect` — because
+// `currentStub` is replaced once, by a promise, rather than once per attempt.
+function handleBroken(error: unknown) {
+  if (isConnectionLost) return;  // stale/disposed stub, or recovery already underway
+  isConnectionLost = true;
 
-function initializeAccessSession(): Promise<void> {
-  if (!CF_ACCESS_MODE) return Promise.resolve()
-  if (accessSessionInitialization) return accessSessionInitialization
+  console.warn('RPC connection lost:', error);
 
-  accessSessionInitialization = probeAccessSession().then((status) => {
-    accessSessionStatus = status
-    if (status === 'authenticated' && !currentStub) currentStub = openConnection()
-    notifyConnectionStateChanged()
-  })
-  return accessSessionInitialization
+  // Publish a stub for the connection we have not made yet, so the dead one stops being reachable
+  // immediately. capnweb queues calls pipelined onto an unresolved `RpcPromise` and delivers them,
+  // in order, once it resolves — so work issued during the outage waits for the replacement
+  // instead of failing against a socket known to be gone. The `RpcPromise` takes ownership of its
+  // resolution, keeping the proven stub on a single disposal path.
+  currentStub = new RpcPromise<PublicApi>(reconnect());
+  notifySubscribers();
 }
 
-// Called externally (e.g., by auth) to indicate the connection is alive.
-export function markConnectionRestored() {
-  if (!isConnectionLost) return;
-  isConnectionLost = false;
-  for (let cb of notifyCurrentStubUpdated) { cb(); }
+// Passive close detection misses sockets killed during laptop sleep or tab throttling, so on
+// tab-visible / network-online signals probe the connection instead of letting the user's next
+// action hang on a zombie socket.
+async function probeOnWake() {
+  if (!currentStub || isConnectionLost || probing ||
+      Date.now() - lastProvenAt < WAKE_PROBE_MIN_IDLE_MS) return;
+  probing = true;
+  const suspect = currentStub;
+  try {
+    await withTimeout(suspect.ping(), WAKE_PROBE_TIMEOUT_MS);
+    lastProvenAt = Date.now();
+  } catch (error) {
+    if (currentStub !== suspect || isConnectionLost) return;  // a real broken event won the race
+    console.warn('Connection unresponsive after wake:', error);
+    // Disposal fires onRpcBroken → handleBroken recovers. Its skip-first-backoff path retries
+    // immediately — right for "the network just came back".
+    disposeQuietly(suspect);
+  } finally {
+    probing = false;
+  }
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') void probeOnWake();
+});
+window.addEventListener('online', () => void probeOnWake());
 
 // Current stub. handleBroken() will replace this on disconnect.
 installWorkshopErrorReporting()
-if (!CF_ACCESS_MODE) currentStub = openConnection()
+let accessSessionStatus: AccessSessionStatus = CF_ACCESS_MODE ? 'checking' : 'not-applicable'
+let currentStub: RpcStub<PublicApi> | null = CF_ACCESS_MODE ? null : startConnection();
 
 const router = createRouter()
 applyStoredThemeMode()
@@ -178,26 +216,63 @@ function AppWithConnection() {
   const [serverConfigError, setServerConfigError] = useState(false);
 
   useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateHeight = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      const top = viewport?.offsetTop ?? 0;
+      document.documentElement.style.setProperty('--app-height', `${height}px`);
+      document.documentElement.style.setProperty('--app-top', `${top}px`);
+      document.documentElement.style.setProperty(
+        '--app-bottom',
+        `${Math.max(0, window.innerHeight - top - height)}px`,
+      );
+    };
+    updateHeight();
+    viewport?.addEventListener('resize', updateHeight);
+    viewport?.addEventListener('scroll', updateHeight);
+    window.addEventListener('resize', updateHeight);
+    return () => {
+      viewport?.removeEventListener('resize', updateHeight);
+      viewport?.removeEventListener('scroll', updateHeight);
+      window.removeEventListener('resize', updateHeight);
+    };
+  }, []);
+
+  useEffect(() => {
     const cb = () => setRpcState({
       stub: currentStub,
       connectionLost: isConnectionLost,
       accessSessionStatus,
     });
-    notifyCurrentStubUpdated.add(cb);
-    void initializeAccessSession()
-    return () => { notifyCurrentStubUpdated.delete(cb); };
+    subscribers.add(cb);
+    return () => { subscribers.delete(cb); };
   }, []);
+
+  useEffect(() => {
+    if (!CF_ACCESS_MODE) return
+    let cancelled = false
+    void probeAccessSession().then((status) => {
+      if (cancelled) return
+      accessSessionStatus = status
+      if (status === 'authenticated' && !currentStub) currentStub = startConnection()
+      setRpcState({
+        stub: currentStub,
+        connectionLost: isConnectionLost,
+        accessSessionStatus,
+      })
+    })
+    return () => { cancelled = true }
+  }, [])
 
   // Fetch deployment config once the (re)connected stub is available. Re-fetch on reconnect so a
   // server restart with changed config is picked up.
   useEffect(() => {
-    if (!rpcState.stub) {
-      setServerConfig(null)
-      setServerConfigError(false)
-      return
-    }
     let cancelled = false;
     setServerConfigError(false);
+    if (!rpcState.stub) {
+      setServerConfig(null)
+      return () => { cancelled = true }
+    }
     rpcState.stub.getServerConfig()
       .then((cfg) => {
         if (!cancelled) {
@@ -225,8 +300,12 @@ function AppWithConnection() {
       <RpcContext.Provider value={rpcState}>
         <ServerConfigErrorContext.Provider value={serverConfigError}>
           <ServerConfigContext.Provider value={serverConfig}>
-            <AnnouncementBanner />
-            <RouterProvider router={router} />
+            <div className="app-viewport flex min-w-0 flex-col overflow-hidden">
+              <AnnouncementBanner />
+              <div className="h-full min-h-0 flex-1">
+                <RouterProvider router={router} />
+              </div>
+            </div>
           </ServerConfigContext.Provider>
         </ServerConfigErrorContext.Provider>
       </RpcContext.Provider>
@@ -256,8 +335,7 @@ function renderApplication() {
   )
 }
 
-// Resolve and load the selected catalog before the first paint, preventing an English-to-localized
-// flash. English is bundled as the reliable fallback; non-default catalogs are split by Vite.
+// Load the selected catalog before first paint so localized sessions do not flash English.
 initializeI18n()
   .catch((error) => reportIssue('workshop.i18n.initialize', error, {
     handled: true, severity: 'warning', captureMechanism: 'explicit',

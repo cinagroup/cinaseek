@@ -26,7 +26,7 @@ export const TEST_GATEKEEPER_WORKER = "gatekeeper-test";
 export const TEST_GATEKEEPER_BINDING = "TEST";
 export const TEST_VENDOR_ID = TEST_GATEKEEPER_BINDING.toLowerCase();
 
-// Username that `vars.ADMINS` grants deployment-admin rights to, mirroring run-dev-server.js.
+/** Username that `vars.ADMINS` grants deployment-admin rights to, mirroring run-dev-server.ts. */
 export const ADMIN_USERNAME = "admin";
 
 // The slice of wrangler.jsonc the harness reads or rewrites. Loose on purpose: everything else a
@@ -64,7 +64,7 @@ export type GatekeeperSpec = {
 // Read a checked-in wrangler.jsonc and make it usable as an *inline* harness config.
 //
 // A worker whose `main` is generated (capnweb-validate) needs `build.cwd` pinned to its own directory
-// or the output lands in the wrong place -- run-dev-server.js pins it for the same reason. `main` then
+// or the output lands in the wrong place -- run-dev-server.ts pins it for the same reason. `main` then
 // has to be absolute too: an inline config has no file path of its own, so wrangler resolves a
 // relative `main` against the harness `root` rather than the worker directory.
 function readWorkerConfig(dir: string): WorkerConfig {
@@ -81,10 +81,14 @@ function readWorkerConfig(dir: string): WorkerConfig {
 
 function workshopConfig(
     gatekeepers: { binding: string; name: string }[],
+    enableGadgetExecution: boolean,
     patch?: (config: WorkerConfig) => void): WorkerConfig {
   const config = readWorkerConfig(WORKSHOP_DIR);
+  // globalSetup completed the destructive shared `.wrangler/validate` build before file workers
+  // started. Rebuilding it in each fork would race on that directory.
+  if (process.env.WORKSHOP_INTEGRATION_PREBUILT === "1") delete config.build;
 
-  // The checked-in config declares no services; run-dev-server.js adds one per gatekeeper. We add
+  // The checked-in config declares no services; run-dev-server.ts adds one per gatekeeper. We add
   // only the ones the suite asked for, so buildGatekeeperVendorMap() discovers exactly those vendors
   // and the observer-config prompt has no surprise rows.
   config.services = gatekeepers.map(gk => ({
@@ -96,9 +100,9 @@ function workshopConfig(
   // No CF_ACCESS_AUD, so /api takes the unauthenticated path and password signup is available.
   config.vars = { ...config.vars, ADMINS: [ADMIN_USERNAME] };
 
-  // Gadget code is never executed here (a gatekeeper is in observer scope purely by having a
-  // vendorId), so drop the Worker Loader rather than requiring it to start.
-  delete config.worker_loaders;
+  // Most integration tests need no Gadget execution. Keep the loader only for tests that exercise
+  // executeCode or a generated Gadget server.
+  if (!enableGadgetExecution) delete config.worker_loaders;
 
   patch?.(config);
   return config;
@@ -124,6 +128,7 @@ export type Harness = {
 export async function startHarness(opts: {
   gatekeepers: GatekeeperSpec[];
   patchWorkshop?: (config: WorkerConfig) => void;
+  enableGadgetExecution?: boolean;
   /** Defaults to this repo's root. Override when a gatekeeper lives outside it. */
   root?: string;
 }): Promise<Harness> {
@@ -139,7 +144,8 @@ export async function startHarness(opts: {
     root: opts.root ?? REPO_ROOT,
     // workshop-backend is primary, so unrouted requests (e.g. /api) go to it.
     workers: [
-      { config: workshopConfig(gatekeepers, opts.patchWorkshop) },
+      { config: workshopConfig(gatekeepers, opts.enableGadgetExecution ?? false,
+          opts.patchWorkshop) },
       ...gatekeepers.map(({ config }) => ({ config })),
     ],
   });
@@ -153,8 +159,10 @@ export async function startHarness(opts: {
 }
 
 /** Boot the Workshop with only the bundled fixture gatekeeper bound. */
-export function startTestGatekeeperHarness(): Promise<Harness> {
+export function startTestGatekeeperHarness(options: { enableGadgetExecution?: boolean } = {})
+    : Promise<Harness> {
   return startHarness({
     gatekeepers: [{ binding: TEST_GATEKEEPER_BINDING, dir: TEST_GATEKEEPER_DIR }],
+    enableGadgetExecution: options.enableGadgetExecution,
   });
 }

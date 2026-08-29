@@ -1,8 +1,9 @@
+import { logRpcFailure } from './rpcErrors'
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate, useParams, useRouter } from '@tanstack/react-router'
-import { RpcStub, RpcTarget } from 'capnweb'
-import { PublicApi, AuthenticatedApi, AdminApi, BlueprintPublicInfo, BlueprintBinding, BlueprintBindingAssignment, BlueprintUserSummary, AiChatAuthorInfo, ConnectedAccountsSubscriber } from '@gadgets/workshop-shared/api'
-import { AccountDescription, SupportedResource, VendorDescription, ResourceConfiguratorFrame } from '@gadgets/workshop-shared/gatekeeper'
+import { RpcStub } from 'capnweb'
+import { PublicApi, AuthenticatedApi, AdminApi, BlueprintPublicInfo, BlueprintBinding, BlueprintBindingAssignment, BlueprintUserSummary, AiChatAuthorInfo } from '@gadgets/workshop-shared/api'
+import { SupportedResource, VendorDescription, ResourceConfiguratorFrame } from '@gadgets/workshop-shared/gatekeeper'
 import { Button, Dialog, DropdownMenu, Select, Tooltip, useKumoToastManager } from '@cloudflare/kumo'
 import { ArrowsOutSimple, ArrowLeft, ArrowSquareOut, DotsThree, DownloadSimple, Lightning, Plus, Robot, Sparkle, Star, Trash, X } from '@phosphor-icons/react'
 
@@ -19,7 +20,8 @@ import ResourceConfiguratorHost from './ResourceConfiguratorHost'
 import { WorkshopButton, WorkshopIconButton } from './components/WorkshopControls'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER } from './components/menuStyles'
 import { useDocumentTitle } from './useDocumentTitle'
-import { useTranslation } from './i18n'
+import { AccountsSubscriberAdapter } from './accountsSubscriber'
+import { useDialogSelectPortalContainer } from './useDialogSelectPortalContainer'
 
 interface Props {
   rpcStub: RpcStub<PublicApi>
@@ -30,9 +32,6 @@ type BindingFormState = Record<string, any>
 const NO_AGENT_MODEL_ID = 'gadgets:sentinel:no-agent-model'
 
 export default function BlueprintLandingPage({ rpcStub }: Props) {
-  const { t: translate, i18n } = useTranslation('blueprintLanding')
-  const translateRef = useRef(translate)
-  translateRef.current = translate
   const params = useParams({ strict: false }) as { id?: string }
   const id = params.id ?? ''
   const navigate = useNavigate()
@@ -67,7 +66,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
   // Per-binding URL collector functions exposed by each gatekeeper configurator iframe. We call
   // these at submit time to capture the chosen resource URL.
   const collectorsRef = useRef<Map<string, () => Promise<string>>>(new Map())
-  const selectPortalRef = useRef<HTMLDivElement>(null)
+  const selectPortalContainer = useDialogSelectPortalContainer()
   const [canManageFeatured, setCanManageFeatured] = useState(false)
   const [isFeatured, setIsFeatured] = useState(false)
   const [updatingFeatured, setUpdatingFeatured] = useState(false)
@@ -107,7 +106,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
         setNotFound(true)
       }
     }).catch(err => {
-      setError(err.message || translateRef.current('errors.load'))
+      setError(err.message || 'Failed to load blueprint.')
     }).finally(() => {
       setLoading(false)
     })
@@ -124,7 +123,9 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
   // When authenticated, fetch models for binding assignment.
   useEffect(() => {
     if (isAuthenticated && authenticatedApi) {
-      authenticatedApi.listModels().then(setModels).catch(console.error)
+      authenticatedApi.listModels()
+        .then(setModels)
+        .catch(err => logRpcFailure('Failed to load models:', err))
     } else {
       setModels([])
     }
@@ -156,17 +157,9 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     }
     let cancelled = false
     const accountMap = new Map<number, AccountOption>()
-    let subStub: { [Symbol.dispose](): void } | null = null
 
-    class AccountsSubscriber extends RpcTarget implements ConnectedAccountsSubscriber {
-      add(
-        accountId: number,
-        description: AccountDescription,
-        vendor: VendorDescription,
-        supportedResources: SupportedResource[] = [],
-        credentialsValid: boolean = true,
-        vendorId: string = '',
-      ) {
+    const subscriber = new AccountsSubscriberAdapter({
+      add({ id: accountId, description, vendor, supportedResources, credentialsValid, vendorId }) {
         if (cancelled) return
         accountMap.set(accountId, {
           id: accountId, description, vendorId, vendorDescription: vendor,
@@ -176,30 +169,23 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
         if (credentialsValid) {
           setReconnectingAccountId(prev => prev === accountId ? null : prev)
         }
-      }
-      remove(accountId: number) {
+      },
+      remove(accountId) {
         if (cancelled) return
         accountMap.delete(accountId)
         setAccounts(Array.from(accountMap.values()))
-      }
-      ready() {}
-    }
+      },
+    })
 
-    authenticatedApi.subscribeConnectedAccounts(new AccountsSubscriber())
-      .then(stub => {
-        if (cancelled) {
-          stub[Symbol.dispose]()
-        } else {
-          subStub = stub
-        }
-      })
-      .catch(err => {
-        console.error('Failed to subscribe to connected accounts:', err)
-      })
+    const subscription = authenticatedApi.subscribeConnectedAccounts(subscriber)
+    subscription.catch(err => {
+      if (cancelled) return
+      logRpcFailure('Failed to subscribe to connected accounts:', err)
+    })
 
     return () => {
       cancelled = true
-      subStub?.[Symbol.dispose]()
+      subscription[Symbol.dispose]()
     }
   }, [isAuthenticated, authenticatedApi])
 
@@ -209,10 +195,10 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     try {
       const result = await authenticatedApi.connectAccount(vendorId)
       window.open(result.url, '_blank', 'noopener,noreferrer')
-      toasts.add({ title: translateRef.current('messages.completeConnection'), variant: 'success' })
+      toasts.add({ title: 'Complete the account connection in the new tab.', variant: 'success' })
     } catch (err) {
       console.error('Failed to initiate connection:', err)
-      toasts.add({ title: translateRef.current('messages.connectionFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to start connection flow', variant: 'error' })
     } finally {
       setConnectingVendor(null)
     }
@@ -224,10 +210,10 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     try {
       const result = await authenticatedApi.reconnectAccount(accountId)
       window.open(result.url, '_blank', 'noopener,noreferrer')
-      toasts.add({ title: translateRef.current('messages.completeReconnect'), variant: 'success' })
+      toasts.add({ title: 'Complete the account reconnect in the new tab.', variant: 'success' })
     } catch (err) {
       console.error('Failed to initiate reconnect:', err)
-      toasts.add({ title: translateRef.current('messages.reconnectFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to start reconnect flow', variant: 'error' })
       setReconnectingAccountId(null)
     }
   }, [authenticatedApi, toasts])
@@ -541,7 +527,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
       if (binding.type === 'gatekeeper') {
         const collect = collectorsRef.current.get(activeBindingName)
         if (!collect) {
-          throw new Error(translate('errors.bindingNotConfigured', { name: activeBindingName }))
+          throw new Error(`Binding "${activeBindingName}" is not configured.`)
         }
         const resourceUrl = await collect()
         assignment = {
@@ -564,7 +550,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
       setActiveBindingName(null)
       collectorsRef.current.delete(activeBindingName)
     } catch (err: any) {
-      setError(err.message || translate('errors.saveConnection'))
+      setError(err.message || 'Failed to save connection.')
     }
   }
 
@@ -584,7 +570,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
       let metadata = await overseer.getMetadata()
       window.location.href = `/workspace/${metadata.id}`
     } catch (err: any) {
-      setError(err.message || translate('errors.create'))
+      setError(err.message || 'Failed to create gadget from blueprint.')
     } finally {
       overseer.then(stub => stub[Symbol.dispose]()).catch(() => {})
       setCreating(false)
@@ -601,13 +587,13 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
         () => rpcStub.downloadBlueprint(id),
         makeBlueprintFilename(blueprint.metadata.title, blueprint.metadata.version),
         {
-          description: translate('archiveDescription'),
+          description: 'Gadget Blueprint',
           contentType: 'application/octet-stream',
           extension: BLUEPRINT_ARCHIVE_EXTENSION,
         },
       )
     } catch (err: any) {
-      setError(err.message || translate('errors.download'))
+      setError(err.message || 'Failed to download blueprint.')
     } finally {
       setDownloading(false)
     }
@@ -625,7 +611,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     } catch (err: any) {
       console.error('Failed to update featured status:', err)
       toasts.add({
-        title: translate(nextFeatured ? 'messages.featureFailed' : 'messages.unfeatureFailed'),
+        title: nextFeatured ? 'Failed to feature blueprint' : 'Failed to unfeature blueprint',
         variant: 'error',
       })
     } finally {
@@ -650,10 +636,10 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
         setIsInLibrary(true)
         setIsUploadedBlueprint(false)
       }
-      toasts.add({ title: translate(nextPinned ? 'messages.favorited' : 'messages.unfavorited'), variant: 'success' })
+      toasts.add({ title: nextPinned ? 'Blueprint favorited' : 'Blueprint unfavorited', variant: 'success' })
     } catch (err) {
       console.error('Failed to update blueprint pin:', err)
-      toasts.add({ title: translate('messages.favoriteFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to update favorite status', variant: 'error' })
     } finally {
       setUpdatingPinned(false)
     }
@@ -675,10 +661,10 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     try {
       await authenticatedApi.addBlueprintToLibrary(id)
       setIsInLibrary(true)
-      toasts.add({ title: translate('messages.addedToLibrary'), variant: 'success' })
+      toasts.add({ title: 'Blueprint added to library', variant: 'success' })
     } catch (err) {
       console.error('Failed to add blueprint to library:', err)
-      toasts.add({ title: translate('messages.addToLibraryFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to add blueprint to library', variant: 'error' })
     } finally {
       setAddingToLibrary(false)
     }
@@ -692,17 +678,17 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
       await authenticatedApi.removeBlueprintFromLibrary(id)
       if (isUploadedBlueprint) {
         setShowDeleteConfirm(false)
-        toasts.add({ title: translate('messages.deleted'), variant: 'success' })
+        toasts.add({ title: 'Blueprint deleted', variant: 'success' })
         navigate({ to: '/' })
       } else {
         setIsInLibrary(false)
         setIsPinned(false)
-        toasts.add({ title: translate('messages.removedFromLibrary'), variant: 'success' })
+        toasts.add({ title: 'Blueprint removed from library', variant: 'success' })
       }
     } catch (err) {
       console.error('Failed to remove blueprint from library:', err)
       toasts.add({
-        title: translate(isUploadedBlueprint ? 'messages.deleteFailed' : 'messages.removeFromLibraryFailed'),
+        title: isUploadedBlueprint ? 'Failed to delete blueprint' : 'Failed to remove blueprint from library',
         variant: 'error',
       })
     } finally {
@@ -725,11 +711,11 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
         await authenticatedApi.deleteOrphanedBlueprint(id)
       }
       setShowDeleteConfirm(false)
-      toasts.add({ title: translate('messages.deleted'), variant: 'success' })
+      toasts.add({ title: 'Blueprint deleted', variant: 'success' })
       navigate({ to: '/' })
     } catch (err) {
       console.error('Failed to delete blueprint:', err)
-      toasts.add({ title: translate('messages.deleteFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to delete blueprint', variant: 'error' })
     } finally {
       overseer?.then(stub => stub[Symbol.dispose]()).catch(() => {})
       setRemovingFromLibrary(false)
@@ -741,15 +727,15 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
   }
 
   if (loading || authLoading) {
-    return <BlueprintStatePage title={translate('states.loading')} loading />
+    return <BlueprintStatePage title="Loading blueprint..." loading />
   }
 
   if (notFound) {
     return (
       <BlueprintStatePage
-        title={translate('states.notFoundTitle')}
-        message={translate('states.notFoundDescription')}
-        actionLabel={translate('backToExplore')}
+        title="Blueprint not found"
+        message="This blueprint may have been removed or the link may be incorrect."
+        actionLabel="Back to Explore"
         onAction={() => navigate({ to: '/explore' })}
       />
     )
@@ -758,9 +744,9 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
   if (!blueprint) {
     return (
       <BlueprintStatePage
-        title={translate('states.loadFailedTitle')}
-        message={error || translate('errors.load')}
-        actionLabel={translate('backToExplore')}
+        title="Couldn’t load blueprint"
+        message={error || 'Failed to load blueprint.'}
+        actionLabel="Back to Explore"
         onAction={() => navigate({ to: '/explore' })}
       />
     )
@@ -774,13 +760,13 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
   let remainingCount = bindingEntries.length - readyCount
   let primaryActionLabel: string
   if (!isAuthenticated) {
-    primaryActionLabel = translate('actions.loginToCreate')
+    primaryActionLabel = 'Log in to create a gadget'
   } else if (unresolvedBindingName !== null) {
     primaryActionLabel = remainingCount > 0
-      ? translate('actions.configureRemaining', { count: remainingCount })
-      : translate('actions.configureConnections')
+      ? `Configure ${remainingCount} remaining ${remainingCount === 1 ? 'connection' : 'connections'}`
+      : 'Configure connections'
   } else {
-    primaryActionLabel = translate('actions.create')
+    primaryActionLabel = 'Create Gadget'
   }
   let createDisabled = creating
   let canDeleteOwnedBlueprint = isOwnBlueprint && !loadingOwnBlueprintState
@@ -803,15 +789,15 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
           className="mb-8 inline-flex cursor-pointer items-center gap-2 px-1 py-1 text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-subtle transition-[color,transform] duration-150 ease-out hover:text-kumo-default active:scale-[0.98]"
         >
           <ArrowLeft size={14} weight="bold" />
-          {translate('back')}
+          Back
         </button>
 
         <header className="mb-10 grid gap-7 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <div className="min-w-0">
             {isFeatured && (
-              <span className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-kumo-brand/10 px-2 py-1 text-[11px] leading-4 font-semibold tracking-[-0.1px] text-kumo-brand">
+              <span className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-[rgba(255,72,1,0.10)] px-2 py-1 text-[11px] leading-4 font-semibold tracking-[-0.1px] text-kumo-brand">
                 <Star size={12} weight="fill" />
-                {translate('featured')}
+                Featured
               </span>
             )}
             <h1 className="m-0 text-3xl font-semibold leading-tight tracking-tight text-kumo-default">
@@ -823,11 +809,11 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
               </p>
             )}
             <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-              <span>{translate('byAuthor', { name: meta.author.name })}</span>
+              <span>By {meta.author.name}</span>
               <span className="text-kumo-inactive">•</span>
               <span>v{meta.version}</span>
               <span className="text-kumo-inactive">•</span>
-              <span>{translate('updated', { date: new Date(meta.lastUpdated).toLocaleDateString(i18n.resolvedLanguage) })}</span>
+              <span>Updated {new Date(meta.lastUpdated).toLocaleDateString()}</span>
             </div>
           </div>
 
@@ -846,15 +832,15 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                   disabled={createDisabled}
                   className="press inline-flex h-10 w-full cursor-pointer items-center justify-center rounded-lg bg-kumo-brand px-4 text-[14px] leading-5 font-semibold tracking-[-0.25px] text-white transition-colors duration-150 ease-out hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {creating ? translate('actions.creating') : primaryActionLabel}
+                  {creating ? 'Creating...' : primaryActionLabel}
                 </button>
               </span>
 
             {!isOwnBlueprint && !loadingOwnBlueprintState && !isInLibrary && (
-              <Tooltip content={translate(isAuthenticated ? 'actions.addToLibrary' : 'actions.loginToAdd')} asChild>
+              <Tooltip content={isAuthenticated ? 'Add to library' : 'Log in to add to library'} asChild>
                 <button
                   type="button"
-                  aria-label={translate(isAuthenticated ? 'actions.addToLibraryAria' : 'actions.loginToAddAria')}
+                  aria-label={isAuthenticated ? 'Add blueprint to library' : 'Log in to add blueprint to library'}
                   onClick={handleAddToLibrary}
                   disabled={addingToLibrary || loadingLibraryState}
                   className="press inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-kumo-line bg-kumo-base p-0 text-kumo-subtle transition-colors duration-150 ease-out hover:border-kumo-fill hover:bg-kumo-tint hover:text-kumo-default disabled:cursor-not-allowed disabled:opacity-60"
@@ -868,7 +854,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
               <DropdownMenu.Trigger
                 render={(
                   <WorkshopIconButton
-                    aria-label={translate('actions.more')}
+                    aria-label="More blueprint actions"
                     className="!h-10 !w-10 shrink-0 rounded-lg border border-kumo-line bg-kumo-base text-kumo-subtle hover:border-kumo-fill hover:bg-kumo-tint hover:text-kumo-default data-[popup-open]:border-kumo-fill data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-default"
                   >
                     <DotsThree size={18} weight="bold" />
@@ -882,7 +868,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                   disabled={downloading}
                   className={MENU_ITEM}
                 >
-                  {translate(downloading ? 'actions.downloading' : 'actions.downloadArchive')}
+                  {downloading ? 'Downloading...' : 'Download archive'}
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
@@ -891,7 +877,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                   disabled={updatingPinned}
                   className={MENU_ITEM}
                 >
-                  {translate(updatingPinned ? 'actions.updating' : (isPinned ? 'actions.unfavorite' : 'actions.favorite'))}
+                  {updatingPinned ? 'Updating...' : (isPinned ? 'Unfavorite' : 'Favorite')}
                 </DropdownMenu.Item>
 
                 {sourceWorkspace && (
@@ -900,7 +886,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                     onClick={() => window.open(`/workspace/${sourceWorkspace.workspaceId}`, '_blank', 'noopener,noreferrer')}
                     className={MENU_ITEM}
                   >
-                    {translate('actions.goToWorkspace')}
+                    Go to workspace
                   </DropdownMenu.Item>
                 )}
 
@@ -913,7 +899,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                       onClick={() => setShowDeleteConfirm(true)}
                       className={MENU_ITEM_DANGER}
                     >
-                      {translate('actions.deleteBlueprint')}
+                      Delete blueprint
                     </DropdownMenu.Item>
                   </>
                 )}
@@ -928,7 +914,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                         onClick={() => setShowDeleteConfirm(true)}
                         className={MENU_ITEM_DANGER}
                       >
-                        {translate('actions.deleteBlueprint')}
+                        Delete blueprint
                       </DropdownMenu.Item>
                     ) : (
                       <DropdownMenu.Item
@@ -938,7 +924,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                         disabled={removingFromLibrary}
                         className={MENU_ITEM_DANGER}
                       >
-                        {translate(removingFromLibrary ? 'actions.removing' : 'actions.removeFromLibrary')}
+                        {removingFromLibrary ? 'Removing...' : 'Remove from library'}
                       </DropdownMenu.Item>
                     )}
                   </>
@@ -953,7 +939,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                       disabled={updatingFeatured}
                       className={MENU_ITEM}
                     >
-                      {translate(updatingFeatured ? 'actions.updating' : (isFeatured ? 'actions.unfeature' : 'actions.feature'))}
+                      {updatingFeatured ? 'Updating...' : (isFeatured ? 'Unfeature blueprint' : 'Feature blueprint')}
                     </DropdownMenu.Item>
                   </>
                 )}
@@ -968,7 +954,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
             <section>
               <div className="mb-2 flex items-center gap-2 px-1">
                 <h2 className="text-[12px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
-                  {translate('connections.required')}
+                  Required connections
                 </h2>
                 <span className="text-[12px] font-medium tracking-[-0.1px] text-kumo-inactive">
                   {bindingEntries.length}
@@ -976,8 +962,8 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
               </div>
               <div className="mb-3 px-1 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
                 {readyCount === bindingEntries.length
-                  ? translate('connections.readyDescription')
-                  : translate('connections.progress', { ready: readyCount, total: bindingEntries.length })}
+                  ? 'Everything is ready. You can change any connection before creating the Gadget.'
+                  : `${readyCount} of ${bindingEntries.length} ready. Suggestions are used automatically when they match one of your connected accounts.`}
               </div>
               <div className="overflow-hidden rounded-2xl border border-kumo-line bg-kumo-base">
                 {bindingEntries.map(([name, binding]) => (
@@ -996,10 +982,10 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
           ) : (
             <section className="rounded-2xl border border-kumo-line bg-kumo-base px-5 py-5">
               <p className="m-0 text-[15px] leading-5 font-medium tracking-[-0.25px] text-kumo-default">
-                {translate('connections.none')}
+                No connections required
               </p>
               <p className="mt-1 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-                {translate('connections.noneDescription')}
+                This blueprint can create a Gadget without configuring external resources.
               </p>
             </section>
           )}
@@ -1019,7 +1005,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
       >
         <Dialog
           // The configurator iframe measures getBoundingClientRect(), which includes transforms.
-          className="!z-[1000] !top-[clamp(28px,10vh,96px)] !flex !max-h-[calc((100vh_-_clamp(28px,10vh,96px)_-_28px)_*_0.9)] !w-[min(760px,calc(100vw-32px))] !-translate-y-0 data-ending-style:!scale-100 data-starting-style:!scale-100 flex-col overflow-hidden bg-kumo-base p-0"
+          className="responsive-dialog !z-[1000] !top-[clamp(28px,10vh,96px)] !flex !max-h-[calc((100vh_-_clamp(28px,10vh,96px)_-_28px)_*_0.9)] !w-[min(760px,calc(100vw-32px))] !-translate-y-0 data-ending-style:!scale-100 data-starting-style:!scale-100 flex-col overflow-hidden bg-kumo-base p-0"
           size="lg"
         >
           {activeBinding && activeBindingName && authenticatedApi && (
@@ -1027,17 +1013,17 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
               <div className="shrink-0 flex items-start justify-between gap-4 border-b border-kumo-line px-5 py-4">
                 <div className="min-w-0">
                   <Dialog.Title className="text-[17px] leading-6 font-medium tracking-[-0.35px] text-kumo-default">
-                    {translate('configureTitle', { title: activeBinding.title || activeBindingName })}
+                    Configure {activeBinding.title || activeBindingName}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
                     {activeBinding.type === 'gatekeeper' && activeBinding.description
                       ? activeBinding.description
-                      : translate('configureDescription')}
+                      : 'Choose the resource or model this new Gadget should use.'}
                   </Dialog.Description>
                 </div>
                 <Dialog.Close
                   render={(props) => (
-                    <WorkshopIconButton {...props} aria-label={translate('close')}>
+                    <WorkshopIconButton {...props} aria-label="Close">
                       <X size={16} />
                     </WorkshopIconButton>
                   )}
@@ -1060,29 +1046,25 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                   onReconnectAccount={handleReconnectAccount}
                   onReadyChange={(ready) => handleGatekeeperReadyChange(activeBindingName, ready)}
                   onCollectorChange={(collect) => handleCollectorChange(activeBindingName, collect)}
-                  selectPortalContainer={selectPortalRef}
+                  selectPortalContainer={selectPortalContainer}
                 />
               </div>
 
               <div className="shrink-0 flex items-center justify-end gap-2 border-t border-kumo-line px-5 py-3">
                 <WorkshopButton onClick={() => setActiveBindingName(null)}>
-                  {translate('cancel')}
+                  Cancel
                 </WorkshopButton>
                 <WorkshopButton
                   tone="primary"
                   onClick={handleSaveActiveBinding}
                   disabled={!canSaveActiveBinding()}
                 >
-                  {translate('saveConnection')}
+                  Save connection
                 </WorkshopButton>
               </div>
             </>
           )}
         </Dialog>
-        <div
-          ref={selectPortalRef}
-          className="pointer-events-none fixed inset-0 z-[1100] [&>*]:pointer-events-auto"
-        />
       </Dialog.Root>
 
       {/* Delete blueprint confirmation dialog */}
@@ -1091,20 +1073,20 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
         open={showDeleteConfirm}
         onOpenChange={(open) => { if (!open) setShowDeleteConfirm(false) }}
       >
-        <Dialog className="p-8" size="sm">
+        <Dialog className="responsive-dialog overflow-y-auto p-8" size="sm">
           <Dialog.Title className="text-lg font-semibold">
-            {translate('deleteDialog.title')}
+            Delete blueprint
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-kumo-subtle">
-            {translate('deleteDialog.question', { title: blueprint?.metadata.title })} {translate(
-              canDeleteOwnedBlueprint ? 'deleteDialog.ownedDescription' : 'deleteDialog.uploadedDescription',
-            )}
+            Delete "{blueprint?.metadata.title}"? {canDeleteOwnedBlueprint
+              ? 'This blueprint link will stop working, but gadgets already created from it won’t be affected.'
+              : 'This blueprint was uploaded manually and cannot be recovered.'}
           </Dialog.Description>
           <div className="mt-6 flex justify-end gap-2">
             <Dialog.Close
               render={(props) => (
                 <Button variant="secondary" {...props} disabled={removingFromLibrary}>
-                  {translate('cancel')}
+                  Cancel
                 </Button>
               )}
             />
@@ -1113,7 +1095,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
               onClick={canDeleteOwnedBlueprint ? handleDeleteOwnedBlueprint : handleRemoveFromLibrary}
               loading={removingFromLibrary}
             >
-              {translate('deleteDialog.delete')}
+              Delete
             </Button>
           </div>
         </Dialog>
@@ -1129,7 +1111,6 @@ function BlueprintScreenshotHero({
   title: string
   screenshotUrl: string
 }) {
-  const { t: translate } = useTranslation('blueprintLanding')
   return (
     <Dialog.Root>
       <Dialog.Trigger
@@ -1137,11 +1118,11 @@ function BlueprintScreenshotHero({
           <button
             type="button"
             className="themed-compact-shadow themed-card-hover-shadow group relative block w-full cursor-zoom-in overflow-hidden rounded-2xl border border-kumo-line bg-kumo-base text-left transition-[border-color,box-shadow,transform] duration-150 ease-out hover:-translate-y-px hover:border-kumo-fill active:scale-[0.995]"
-            aria-label={translate('screenshot.open', { title })}
+            aria-label={`Open larger screenshot of ${title}`}
           >
             <img
               src={screenshotUrl}
-              alt={translate('screenshot.alt', { title })}
+              alt={`Screenshot of ${title}`}
               className="aspect-[16/9] w-full object-cover"
             />
             <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full border border-kumo-line bg-kumo-base/90 text-kumo-subtle opacity-0 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[opacity,color,background-color] duration-150 ease-out group-hover:opacity-100 group-hover:text-kumo-default">
@@ -1151,15 +1132,15 @@ function BlueprintScreenshotHero({
         )}
       />
       <Dialog
-        className="!z-[1200] !w-[min(1120px,calc(100vw-32px))] overflow-hidden bg-kumo-base p-0"
+        className="responsive-dialog !z-[1200] !w-[min(1120px,calc(100vw-32px))] overflow-hidden bg-kumo-base p-0"
         size="lg"
       >
-        <Dialog.Title className="sr-only">{translate('screenshot.alt', { title })}</Dialog.Title>
+        <Dialog.Title className="sr-only">Screenshot of {title}</Dialog.Title>
         <Dialog.Close
           render={(props) => (
             <WorkshopIconButton
               {...props}
-              aria-label={translate('screenshot.close')}
+              aria-label="Close screenshot"
               className="!absolute !right-3 !top-3 !z-10 !h-8 !w-8 rounded-full border border-kumo-line bg-kumo-base/90 text-kumo-subtle shadow-[0_1px_2px_rgba(0,0,0,0.05)] backdrop-blur-sm hover:bg-kumo-base hover:text-kumo-default"
             >
               <X size={18} />
@@ -1169,8 +1150,8 @@ function BlueprintScreenshotHero({
         <div className="p-3 sm:p-4">
           <img
             src={screenshotUrl}
-            alt={translate('screenshot.alt', { title })}
-            className="max-h-[calc(100vh-96px)] w-full rounded-xl object-contain"
+            alt={`Screenshot of ${title}`}
+            className="max-h-[calc(var(--app-height)-96px)] w-full rounded-xl object-contain"
           />
         </div>
       </Dialog>
@@ -1266,13 +1247,12 @@ function BlueprintBindingSummaryCard({
   models: AiChatAuthorInfo[]
   onConfigure: () => void
 }) {
-  const { t: translate } = useTranslation('blueprintLanding')
   const title = binding.title || name
   const typeLabel = binding.type === 'gatekeeper'
     ? (vendor?.description.displayName ?? binding.gatekeeperName)
     : binding.type === 'aiModel'
-      ? translate('binding.aiModel')
-      : translate('binding.agent')
+      ? 'AI Model'
+      : 'Agent'
   const resource = binding.type === 'gatekeeper'
     ? vendor?.supportedResources.find(r => r.urlPattern === binding.typeUrlPattern)
     : null
@@ -1282,7 +1262,7 @@ function BlueprintBindingSummaryCard({
       ? `${binding.suggestedModel.provider} / ${binding.suggestedModel.modelName}`
       : binding.type === 'agentSpawner'
         ? binding.suggestedModel === null
-          ? translate('binding.noAgent')
+          ? 'No agent'
           : binding.suggestedModel
             ? `${binding.suggestedModel.provider} / ${binding.suggestedModel.modelName}`
             : undefined
@@ -1292,7 +1272,7 @@ function BlueprintBindingSummaryCard({
   const detail = [
     typeLabel,
     resource?.title,
-    binding.spawnerOnly ? translate('binding.spawnedOnly') : null,
+    binding.spawnerOnly ? 'For spawned agents only' : null,
   ].filter(Boolean).join(' · ')
   const usingLabel = (() => {
     if (!assignment) return null
@@ -1300,11 +1280,11 @@ function BlueprintBindingSummaryCard({
     if (assignment.type === 'aiModel') {
       return modelsByIdLabel(assignment.modelId)
     }
-    if (assignment.modelId === null) return translate('binding.noAgent')
+    if (assignment.modelId === null) return 'No agent'
     return modelsByIdLabel(assignment.modelId)
   })()
-  const status = translate(assignment ? 'binding.ready' : suggestion ? 'binding.suggested' : 'binding.needsSetup')
-  const actionLabel = translate(assignment ? 'binding.change' : 'binding.configure')
+  const status = assignment ? 'Ready' : suggestion ? 'Suggested' : 'Needs setup'
+  const actionLabel = assignment ? 'Change' : 'Configure'
 
   function modelsByIdLabel(modelId: string) {
     return models.find(model => model.id === modelId)?.name ?? modelId
@@ -1323,16 +1303,16 @@ function BlueprintBindingSummaryCard({
               ? 'bg-kumo-success-tint text-kumo-success'
               : suggestion
                 ? 'bg-kumo-tint text-kumo-subtle'
-                : 'bg-kumo-brand/10 text-kumo-brand'
+                : 'bg-[rgba(255,72,1,0.10)] text-kumo-brand'
           }`}>
             {status}
           </span>
         </div>
         <p className="mt-0.5 truncate text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
           {usingLabel
-            ? <>{translate('binding.using')} <span>{usingLabel}</span></>
+            ? <>Using: <span>{usingLabel}</span></>
             : suggestion
-              ? translate('binding.suggestedValue', { suggestion })
+              ? `Suggested: ${suggestion}`
               : detail}
         </p>
       </div>
@@ -1379,9 +1359,8 @@ function BindingField({
   onReconnectAccount: (accountId: number) => void
   onReadyChange: (ready: boolean) => void
   onCollectorChange: (collect: (() => Promise<string>) | null) => void
-  selectPortalContainer?: { current: HTMLElement | null }
+  selectPortalContainer?: HTMLElement | null
 }) {
-  const { t: translate } = useTranslation('blueprintLanding')
   const title = binding.title || name
 
   if (binding.type === 'gatekeeper') {
@@ -1414,9 +1393,9 @@ function BindingField({
           <p className="text-xs text-kumo-subtle mb-1">{binding.description}</p>
         )}
         <Select
-          aria-label={translate('binding.chooseAiModel')}
+          aria-label="Choose an AI model"
           className="w-full text-sm"
-          placeholder={translate('binding.chooseAiModel')}
+          placeholder="Choose an AI model"
           value={(value as any).modelId || undefined}
           onValueChange={(modelId) => onChange({ modelId } as any)}
           renderValue={(id) => models.find(m => m.id === id)?.name ?? String(id)}
@@ -1431,7 +1410,7 @@ function BindingField({
         </Select>
         {models.length === 0 && (
           <p className="text-xs text-kumo-subtle mt-1">
-            {translate('binding.noModels')}
+            No AI models are available yet. Add a model from AI Providers first.
           </p>
         )}
       </div>
@@ -1452,18 +1431,18 @@ function BindingField({
           <p className="text-xs text-kumo-subtle mb-1">{binding.description}</p>
         )}
         <Select
-          aria-label={translate('binding.chooseSpawnerModel')}
+          aria-label="Choose a model for the agent spawner"
           className="w-full text-sm"
-          placeholder={translate('binding.chooseSpawnerModel')}
+          placeholder="Choose a model for the agent spawner"
           value={selectedModelId}
           onValueChange={(modelId) => onChange({ modelId: modelId === NO_AGENT_MODEL_ID ? null : modelId } as any)}
           renderValue={(id) => {
-            if (id === NO_AGENT_MODEL_ID) return translate('binding.noAgentOption')
+            if (id === NO_AGENT_MODEL_ID) return '(No agent)'
             return models.find(m => m.id === id)?.name ?? String(id)
           }}
           container={selectPortalContainer}
         >
-          <Select.Option value={NO_AGENT_MODEL_ID}>{translate('binding.noAgentOption')}</Select.Option>
+          <Select.Option value={NO_AGENT_MODEL_ID}>(No agent)</Select.Option>
           {models.map(m => (
             <Select.Option key={m.id} value={m.id}>
               {m.name}
@@ -1525,9 +1504,6 @@ function BlueprintGatekeeperBindingField({
   onReadyChange: (ready: boolean) => void
   onCollectorChange: (collect: (() => Promise<string>) | null) => void
 }) {
-  const { t: translate } = useTranslation('blueprintLanding')
-  const translateRef = useRef(translate)
-  translateRef.current = translate
   const vendor = useMemo(
     () => vendors.find(v => v.id === binding.gatekeeperName) ?? null,
     [vendors, binding.gatekeeperName],
@@ -1631,7 +1607,7 @@ function BlueprintGatekeeperBindingField({
       })
       .catch(err => {
         console.error('Failed to start resource configurator:', err)
-        if (!cancelled) setFrameError(err?.message || translateRef.current('errors.configurator'))
+        if (!cancelled) setFrameError(err?.message || 'Could not start configurator.')
       })
       .finally(() => {
         if (!cancelled) setFrameLoading(false)
@@ -1648,7 +1624,7 @@ function BlueprintGatekeeperBindingField({
     return (
       <div className="rounded-lg border border-kumo-danger/30 bg-kumo-danger-tint px-3 py-2.5 text-sm text-kumo-danger">
         <p className="font-semibold mb-0.5">{title}</p>
-        <p>{translate('binding.gatekeeperUnavailable', { name: binding.gatekeeperName })}</p>
+        <p>The "{binding.gatekeeperName}" gatekeeper is not available on this workshop, so this connection can't be configured.</p>
       </div>
     )
   }
@@ -1656,7 +1632,7 @@ function BlueprintGatekeeperBindingField({
     return (
       <div className="rounded-lg border border-kumo-danger/30 bg-kumo-danger-tint px-3 py-2.5 text-sm text-kumo-danger">
         <p className="font-semibold mb-0.5">{title}</p>
-        <p>{translate('binding.resourceUnavailable', { vendor: vendor.description.displayName })}</p>
+        <p>The required resource type for this binding isn't offered by {vendor.description.displayName}.</p>
       </div>
     )
   }
@@ -1680,7 +1656,7 @@ function BlueprintGatekeeperBindingField({
         <div className="space-y-2.5">
           {binding.resourceUrl && (
             <p className="m-0 pl-[2px] text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
-              {translate('binding.recommends')} <span className="break-all text-kumo-default">{formatSuggestedResource(binding.resourceUrl)}</span>
+              Blueprint recommends: <span className="break-all text-kumo-default">{formatSuggestedResource(binding.resourceUrl)}</span>
             </p>
           )}
 

@@ -1,23 +1,11 @@
-import {
-  AiChatAuthorInfo,
-  AiModelConfig,
-  type AiModelProvider,
-  SUGGESTED_MODELS,
-} from "@gadgets/workshop-shared/api";
+import { AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS } from "@gadgets/workshop-shared/api";
+import type { AiModelProvider } from "@gadgets/workshop-shared/api";
 import type { UserAiModelRecord } from "./user.js";
 
-const SUPPORTED_GATEWAY_PROVIDERS = new Set<AiModelProvider>([
-  "anthropic",
-  "openai",
-  "openai-compatible",
-  "google",
-  "cloudflare",
-]);
-
-// The model used for quick tasks like title generation when AI Gateway mode is active.
-//
-// This 70B model is quite fast and cheap and produces pretty good titles. The cost is insignificant
-// compared to the actual coding model so there's not much reason to use a smaller model.
+/**
+ * The model used for quick tasks like title generation when AI Gateway mode is active. This 70B
+ * model is fast and cheap enough that there is little reason to use a smaller title model.
+ */
 export const QUICK_MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 /** Models supplied by the deployment's in-process Workers AI binding when Gateway mode is off. */
@@ -49,42 +37,116 @@ export function isWorkersAiBindingModelId(modelId: string): boolean {
   return modelId === QUICK_MODEL_ID || modelId in SUGGESTED_MODELS.cloudflare;
 }
 
+/**
+ * Providers whose pi API adapter refuses a custom fetch, so their inference cannot ride the
+ * Workers AI binding and needs CF_AI_GATEWAY_API_TOKEN over HTTPS. pi's Google adapter throws
+ * "Custom fetch is not supported by the Google Generative AI adapter" whenever the fetch it is
+ * given is not globalThis.fetch, and the client it builds on offers no hook to route around that:
+ * @google/genai's `GoogleGenAI` takes only `httpOptions`, whose knobs are
+ * baseUrl/apiVersion/headers/timeout/extraBody/retryOptions.
+ * https://github.com/earendil-works/pi/blob/v0.84.2/packages/ai/src/api/google-generative-ai.ts#L80
+ *
+ * pi's Vertex adapter throws the same way, so a google-vertex provider would belong here too; it
+ * is absent only because this deployment has no such provider.
+ * https://github.com/earendil-works/pi/blob/v0.84.2/packages/ai/src/api/google-vertex.ts#L98
+ */
+const HTTPS_ONLY_PROVIDERS = new Set(["google"]);
+
+const SUPPORTED_GATEWAY_PROVIDERS = new Set<AiModelProvider>([
+  "anthropic",
+  "openai",
+  "openai-compatible",
+  "google",
+  "cloudflare",
+]);
+
 export class AiGatewayConfig {
   readonly gateway: string;
+  /** Optional gateway override used only for Workers AI traffic. */
   readonly workersAiGateway?: string;
+  /** Route Workers AI through the binding directly instead of through AI Gateway. */
+  readonly workersAiDirect: boolean;
+  /**
+   * The gateway name for Workers-AI-binding calls (webFetch's toMarkdown): binding calls only
+   * reach gateways in the Worker's own account, so this is the platform gateway whenever the
+   * binding transport is active, and unset when it isn't (see {@link binding}).
+   */
+  readonly sameAccountGateway?: string;
   readonly accountId: string;
-  readonly apiToken: string;
+  readonly apiToken?: string;
+  /**
+   * Workers AI binding, used as the gateway transport whenever present unless
+   * CF_AI_GATEWAY_USE_BINDING=false opts out: binding requests are pre-authenticated in-account,
+   * so inference and cost-log reads need no API token. Binding requests only reach gateways in
+   * the Worker's own account, and the Worker can't verify that itself (it can't discover its own
+   * account ID), so deployments whose gateway lives in a DIFFERENT account must set the opt-out
+   * and use CF_AI_GATEWAY_API_TOKEN over HTTPS. Absent in local dev unless run-dev-server is
+   * started with --use-workers-ai-binding.
+   *
+   * Such a deployment opts out with the flag rather than by unbinding WORKERS_AI, because the
+   * binding is not only the gateway transport: webFetch's document-to-Markdown conversion calls
+   * `env.ai.toMarkdown()` through it (see web-fetch.ts), so unbinding would break that too.
+   */
+  readonly binding?: Ai;
   readonly providers: Set<AiModelProvider>;
 
   constructor(env: Cloudflare.Env) {
     this.gateway = env.CF_AI_GATEWAY!;
-    // Inference now goes over HTTPS with tokens (pi has no Workers-binding transport), so the
-    // account/token pair is required whenever gateway mode is enabled. The token-less
-    // same-account mode existed only because of the Workers binding.
-    if (!env.CF_AI_GATEWAY_ACCOUNT_ID || !env.CF_AI_GATEWAY_API_TOKEN) {
-      throw new Error(
-          "CF_AI_GATEWAY_ACCOUNT_ID and CF_AI_GATEWAY_API_TOKEN (a Run + Read token) are " +
-          "required when CF_AI_GATEWAY is set.");
+    if (!env.CF_AI_GATEWAY_ACCOUNT_ID) {
+      throw new Error("CF_AI_GATEWAY_ACCOUNT_ID is required when CF_AI_GATEWAY is set.");
     }
     this.accountId = env.CF_AI_GATEWAY_ACCOUNT_ID;
-    this.apiToken = env.CF_AI_GATEWAY_API_TOKEN;
+    this.apiToken = env.CF_AI_GATEWAY_API_TOKEN || undefined;
     if (env.CF_AI_GATEWAY_WAI_DIRECT === "true" && env.CF_AI_GATEWAY_WAI) {
       throw new Error(
           "CF_AI_GATEWAY_WAI and CF_AI_GATEWAY_WAI_DIRECT cannot be configured together.");
     }
-    this.workersAiGateway = env.CF_AI_GATEWAY_WAI_DIRECT === "true"
+    this.workersAiDirect = env.CF_AI_GATEWAY_WAI_DIRECT === "true";
+    this.workersAiGateway = this.workersAiDirect
       ? undefined
       : env.CF_AI_GATEWAY_WAI || this.gateway;
-    let providers = (env.CF_AI_GATEWAY_PROVIDERS || "")
-        .split(",")
-        .map(s => s.trim())
-        .filter(s => s !== "");
-    let unsupported = providers.find(
-        (provider) => !SUPPORTED_GATEWAY_PROVIDERS.has(provider as AiModelProvider));
-    if (unsupported) {
-      throw new Error(`Unsupported CF_AI_GATEWAY_PROVIDERS entry: ${unsupported}.`);
+    // Normalized once, so a stray " False " opts out rather than reading as unset and silently
+    // picking the other transport.
+    const useBinding = env.CF_AI_GATEWAY_USE_BINDING?.trim().toLowerCase();
+    this.binding = useBinding === "false"
+        ? undefined
+        : (env as { WORKERS_AI?: Ai }).WORKERS_AI;
+    if (useBinding === "true" && !this.binding) {
+      throw new Error(
+          "CF_AI_GATEWAY_USE_BINDING requires the WORKERS_AI binding; without it the config " +
+          "would silently fall back to the HTTPS transport.");
+    }
+    if (!this.apiToken && !this.binding) {
+      throw new Error(
+          "AI Gateway mode needs a transport: bind Workers AI (WORKERS_AI; in local dev start " +
+          "with --use-workers-ai-binding) or set CF_AI_GATEWAY_API_TOKEN (a Run + Read token).");
+    }
+    this.sameAccountGateway = this.binding ? this.gateway : undefined;
+    const providers = (env.CF_AI_GATEWAY_PROVIDERS || "")
+        .split(",").map(s => s.trim()).filter(s => s !== "");
+    const unsupportedProvider = providers.find(
+        provider => !SUPPORTED_GATEWAY_PROVIDERS.has(provider as AiModelProvider));
+    if (unsupportedProvider) {
+      throw new Error(`Unsupported CF_AI_GATEWAY_PROVIDERS entry: ${unsupportedProvider}.`);
     }
     this.providers = new Set(providers as AiModelProvider[]);
+    const httpsOnly = [...this.providers].filter(p => HTTPS_ONLY_PROVIDERS.has(p));
+    if (httpsOnly.length > 0 && !this.apiToken) {
+      const names = httpsOnly.join(", ");
+      throw new Error(
+          `${names} inference cannot ride the Workers AI binding transport, so enabling the ` +
+          `${names} provider${httpsOnly.length > 1 ? "s" : ""} requires ` +
+          "CF_AI_GATEWAY_API_TOKEN.");
+    }
+  }
+
+  /**
+   * Transport for a provider's gateway inference: the Workers AI binding when present, except for
+   * the providers in {@link HTTPS_ONLY_PROVIDERS}, which ride HTTPS with the token (the
+   * constructor guarantees a token whenever one of them is an enabled provider).
+   */
+  bindingFor(provider: string): Ai | undefined {
+    return HTTPS_ONLY_PROVIDERS.has(provider) ? undefined : this.binding;
   }
 
   /**

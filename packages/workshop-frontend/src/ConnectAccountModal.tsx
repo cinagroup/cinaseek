@@ -1,10 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Dialog, Text, Loader, useKumoToastManager } from '@cloudflare/kumo'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi, GatekeeperVendorFilter } from '@gadgets/workshop-shared/api'
 import { VendorDescription } from '@gadgets/workshop-shared/gatekeeper'
 import VendorCard from './VendorCard'
-import { useTranslation } from './i18n'
 
 interface ConnectAccountModalProps {
   visible: boolean
@@ -27,10 +26,7 @@ export default function ConnectAccountModal({
   authenticatedApi,
   filter,
 }: ConnectAccountModalProps) {
-  const { t: translate } = useTranslation('connectAccount')
   const toasts = useKumoToastManager()
-  const translateRef = useRef(translate)
-  translateRef.current = translate
   const [connecting, setConnecting] = useState<string | null>(null)
   const [vendors, setVendors] = useState<VendorOption[]>([])
   const [vendorsLoading, setVendorsLoading] = useState(true)
@@ -49,16 +45,14 @@ export default function ConnectAccountModal({
         const unavailable = vendorList.filter(v => v.unavailable)
         if (unavailable.length > 0) {
           toasts.add({
-            title: translateRef.current('unavailable', {
-              services: unavailable.map(v => v.id).join(', '),
-            }),
+            title: `Some services are temporarily unavailable: ${unavailable.map(v => v.id).join(', ')}`,
             variant: 'warning',
           })
         }
         setVendors(vendorList.filter(v => !v.unavailable).map(v => ({ id: v.id, description: v.description })))
       } catch (error) {
         console.error('Failed to fetch vendors:', error)
-        toasts.add({ title: translateRef.current('loadFailed'), variant: 'error' })
+        toasts.add({ title: 'Failed to load available services', variant: 'error' })
       } finally {
         setVendorsLoading(false)
       }
@@ -75,24 +69,22 @@ export default function ConnectAccountModal({
       onInitiated()
     } catch (error) {
       console.error('Failed to initiate connection:', error)
-      toasts.add({ title: translate('connectFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to start connection flow', variant: 'error' })
       setConnecting(null)
     }
   }
 
   return (
     <Dialog.Root open={visible} onOpenChange={(open) => { if (!open) onCancel() }}>
-      <Dialog className="p-6" size="base">
-        <Dialog.Title className="text-lg font-semibold mb-4">
-          {translate('title')}
-        </Dialog.Title>
+      <Dialog className="responsive-dialog overflow-y-auto p-6" size="base">
+        <Dialog.Title className="text-lg font-semibold mb-4">Connect Account</Dialog.Title>
         {vendorsLoading ? (
           <div className="text-center py-8">
             <Loader />
           </div>
         ) : vendors.length === 0 ? (
           <div className="text-center py-8">
-            <Text variant="secondary">{translate('empty')}</Text>
+            <Text variant="secondary">No services available to connect.</Text>
           </div>
         ) : (
           <div className="flex flex-col gap-3 mt-2">

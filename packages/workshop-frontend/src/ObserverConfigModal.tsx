@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { useTranslation } from './i18n'
 import { Dialog, Select, Loader, Text, useKumoToastManager } from '@cloudflare/kumo'
 import { Warning, Plus, ArrowClockwise, CheckCircle } from '@phosphor-icons/react'
-import { RpcStub, RpcTarget } from 'capnweb'
+import { RpcStub } from 'capnweb'
 import {
   AuthenticatedApi,
-  ConnectedAccountsSubscriber,
   GatekeeperVendorInfo,
   ObserverBindingNeed,
   ObserverAccountChoice,
@@ -18,6 +16,7 @@ import {
 } from '@gadgets/workshop-shared/gatekeeper'
 import { WorkshopButton } from './components/WorkshopControls'
 import Avatar from './components/Avatar'
+import { AccountsSubscriberAdapter } from './accountsSubscriber'
 
 // Shown when a non-owner opens a shared Gadget that reads data through one or more gatekeeper
 // bindings, and they haven't yet chosen which of their own connected accounts to use for each one.
@@ -40,11 +39,8 @@ interface AccountInfo {
 
 // How to name one of the user's accounts in the UI. Falls back to the id, which is all we can show
 // for an account that has since been disconnected (so `accounts` no longer has it).
-function accountLabel(
-  account: AccountInfo | undefined,
-  fallback: string,
-): string {
-  return account?.description.uniqueName || account?.description.displayName || fallback
+function accountLabel(account: AccountInfo | undefined, accountId: number): string {
+  return account?.description.uniqueName || account?.description.displayName || `Account ${accountId}`
 }
 
 // Return the grantable resource type needed to verify one observer binding. Account metadata is
@@ -64,12 +60,11 @@ function requiredResourceUrlPatterns(
   return resolved.ok && resolved.resource.grantable ? [resolved.resource.urlPattern] : []
 }
 
-// Filter required resource types down to those the account has not granted yet. An omitted
-// granted-resource list denotes a legacy or full-scope account and therefore satisfies every
-// requirement.
+// Older account records may not list which resources were granted. Ask the gatekeeper to check
+// instead of assuming the account has access.
 function missingResourceUrlPatterns(account: AccountInfo, required: string[]): string[] {
   const granted = account.description.grantedResourceUrlPatterns
-  return granted === undefined ? [] : required.filter(pattern => !granted.includes(pattern))
+  return granted === undefined ? required : required.filter(pattern => !granted.includes(pattern))
 }
 
 interface ObserverConfigModalProps {
@@ -85,10 +80,7 @@ export default function ObserverConfigModal({
   onConfirm,
   onCancel,
 }: ObserverConfigModalProps) {
-  const { t: translate } = useTranslation('observerAccess')
   const toasts = useKumoToastManager()
-  const translateRef = useRef(translate)
-  translateRef.current = translate
 
   const [accounts, setAccounts] = useState<Map<number, AccountInfo>>(new Map())
   const [ready, setReady] = useState(false)
@@ -108,18 +100,11 @@ export default function ObserverConfigModal({
 
   // ── subscribe to the user's connected accounts ────────────────────────────────
   useEffect(() => {
-    let subStub: { [Symbol.dispose](): void } | null = null
     let cancelled = false
 
-    class Subscriber extends RpcTarget implements ConnectedAccountsSubscriber {
-      add(
-        id: number,
-        description: AccountDescription,
-        vendor: VendorDescription,
-        supportedResources: SupportedResource[] = [],
-        credentialsValid: boolean = true,
-        vendorId: string = '',
-      ) {
+    const subscriber = new AccountsSubscriberAdapter({
+      add({ id, description, vendor, supportedResources, credentialsValid, vendorId }) {
+        if (cancelled) return
         setAccounts(prev => {
           const next = new Map(prev)
           next.set(id, { id, description, vendor, vendorId, supportedResources, credentialsValid })
@@ -134,36 +119,35 @@ export default function ObserverConfigModal({
             setConnecting(null)
           }
         }
-      }
-
-      remove(id: number) {
+      },
+      remove(id) {
+        if (cancelled) return
         setAccounts(prev => {
           if (!prev.has(id)) return prev
           const next = new Map(prev)
           next.delete(id)
           return next
         })
-      }
-
+      },
       ready() {
+        if (cancelled) return
         setReady(true)
-      }
-    }
+      },
+    })
 
-    authenticatedApi
-      .subscribeConnectedAccounts(new Subscriber(), { includeForcedAutoProvisionedAccounts: true })
-      .then(stub => {
-        if (cancelled) { stub[Symbol.dispose](); return }
-        subStub = stub
-      })
-      .catch(err => {
-        console.error('Failed to subscribe to connected accounts:', err)
-        toasts.add({ title: translateRef.current('loadAccountsFailed'), variant: 'error' })
-      })
+    const subscription = authenticatedApi.subscribeConnectedAccounts(
+      subscriber, { includeForcedAutoProvisionedAccounts: true })
+    subscription.catch(err => {
+      if (cancelled) return
+      // Loud on purpose: the modal has no retry path, so a quieted transient failure would
+      // strand the user on a permanent loader.
+      console.error('Failed to subscribe to connected accounts:', err)
+      toasts.add({ title: 'Failed to load your connected accounts', variant: 'error' })
+    })
 
     return () => {
       cancelled = true
-      subStub?.[Symbol.dispose]()
+      subscription[Symbol.dispose]()
     }
   }, [authenticatedApi])
 
@@ -235,7 +219,7 @@ export default function ObserverConfigModal({
       }
     } catch (err) {
       console.error('Failed to initiate connection:', err)
-      toasts.add({ title: translate('connectionFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to start connection flow', variant: 'error' })
       connectingRef.current = null
       setConnecting(null)
     }
@@ -249,7 +233,7 @@ export default function ObserverConfigModal({
       // Subscription fires add() with credentialsValid:true on completion, clearing `reconnecting`.
     } catch (err) {
       console.error('Failed to initiate reconnection:', err)
-      toasts.add({ title: translate('reauthenticationFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to start re-authentication flow', variant: 'error' })
       setReconnecting(null)
     }
   }
@@ -266,10 +250,32 @@ export default function ObserverConfigModal({
     try {
       const { url } = await authenticatedApi.ensureAccountResources(account.id, missing)
       if (url) window.open(url, '_blank', 'noopener,noreferrer')
-      else setGranting(null)
+      else {
+        // The gatekeeper confirmed this account already has access. Update the modal so the user can
+        // continue without an OAuth flow.
+        setAccounts(prev => {
+          const current = prev.get(account.id)
+          if (!current) return prev
+          const next = new Map(prev)
+          next.set(account.id, {
+            ...current,
+            description: {
+              ...current.description,
+              grantedResourceUrlPatterns: [
+                ...new Set([
+                  ...(current.description.grantedResourceUrlPatterns ?? []),
+                  ...missing,
+                ]),
+              ],
+            },
+          })
+          return next
+        })
+        setGranting(null)
+      }
     } catch (err) {
       console.error('Failed to request additional access:', err)
-      toasts.add({ title: translate('requestAccessFailed'), variant: 'error' })
+      toasts.add({ title: 'Failed to request additional access', variant: 'error' })
       setGranting(null)
     }
   }
@@ -307,12 +313,16 @@ export default function ObserverConfigModal({
 
   return (
     <Dialog.Root open disablePointerDismissal onOpenChange={open => { if (!open) onCancel() }}>
-      <Dialog className="p-6" size="lg">
+      <Dialog className="responsive-dialog overflow-y-auto p-6" size="lg">
         <Dialog.Title className="mb-2 text-lg font-semibold">
-          {translate(isRetry ? 'retryTitle' : 'title')}
+          {isRetry ? 'Verify your access again' : 'Verify your access'}
         </Dialog.Title>
         <Text variant="secondary" size="sm" as="p">
-          {translate(isRetry ? 'retryDescription' : 'description')}
+          {isRetry
+            ? 'We couldn’t confirm your access to everything this workspace has read. Re-authenticate ' +
+              'the account below, or choose a different one, then try again.'
+            : 'Before opening this workspace, confirm that your own accounts can access the connected ' +
+              'data it uses.'}
         </Text>
 
         {!ready || !vendorsReady ? (
@@ -325,7 +335,7 @@ export default function ObserverConfigModal({
               const matching = [...accounts.values()].filter(a => a.vendorId === need.vendorId)
               const vendorInfo = vendorsById.get(need.vendorId)
               const vendor = matching[0]?.vendor ?? vendorInfo?.description
-              const vendorName = vendor?.displayName || need.vendorId || translate('serviceFallback')
+              const vendorName = vendor?.displayName || need.vendorId || 'service'
               const chosen = accountFor(need.gatekeeperId)
               const required = requiredResourceUrlPatterns(need, vendorInfo, chosen)
               const missing = chosen ? missingResourceUrlPatterns(chosen, required) : []
@@ -355,9 +365,7 @@ export default function ObserverConfigModal({
                         onClick={() => handleConnect(need)}
                         disabled={connecting === need.vendorId}
                       >
-                        {connecting === need.vendorId
-                          ? translate('waitingConnection')
-                          : translate('connect')}
+                        {connecting === need.vendorId ? 'Waiting for connection…' : 'Connect'}
                       </WorkshopButton>
                     )}
                   </div>
@@ -369,10 +377,7 @@ export default function ObserverConfigModal({
                       <Warning size={14} className="mt-0.5 shrink-0" />
                       <div className="min-w-0">
                         <span className="font-medium">
-                          {accountLabel(
-                            accounts.get(need.failure.accountId),
-                            translate('accountFallback', { id: need.failure.accountId }),
-                          )}
+                          {accountLabel(accounts.get(need.failure.accountId), need.failure.accountId)}
                         </span>
                         {' — '}
                         {need.failure.reason}
@@ -385,19 +390,14 @@ export default function ObserverConfigModal({
                       {matching.length === 1 ? (
                         <div className="flex min-h-10 items-center gap-3 rounded-lg border border-kumo-line bg-kumo-elevated/50 px-3 py-2">
                           <div className="min-w-0 flex-1">
-                            <div className="text-[11px] leading-4 text-kumo-subtle">
-                              {translate('usingAccount')}
-                            </div>
+                            <div className="text-[11px] leading-4 text-kumo-subtle">Using your account</div>
                             <div className="truncate text-sm font-medium text-kumo-default">
-                              {accountLabel(
-                                matching[0],
-                                translate('accountFallback', { id: matching[0].id }),
-                              )}
+                              {accountLabel(matching[0], matching[0].id)}
                             </div>
                           </div>
                           {accountSatisfies(need, matching[0]) && (
                             <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-kumo-success">
-                              <CheckCircle size={15} weight="fill" /> {translate('ready')}
+                              <CheckCircle size={15} weight="fill" /> Ready
                             </span>
                           )}
                         </div>
@@ -409,24 +409,16 @@ export default function ObserverConfigModal({
                               ? String(choices[need.gatekeeperId])
                               : undefined
                           }
-                          placeholder={translate('chooseAccount', { vendor: vendorName })}
+                          placeholder={`Choose a ${vendorName} account…`}
                           onValueChange={v =>
                             setChoices(prev => ({ ...prev, [need.gatekeeperId]: Number(v) }))
                           }
-                          renderValue={v =>
-                            accountLabel(
-                              accounts.get(Number(v)),
-                              translate('accountFallback', { id: Number(v) }),
-                            )
-                          }
+                          renderValue={v => accountLabel(accounts.get(Number(v)), Number(v))}
                         >
                           {matching.map(acct => (
                             <Select.Option key={acct.id} value={String(acct.id)}>
-                              {accountLabel(
-                                acct,
-                                translate('accountFallback', { id: acct.id }),
-                              )}
-                              {!acct.credentialsValid ? ` (${translate('expired')})` : ''}
+                              {accountLabel(acct, acct.id)}
+                              {!acct.credentialsValid ? ' (expired)' : ''}
                             </Select.Option>
                           ))}
                         </Select>
@@ -447,8 +439,8 @@ export default function ObserverConfigModal({
                             <Warning size={12} />
                           )}
                           {granting === chosen.id
-                            ? translate('waitingAccess')
-                            : translate('grantAccess')}
+                            ? 'Waiting for access…'
+                            : 'Grant the access needed to verify this resource'}
                         </button>
                       )}
 
@@ -471,10 +463,10 @@ export default function ObserverConfigModal({
                             <Warning size={12} />
                           )}
                           {reconnecting === chosen.id
-                            ? translate('reauthenticating')
+                            ? 'Re-authenticating…'
                             : chosen.credentialsValid
-                              ? translate('reauthenticate')
-                              : translate('expiredReauthenticate')}
+                              ? 'Click to re-authenticate this account'
+                              : 'This account has expired — click to re-authenticate'}
                         </button>
                       )}
 
@@ -486,9 +478,7 @@ export default function ObserverConfigModal({
                           className="flex items-center gap-1 text-xs text-kumo-subtle hover:text-kumo-default disabled:opacity-60 self-start"
                         >
                           <Plus size={11} />
-                          {connecting === need.vendorId
-                            ? translate('waitingConnection')
-                            : translate('connectDifferent')}
+                          {connecting === need.vendorId ? 'Waiting for connection…' : 'Connect a different account'}
                         </button>
                       )}
                     </div>
@@ -501,14 +491,14 @@ export default function ObserverConfigModal({
 
         <div className="flex justify-end gap-2 mt-6">
           <WorkshopButton tone="secondary" onClick={onCancel}>
-            {translate('cancel')}
+            Cancel
           </WorkshopButton>
           <WorkshopButton
             tone="primary"
             onClick={handleConfirm}
             disabled={!ready || !vendorsReady || !allSatisfied}
           >
-            {translate(isRetry ? 'verifyAgain' : 'verifyAndOpen')}
+            {isRetry ? 'Verify again' : 'Verify and open'}
           </WorkshopButton>
         </div>
       </Dialog>

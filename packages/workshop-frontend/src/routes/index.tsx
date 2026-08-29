@@ -1,3 +1,4 @@
+import { classifyRpcError, logRpcFailure } from "../rpcErrors";
 import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useKumoToastManager } from "@cloudflare/kumo";
@@ -21,6 +22,7 @@ import {
 } from "../modelSelection";
 import { useDocumentTitle } from "../useDocumentTitle";
 import { homePromptFromSearch } from "../homePrompt";
+import { composerDraftStorageKey } from "../composerDraft";
 import {
   consumePendingHomePrompt,
   peekPendingHomePrompt,
@@ -89,10 +91,8 @@ function GuestHomePage({ prompt }: HomeSearch) {
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[460px] overflow-hidden"
         style={{
-          maskImage:
-            "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0) 95%)",
-          WebkitMaskImage:
-            "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0) 95%)",
+          maskImage: "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0) 95%)",
+          WebkitMaskImage: "linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 45%, rgba(0,0,0,0) 95%)",
         }}
       >
         <MeshBackground />
@@ -107,7 +107,7 @@ function GuestHomePage({ prompt }: HomeSearch) {
           </p>
         </header>
 
-        <form onSubmit={submit} className="px-4 py-4 relative isolate">
+        <form onSubmit={submit} className="relative isolate px-4 py-4">
           <div className="themed-prompt-card-shadow relative overflow-visible rounded-2xl border border-kumo-line bg-kumo-control transition-shadow duration-150 ease-out focus-within:ring-2 focus-within:ring-kumo-ring/30">
             <div className="relative px-4 pb-1 pt-3">
               <textarea
@@ -179,41 +179,43 @@ function GuestHomePage({ prompt }: HomeSearch) {
 }
 
 export function HomePageContent({ prompt }: HomeSearch) {
-  const { t } = useTranslation('home');
-  useDocumentTitle(t('pageTitle'));
+  useDocumentTitle("Home");
 
-  const { authenticatedApi } = useAuthenticatedApi();
+  const { authenticatedApi, currentUser } = useAuthenticatedApi();
   const navigate = useNavigate();
-  const { add: addToast } = useKumoToastManager();
+  const toasts = useKumoToastManager();
 
   const [models, setModels] = useState<AiChatAuthorInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   // Bumped each time a task suggestion is picked; the composer re-seeds its text off the nonce.
-  const [seed, setSeed] = useState<{ text: string; nonce: number }>({ text: "", nonce: 0 });
+  const [seed, setSeed] = useState<{ text: string; nonce: number } | null>(null);
 
   useEffect(() => {
     if (!prompt) return;
-    setSeed((previous) => ({ text: prompt, nonce: previous.nonce + 1 }));
+    setSeed((previous) => ({ text: prompt, nonce: (previous?.nonce ?? 0) + 1 }));
     navigate({ to: "/", search: {}, replace: true });
   }, [navigate, prompt]);
 
   useEffect(() => {
     let cancelled = false;
-    authenticatedApi
-      .listModels()
+    authenticatedApi.listModels()
       .then((list) => {
         if (cancelled) return;
         setModels(list);
         setSelectedModel(getStoredSelectedModel(list));
       })
       .catch((err) => {
-        console.error("Failed to fetch models:", err);
-        addToast({ title: t('errors.models'), variant: "error" });
+        logRpcFailure("Failed to fetch models:", err);
+        // Toast unless it's a connection error (reconnect refetches); a do-reset here already
+        // survived the Worker's same-colo retry, so the user should hear about it.
+        if (classifyRpcError(err) !== "connection") {
+          toasts.add({ title: "Couldn't load AI models", variant: "error" });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [addToast, authenticatedApi, t]);
+  }, [authenticatedApi]);
 
   const handleModelChange = useCallback((value: string | null) => {
     setSelectedModel(value);
@@ -259,17 +261,20 @@ export function HomePageContent({ prompt }: HomeSearch) {
         // Open the conversation we just started.
         navigate({ to: "/workspace/$id", params: { id }, search: { chat } });
       } catch (err) {
-        console.error("Failed to create gadget:", err);
+        const transient = logRpcFailure("Failed to create gadget:", err,
+            { reportSite: "workspace.create" });
         // A retry reuses the provisional gadget while the draft contains gadget-scoped references.
         if (!attachments?.length && !capsules?.length) {
           provisionalOverseerRef.current?.stub[Symbol.dispose]();
           provisionalOverseerRef.current = null;
         }
-        addToast({ title: t('errors.createWorkspace'), variant: "error" });
+        if (!transient) {
+          toasts.add({ title: "Failed to create workspace", variant: "error" });
+        }
         throw err;
       }
     },
-    [addToast, ensureProvisionalGadget, navigate, t],
+    [ensureProvisionalGadget, navigate, toasts],
   );
 
   const getOverseer = useCallback((): RpcStub<Overseer> => {
@@ -307,10 +312,10 @@ export function HomePageContent({ prompt }: HomeSearch) {
         {/* Hero */}
         <header className="text-center">
           <h1 className="text-3xl font-semibold tracking-tight leading-tight text-kumo-default sm:text-4xl">
-            {t('hero.title')}
+            What are we working on?
           </h1>
           <p className="mx-auto mt-3 max-w-md text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-            {t('hero.subtitle')}
+            Ask a question, create an output, or create an app that works with your tools and data.
           </p>
         </header>
 
@@ -327,14 +332,17 @@ export function HomePageContent({ prompt }: HomeSearch) {
           offerFormats
           autoFocus
           minRows={3}
-          seedText={seed.text}
-          seedNonce={seed.nonce}
+          seedText={seed?.text}
+          seedNonce={seed?.nonce}
+          draftStorageKey={currentUser
+            ? composerDraftStorageKey(currentUser.id, "home")
+            : undefined}
         />
 
         {/* A few example work tasks to spark ideas. Picking one seeds the composer above. */}
         <HomeTaskSuggestions
           onPick={(suggestion) =>
-            setSeed((prev) => ({ text: suggestion, nonce: prev.nonce + 1 }))
+            setSeed((prev) => ({ text: suggestion, nonce: (prev?.nonce ?? 0) + 1 }))
           }
         />
       </div>

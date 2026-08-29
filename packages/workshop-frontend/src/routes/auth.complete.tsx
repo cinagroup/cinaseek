@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-// The root route owns this popup-only surface so it can render directly from the Access session
-// probe without waiting for the full authenticated RPC/onboarding flow.
+/** Popup-only route rendered by the root from the Access session probe. */
 export const Route = createFileRoute('/auth/complete')({ component: () => null })

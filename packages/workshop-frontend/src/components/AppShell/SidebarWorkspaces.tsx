@@ -1,3 +1,4 @@
+import { logRpcFailure } from '../../rpcErrors'
 import {
   createContext,
   useCallback,
@@ -61,11 +62,13 @@ function useWorkspacesContext(): WorkspacesContextValue {
   return ctx
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Provider: owns all the data + mutation handlers, plus the share / delete dialogs. Renders its
-// children inside its context so SidebarWorkspacesTools and SidebarWorkspacesLists can be placed
-// independently in the parent layout (pinned vs. scrolling areas).
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Provider: owns all the data + mutation handlers, plus the share / delete dialogs. Renders its
+ * children inside its context so SidebarWorkspacesTools and SidebarWorkspacesLists can be placed
+ * independently in the parent layout (pinned vs. scrolling areas).
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export function SidebarWorkspacesProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation('shell')
   const { authenticatedApi } = useAuthenticatedApi()
@@ -91,15 +94,14 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
   useEffect(() => {
     let cancelled = false
     setGadgetsLoading(true)
-    authenticatedApi
-      .listGadgets()
+    authenticatedApi.listGadgets()
       .then((list) => {
         if (cancelled) return
         setGadgets(list)
         setGadgetsLoading(false)
       })
       .catch((err) => {
-        console.error('Failed to load workspaces for sidebar:', err)
+        logRpcFailure('Failed to load workspaces for sidebar:', err)
         if (!cancelled) setGadgetsLoading(false)
       })
     return () => { cancelled = true }
@@ -259,10 +261,12 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tools (search). Lives in the rail's pinned-top area so it stays put while the lists below scroll.
-// Only renders in collapsed mode — see the note below.
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Tools (search). Lives in the rail's pinned-top area so it stays put while the lists below scroll.
+ * Only renders in collapsed mode — see the note below.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export function SidebarWorkspacesTools({ collapsed = false }: { collapsed?: boolean }) {
   const { t } = useTranslation('shell')
   // No "New workspace" button: Home *is* the new-workspace launcher, so it would be redundant.
@@ -285,10 +289,12 @@ export function SidebarWorkspacesTools({ collapsed = false }: { collapsed?: bool
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Lists (Favorites / Recent workspaces). Lives in the rail's scrolling middle
-// region. In collapsed mode shows a compact avatar stack.
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Lists (Favorites / Recent workspaces). Lives in the rail's scrolling middle
+ * region. In collapsed mode shows a compact avatar stack.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: boolean }) {
   const { t } = useTranslation('shell')
   const {

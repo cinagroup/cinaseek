@@ -1,5 +1,7 @@
+import { isTransientRpcError, logRpcFailure } from "./rpcErrors";
 import {
   Fragment,
+  isValidElement,
   memo,
   useState,
   useEffect,
@@ -7,15 +9,16 @@ import {
   useRef,
   useMemo,
   useCallback,
+  type ComponentPropsWithoutRef,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { i18n, useTranslation } from "./i18n";
 import { reportIssue } from './errorReporting'
 import {
+  Dialog,
   DropdownMenu,
   Popover,
   Tooltip,
@@ -39,6 +42,7 @@ import {
   ArrowsClockwise,
   Lightning,
   Copy,
+  Clipboard as ClipboardIcon,
   WarningCircle,
   Code,
   File as FileIcon,
@@ -55,9 +59,7 @@ import {
 import { RpcStub, RpcTarget } from "capnweb";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import * as Y from "yjs";
 import styles from "./ChatInterface.module.css";
-import { formatDate, formatDateTime, formatNumber, formatTime } from "./i18n/format";
 import {
   getStoredSelectedModel,
   persistSelectedModel,
@@ -79,11 +81,15 @@ import {
   SlashCommandRequest,
   ChatAttachmentHandle,
   ChatAttachmentRef,
+  ChatCodeBase,
   WorkpieceId,
   BlueprintOutput,
   MessageFormatRef,
+  OutputIcon,
   OutputFormatOffer,
 } from "@gadgets/workshop-shared/api";
+import { composeCodeChange, type CodeChange } from "@gadgets/workshop-shared/code-change";
+import type { ChatChangeRow } from "./otClient";
 import { ActionKind, ResourceDescription } from "@gadgets/workshop-shared/gatekeeper";
 import {
   parseSlashCommandInput, slashCommandTokenKey, stripSlashCommandToken,
@@ -92,7 +98,7 @@ import {
   ComposerMirror, composerTextareaClass, type ComposerMirrorHandle, type MirrorToken,
 } from "./components/chat/ComposerMirror";
 import {
-  useSlashCommandChoice, type OverseerSource,
+  slashCommandKey, useSlashCommandChoice, type OverseerSource,
 } from "./components/chat/slash-command-catalog";
 import {
   removeComposerToken, snapCaretOutOfRanges, spliceComposerToken, type ComposerRange,
@@ -113,7 +119,7 @@ import DeleteConfirmationDialog from "./components/DeleteConfirmationDialog";
 import AutoApproveConfirmDialog from "./components/AutoApproveConfirmDialog";
 import { AlwaysApproveButton, ResolveButton } from "./components/ResolveButton";
 import { WorkshopButton, WorkshopIconButton, WorkshopInput } from "./components/WorkshopControls";
-import { useActionEntries } from "./useActions";
+import { actionLogResumed, useActionEntries } from "./useActions";
 import { useAlwaysApproveTag } from "./useAlwaysApproveTag";
 import { useResolveAction } from "./useResolveAction";
 import { safeExternalUrl } from "./utils/safeExternalUrl";
@@ -123,10 +129,111 @@ import OutOfCreditsModal from "./components/billing/OutOfCreditsModal";
 import { useSlashCommandPicker } from "./components/chat/SlashCommandPicker";
 import { formatFullTimestamp } from "./utils/formatTimestamp";
 import { copyToClipboard } from "./clipboard";
+import { isImeComposing } from "./keyboardEvent";
+import {
+  composerDraftStorageKey,
+  decorateComposerDraft,
+  readComposerDraft,
+  serializeComposerDraft,
+  writeComposerDraft,
+  type StoredComposerDraft,
+} from "./composerDraft";
 
-export interface StreamingProposedChanges {
-  updates: Uint8Array[];
-  count: number;
+/**
+ * The selected chat's live (accepted but not yet materialized) change row stream, delivered via
+ * AiChatSubscriber.changeApplied() and buffered per chat. `subscribe` replays the currently
+ * retained rows and then delivers each new row as it arrives -- synchronously from the
+ * subscription callback, *before* the materialization watermark that absorbs it can prune the
+ * buffer. That ordering is load-bearing: the server broadcasts a row and the "changes" message
+ * that materializes it in the same step (e.g. at the live-window size cap), so a consumer fed
+ * asynchronously would routinely miss the final row of each materialized batch. Rows a
+ * consumer subscribes too late to see are covered by the durable snapshot's watermark instead
+ * (see ChatCodeChanges.rowsThrough). Replay can redeliver rows a consumer has already seen;
+ * consumers dedupe by stream position (the OT client does).
+ */
+export interface ChatLiveChangeRows {
+  /** Which chat this stream belongs to (see ChatCodeChanges.chatId). */
+  chatId: number;
+  /** Subscribe to the row stream; returns the unsubscribe function. */
+  subscribe(listener: (row: ChatChangeRow) => void): () => void;
+}
+
+/**
+ * One event of the selected chat's edit-preview stream: the writeFile/editFile content the agent
+ * is still generating (see AiChatStreamEvent's editPreviewStart for the model). `start` opens a
+ * preview of the named call -- ending the previous call's delta stream, though *that* preview
+ * stays displayed until its durable row or `clear` resolves it (tool calls execute only after
+ * the whole model response streams, so several previews can finish before any row exists).
+ * `delta` appends streamed text to the named call's preview; `clear` withdraws a preview whose
+ * call will produce no row (it may name any call of the response, not just the streaming one);
+ * `reset` is the mop-up that drops all preview state (turn ended, stream lost). The consumer
+ * additionally resolves each preview when its durable change row arrives (see
+ * GadgetCodeInterface), which is the ordinary end of a successful one.
+ */
+export type EditPreviewEvent = {
+  kind: "start";
+  toolCallId: string;
+  workpieceId: WorkpieceId;
+  filename: string;
+  /** editFile's replaced text; absent for writeFile (the streamed text replaces the whole file). */
+  textToReplace?: string;
+} | {
+  kind: "delta";
+  toolCallId: string;
+  delta: string;
+} | {
+  kind: "clear";
+  toolCallId: string;
+} | {
+  kind: "reset";
+};
+
+/**
+ * The selected chat's live edit-preview stream (see EditPreviewEvent), fed synchronously from
+ * the chat subscription's stream events. `subscribe` replays the currently *streaming* preview
+ * (as a start plus one delta) so a consumer attaching mid-stream still shows it; previews that
+ * already finished streaming are not replayable -- a late joiner picks their content up from the
+ * durable rows instead.
+ */
+export interface ChatLiveEditPreviews {
+  /** Which chat this stream belongs to (see ChatCodeChanges.chatId). */
+  chatId: number;
+  /** Subscribe to the preview event stream; returns the unsubscribe function. */
+  subscribe(listener: (event: EditPreviewEvent) => void): () => void;
+}
+
+// The currently-streaming preview retained per chat, for subscribe-time replay only (see
+// ChatLiveEditPreviews.subscribe).
+type StreamingEditPreview = {
+  toolCallId: string;
+  workpieceId: WorkpieceId;
+  filename: string;
+  textToReplace?: string;
+  text: string;
+};
+
+/**
+ * The selected chat's durable code-branch state, as one consistent snapshot: the chat's current
+ * ChatCodeBase (pins, generation, epoch -- `codeBase` absent when the chat has none yet, which
+ * reads as `{pins: [], generation: 0, revision: 0}`) together with the current epoch's
+ * non-reverted "changes" messages composed into one change. The two are always derived together
+ * -- the code view builds the chat's content as pin base trees + `epochChange` + live rows, and
+ * pairing a stale epoch's changes with a fresh epoch's pins (or vice versa) would transiently
+ * build nonsense. `rowsThrough` is the current generation's revision the composed changes'
+ * watermarks reach: rows at or below it are already inside `epochChange`, and only later rows
+ * still apply on top (see AiChatMessageBody.watermark). `undefined` while no chat is selected or
+ * its metadata/history hasn't loaded; `epochChange` absent when the chat has recorded no code
+ * changes this epoch.
+ */
+export interface ChatCodeChanges {
+  /**
+   * Which chat this snapshot describes: parent-owned state updates lag a chat switch by a
+   * render, so consumers must ignore a snapshot whose chatId doesn't match their selection.
+   */
+  chatId: number;
+  codeBase?: ChatCodeBase;
+  epochChange?: CodeChange;
+  rowsThrough: number;
 }
 
 type CreatedGadgetCardInfo = {
@@ -189,25 +296,36 @@ function CreatedGadgetChatCard({
   );
 }
 
-// The file an agent is currently streaming edits into. Files are identified by (workpiece,
-// filename) pairs since a chat can edit multiple gadgets.
+/**
+ * The file an agent is currently streaming edits into. Files are identified by (workpiece,
+ * filename) pairs since a chat can edit multiple gadgets.
+ */
 export type ActiveFileTarget = {
   workpieceId: WorkpieceId;
   filename: string;
 };
 
-type DraftUpdateEntry = {
-  timestamp: Date;
-  author: AiChatAuthorInfo;
-  update: Uint8Array;
-};
-
-type DraftChatState = {
-  entries: DraftUpdateEntry[];
-  latestAuthor: AiChatAuthorInfo | null;
+// One chat's buffered live change rows (see ChatLiveChangeRows): append-only `rows` with `seen`
+// keys for dedupe (subscribe-replay redelivers retained rows). Pruning -- dropping rows a
+// materialization watermark covered or a destructive generation bump erased -- replaces `rows`
+// wholesale so consumers' cursors know to restart.
+type ChatChangeRowBuffer = {
+  rows: ChatChangeRow[];
+  seen: Set<string>;
+  // For the draft banner, which describes *human* draft edits only (rows carrying a
+  // `submission`, i.e. produced by submitCodeChange -- agent edits flow through the same stream
+  // but have their own streaming UI): when the newest such row arrived (rows don't carry
+  // timestamps on the wire; arrival time is close enough for display).
+  lastUserEditAt: Date | null;
 };
 
 type ChatListScope = "direct" | "agents" | "all";
+
+const CHAT_LIST_SCOPE_LABELS: Record<ChatListScope, string> = {
+  all: "All",
+  direct: "Started by people",
+  agents: "Started by agents",
+};
 
 const SHOW_THINKING_TRACES_KEY = "showThinkingTraces";
 
@@ -229,52 +347,24 @@ function persistShowThinkingTraces(show: boolean): void {
   }
 }
 
-function refreshDraftLatestAuthor(state: DraftChatState) {
-  state.latestAuthor =
-    state.entries.length > 0 ? state.entries[state.entries.length - 1].author : null;
-}
-
-function pruneDraftEntriesBefore(
-  drafts: Map<number, DraftChatState>,
+// Prune a chat's row buffer to the rows `keep` selects, replacing the array (a new identity
+// tells consumers to re-read from the start). Returns whether anything was dropped.
+function pruneChatChangeRows(
+  buffers: Map<number, ChatChangeRowBuffer>,
   chatId: number,
-  cutoff: Date,
-) {
-  let state = drafts.get(chatId);
-  if (!state) {
-    return false;
-  }
-
-  const cutoffTime = cutoff.getTime();
-  const nextEntries = state.entries.filter(
-    (entry) => entry.timestamp.getTime() > cutoffTime,
-  );
-  if (nextEntries.length === state.entries.length) {
-    return false;
-  }
-
-  if (nextEntries.length === 0) {
-    drafts.delete(chatId);
+  keep: (row: ChatChangeRow) => boolean,
+): boolean {
+  const buffer = buffers.get(chatId);
+  if (!buffer) return false;
+  const kept = buffer.rows.filter(keep);
+  if (kept.length === buffer.rows.length) return false;
+  if (kept.length === 0) {
+    buffers.delete(chatId);
     return true;
   }
-
-  state.entries = nextEntries;
-  refreshDraftLatestAuthor(state);
+  buffer.rows = kept;
+  buffer.seen = new Set(kept.map(row => `${row.generation}:${row.revision}`));
   return true;
-}
-
-function getOrCreateDraftChatState(
-  drafts: Map<number, DraftChatState>,
-  chatId: number,
-): DraftChatState {
-  let state = drafts.get(chatId);
-  if (!state) {
-    state = {
-      entries: [],
-      latestAuthor: null,
-    };
-    drafts.set(chatId, state);
-  }
-  return state;
 }
 
 // Auto-resize a textarea element between min and max row heights.
@@ -308,11 +398,28 @@ const CAPSULE_LOGO_SLOT = "\u2003\u2060\u00a0";
 
 // The format a new workspace will be made from, as a token in the composer's text.
 type FormatToken = ComposerRange & {
-  format: OutputFormatOffer;
+  noun: string;
+  icon: OutputIcon;
   // Data URL for the format's icon, painted into the token's logo slot. Absent if it couldn't be
   // rendered, in which case the token carries no slot either.
   logo?: string;
 };
+
+function formatTokensFromDraft(draft: StoredComposerDraft | undefined): FormatToken[] {
+  return draft?.formats.map(({position, length, noun, icon}) => ({
+    start: position,
+    length,
+    noun,
+    icon,
+  })) ?? [];
+}
+
+function slashCommandFromDraft(draft: StoredComposerDraft | undefined): SelectedSlashCommand | null {
+  const command = draft?.command;
+  return command
+    ? { start: command.position, length: command.length, choice: command.choice }
+    : null;
+}
 
 const cssLogoUrls = new Map<string, string>();
 
@@ -610,11 +717,6 @@ function formatGadgetBindingTarget(
 // ones. Undefined for a plain gadget, a still-streaming call, or a log predating formats.
 type ToolOutputResolver = (tc: AiToolCall) => BlueprintOutput | undefined;
 
-function chatText(key: string, options: Record<string, unknown> = {}): string {
-  const translateDynamic = i18n.t as (translationKey: string, values: Record<string, unknown>) => unknown;
-  return String(translateDynamic(key, { ns: 'chat', ...options }));
-}
-
 export function resolveToolCallOutput(
   tc: AiToolCall,
   outputOfWorkpiece: (gadgetId: WorkpieceId) => BlueprintOutput | undefined,
@@ -630,35 +732,32 @@ function getToolCallSummary(
 ): { verb: string; target?: string } {
   switch (tc.toolName) {
     case "readFile":
-      return { verb: chatText('tools.summary.read'), target: tc.input.filename };
+      return { verb: "Read", target: tc.input.filename };
     case "writeFile":
-      return { verb: chatText('tools.summary.wrote'), target: tc.input.filename };
+      return { verb: "Wrote", target: tc.input.filename };
     case "editFile":
-      return { verb: chatText('tools.summary.edited'), target: tc.input.filename };
+      return { verb: "Edited", target: tc.input.filename };
     case "describeBinding":
-      return { verb: chatText('tools.summary.inspected'), target: chatText('tools.bindingTarget', { name: String(tc.input.name) }) };
+      return { verb: "Inspected", target: `${String(tc.input.name)} binding` };
     case "setBindingHook":
       return {
-        verb: chatText('tools.summary.connected'),
+        verb: "Connected",
         target: tc.input.entrypoint
           ? `${tc.input.bindingName} → ${tc.input.entrypoint}`
           : tc.input.bindingName,
       };
     case "setGadgetBinding":
       return {
-        verb: chatText('tools.summary.wiredUp'),
+        verb: "Wired up",
         target: formatGadgetBindingTarget(tc.input.gadget, tc.input.name ?? tc.input.source),
       };
     // Obsolete predecessor of `setGadgetBinding`; appears only in old chat logs.
     case "saveCapsuleAsBinding":
-      return { verb: chatText('tools.summary.savedResource'), target: tc.input.bindingName };
+      return { verb: "Saved resource", target: tc.input.bindingName };
     case "createGadget": {
 
       const output = outputOf?.(tc);
-      return {
-        verb: chatText('tools.summary.created', { noun: output?.noun ?? chatText('tools.gadget') }),
-        target: tc.input.title,
-      };
+      return { verb: `Created ${output?.noun ?? "gadget"}`, target: tc.input.title };
     }
     case "executeCode": {
       // Prefer the first non-empty line as a preview. `code` may be absent while the tool call's
@@ -668,7 +767,7 @@ function getToolCallSummary(
         .map((line) => line.trim())
         .find((line) => line.length > 0);
       return {
-        verb: chatText('tools.summary.ranCode'),
+        verb: "Ran code",
         target: firstLine
           ? firstLine.length > 60
             ? `${firstLine.slice(0, 57)}…`
@@ -677,7 +776,7 @@ function getToolCallSummary(
       };
     }
     case "giveUp":
-      return { verb: chatText('tools.summary.stopped') };
+      return { verb: "Stopped" };
     case "webFetch": {
       let target = tc.input.url;
       try {
@@ -685,16 +784,16 @@ function getToolCallSummary(
       } catch {
         // Leave as the raw URL.
       }
-      return { verb: chatText('tools.summary.fetched'), target };
+      return { verb: "Fetched", target };
     }
     case "observeUserChanges":
-      return { verb: chatText('tools.summary.observedChanges') };
+      return { verb: "Observed user changes" };
     case "listBlueprints":
-      return { verb: chatText('tools.summary.listedBlueprints') };
+      return { verb: "Listed blueprints" };
     case "listConnectableResources":
-      return { verb: chatText('tools.summary.listedResources'), target: tc.input.vendorId };
+      return { verb: "Listed connectable resources", target: tc.input.vendorId };
     case "requestConnection":
-      return { verb: chatText('tools.summary.requestedConnection'), target: tc.input.vendorId };
+      return { verb: "Requested connection", target: tc.input.vendorId };
   }
   // Compile-time exhaustiveness check.
   const _exhaustive: never = tc;
@@ -730,20 +829,53 @@ function lowerFirst(text: string): string {
   return text ? text[0].toLowerCase() + text.slice(1) : text;
 }
 
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatTimes(count: number): string {
+  return pluralize(count, "time");
+}
+
 function describeObservationCount(count: number): string {
-  return chatText('tools.count.observation', { count });
+  return count === 1 ? "Read 1 resource" : `${count} resource reads`;
 }
 
 function describeToolCallCount(toolName: AiToolCall["toolName"], count: number): string {
-  const keyByTool: Record<AiToolCall['toolName'], string> = {
-    readFile: 'readFile', writeFile: 'writeFile', editFile: 'editFile', webFetch: 'webFetch',
-    executeCode: 'executeCode', describeBinding: 'describeBinding', setBindingHook: 'setBindingHook',
-    setGadgetBinding: 'setGadgetBinding', saveCapsuleAsBinding: 'saveCapsuleAsBinding',
-    createGadget: 'createGadget', observeUserChanges: 'observeUserChanges', giveUp: 'giveUp',
-    listBlueprints: 'listBlueprints', listConnectableResources: 'listConnectableResources',
-    requestConnection: 'requestConnection',
-  };
-  return chatText(`tools.count.${keyByTool[toolName]}`, { count });
+  switch (toolName) {
+    case "readFile":
+      return `Read ${pluralize(count, "file")}`;
+    case "writeFile":
+      return `Wrote ${pluralize(count, "file")}`;
+    case "editFile":
+      return count === 1 ? "Made 1 edit" : `Made ${count} edits`;
+    case "webFetch":
+      return `Fetched ${pluralize(count, "page")}`;
+    case "executeCode":
+      return count === 1 ? "Ran code" : `Ran code ${formatTimes(count)}`;
+    case "describeBinding":
+      return `Inspected ${pluralize(count, "binding")}`;
+    case "setBindingHook":
+      return `Connected ${pluralize(count, "binding")}`;
+    case "setGadgetBinding":
+      return `Wired up ${pluralize(count, "binding")}`;
+    case "saveCapsuleAsBinding":
+      return `Saved ${pluralize(count, "resource")}`;
+    case "createGadget":
+      return `Created ${pluralize(count, "gadget")}`;
+    case "observeUserChanges":
+      return `Observed ${pluralize(count, "change set")}`;
+    case "giveUp":
+      return count === 1 ? "Stopped" : `Stopped ${count} times`;
+    case "listBlueprints":
+      return `Listed blueprints`;
+    case "listConnectableResources":
+      return `Listed connectable resources`;
+    case "requestConnection":
+      return count === 1 ? "Requested a connection" : `Requested ${count} connections`;
+  }
+  const _exhaustive: never = toolName;
+  return _exhaustive;
 }
 
 // `output` names a format when the call is known to be producing one, so the row can use its icon.
@@ -782,7 +914,34 @@ function getToolIcon(
 }
 
 function getProvisionalToolLabel(toolName: AiToolCall["toolName"] | null | undefined) {
-  return chatText(`tools.progress.${toolName ?? 'unknown'}`);
+  switch (toolName) {
+    case "readFile":
+      return "Reading file";
+    case "writeFile":
+      return "Writing file";
+    case "editFile":
+      return "Editing file";
+    case "describeBinding":
+      return "Inspecting binding";
+    case "setBindingHook":
+      return "Connecting binding";
+    case "setGadgetBinding":
+      return "Wiring up binding";
+    case "saveCapsuleAsBinding":
+      return "Saving resource";
+    case "createGadget":
+      return "Creating gadget";
+    case "executeCode":
+      return "Running code";
+    case "webFetch":
+      return "Fetching web page";
+    case "observeUserChanges":
+      return "Observing user changes";
+    case "giveUp":
+      return "Stopping";
+    default:
+      return "Using tool";
+  }
 }
 
 function getToolTarget(tc: AiToolCall): string | undefined {
@@ -791,13 +950,49 @@ function getToolTarget(tc: AiToolCall): string | undefined {
 
 // Present-tense verb for an in-progress tool call.
 function getProvisionalToolVerb(toolName: AiToolCall["toolName"]): string {
-  return chatText(`tools.progressVerb.${toolName}`);
+  switch (toolName) {
+    case "readFile": return "Reading";
+    case "writeFile": return "Writing";
+    case "editFile": return "Editing";
+    case "describeBinding": return "Inspecting";
+    case "setBindingHook": return "Connecting";
+    case "setGadgetBinding": return "Wiring up";
+    case "saveCapsuleAsBinding": return "Saving";
+    case "createGadget": return "Creating gadget";
+    case "executeCode": return "Running code";
+    case "webFetch": return "Fetching";
+    case "observeUserChanges": return "Observing user changes";
+    case "giveUp": return "Stopping";
+    case "listBlueprints": return "Listing blueprints";
+    case "listConnectableResources": return "Listing connectable resources";
+    case "requestConnection": return "Requesting a connection";
+  }
+  const _exhaustive: never = toolName;
+  return _exhaustive;
 }
 
 // Present-tense, count-aware label mirroring describeToolCallCount (e.g. "Writing 5 files").
 function describeProvisionalToolCount(toolName: AiToolCall["toolName"], count: number): string {
   if (count <= 1) return getProvisionalToolLabel(toolName);
-  return chatText(`tools.progressCount.${toolName}`, { count });
+  switch (toolName) {
+    case "readFile": return `Reading ${pluralize(count, "file")}`;
+    case "writeFile": return `Writing ${pluralize(count, "file")}`;
+    case "editFile": return `Making ${count} edits`;
+    case "webFetch": return `Fetching ${pluralize(count, "page")}`;
+    case "executeCode": return count === 1 ? "Running code" : `Running code ${formatTimes(count)}`;
+    case "describeBinding": return `Inspecting ${pluralize(count, "binding")}`;
+    case "setBindingHook": return `Connecting ${pluralize(count, "binding")}`;
+    case "setGadgetBinding": return `Wiring up ${pluralize(count, "binding")}`;
+    case "saveCapsuleAsBinding": return `Saving ${pluralize(count, "resource")}`;
+    case "createGadget": return `Creating ${pluralize(count, "gadget")}`;
+    case "observeUserChanges": return `Observing ${pluralize(count, "change set")}`;
+    case "giveUp": return "Stopping";
+    case "listBlueprints": return "Listing blueprints";
+    case "listConnectableResources": return "Listing connectable resources";
+    case "requestConnection": return `Requesting ${pluralize(count, "connection")}`;
+  }
+  const _exhaustive: never = toolName;
+  return _exhaustive;
 }
 
 // Builds the label + detail lines for the in-progress tool-call row.
@@ -806,7 +1001,7 @@ function buildProvisionalToolSummary(
 ): { label: string; detailLines: string[] } {
 
   if (calls.length === 1 && calls[0].outputFormat) {
-    return { label: chatText('tools.progress.creatingNoun', { noun: calls[0].outputFormat.noun }), detailLines: [] };
+    return { label: `Creating ${calls[0].outputFormat.noun}`, detailLines: [] };
   }
   const toolNames = Array.from(
     new Set(calls.map((c) => c.toolName).filter((n): n is AiToolCall["toolName"] => !!n)),
@@ -816,7 +1011,7 @@ function buildProvisionalToolSummary(
   );
 
   if (toolNames.length === 0) {
-    return { label: chatText('tools.progress.unknown'), detailLines: [] };
+    return { label: "Using tool", detailLines: [] };
   }
 
   if (toolNames.length > 1) {
@@ -879,7 +1074,7 @@ function buildToolCallGroups(
       return describeToolCallCount(toolName, count);
     }));
   } else if (toolCalls.length > 0) {
-    labelParts.push(chatText('tools.count.toolCalls', { count: toolCalls.length }));
+    labelParts.push(`${toolCalls.length} tool calls`);
   }
 
   if (observations.length > 0) {
@@ -1045,10 +1240,33 @@ function FormatMention({ format }: { format: MessageFormatRef }) {
   );
 }
 
+function CodeBlock({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
+  const code = isValidElement<{ children?: ReactNode }>(children) &&
+      typeof children.props.children === "string"
+    ? children.props.children.replace(/\n$/, "")
+    : "";
+
+  return (
+    <div className={styles.codeBlock}>
+      <pre {...props}>{children}</pre>
+      <button
+        type="button"
+        className={styles.codeCopyButton}
+        onClick={() => void copyToClipboard(code)}
+        aria-label="Copy code"
+        title="Copy code"
+      >
+        <ClipboardIcon size={16} />
+      </button>
+    </div>
+  );
+}
+
 function getMarkdownComponents(
   mentionsByToken?: Map<string, Mention>,
 ): Components {
   return {
+    pre: ({ node: _node, ...props }) => <CodeBlock {...props} />,
     table: ({ node: _node, children, ...props }) => (
       <div className={styles.markdownTableWrapper}>
         <table {...props}>{children}</table>
@@ -1087,9 +1305,11 @@ function getMarkdownComponents(
 const REMARK_PLUGINS_NO_CAPSULES = [remarkGfm];
 const MARKDOWN_COMPONENTS_NO_CAPSULES = getMarkdownComponents();
 
-// Exported for unit testing (see ChatInterface.markdown.test.tsx), which verifies that a
-// single newline in a user message survives to the DOM as a literal "\n" so the
-// `whitespace-pre-wrap` wrapper at the user-message render site renders it as a hard break.
+/**
+ * Exported for unit testing (see ChatInterface.markdown.test.tsx), which verifies that a
+ * single newline in a user message survives to the DOM as a literal "\n" so the
+ * `whitespace-pre-wrap` wrapper at the user-message render site renders it as a hard break.
+ */
 export const MarkdownMessage = memo(function MarkdownMessage(
   { message, capsules, formats }: {
     message: string;
@@ -1166,7 +1386,6 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
     onDownload,
   }: AttachmentPreviewModalProps,
 ) {
-  const { t: translate } = useTranslation('chat');
   const containerRef = useRef<HTMLDivElement>(null);
   const isImage = (attachment?.mimeType ?? "").startsWith("image/");
   const objectUrl = useAttachmentObjectUrl(
@@ -1211,7 +1430,7 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
   if (!attachment) return null;
 
   const sizeLabel = formatAttachmentSize(attachment.size);
-  const title = attachment.name ?? translate('composer.attachedFile');
+  const title = attachment.name ?? "Attached file";
   const modalWidthClass = isImage
     ? "w-[min(1120px,calc(100vw-32px))]"
     : "w-[min(520px,calc(100vw-32px))]";
@@ -1223,17 +1442,17 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
       className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[1px]"
       role="dialog"
       aria-modal="true"
-      aria-label={translate('preview.label', { title })}
+      aria-label={`Preview ${title}`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div ref={containerRef} className={`relative max-h-[calc(100vh-32px)] ${modalWidthClass} overflow-hidden ${modalSurfaceClass} p-0 shadow-[0_24px_80px_rgba(0,0,0,0.28)]`}>
+      <div ref={containerRef} className={`relative max-h-[calc(var(--app-height)-32px)] ${modalWidthClass} overflow-hidden ${modalSurfaceClass} p-0 shadow-[0_24px_80px_rgba(0,0,0,0.28)]`}>
         <button
           type="button"
           onClick={onClose}
           className="absolute right-3 top-3 z-10 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-kumo-line bg-kumo-base/90 text-kumo-subtle shadow-[0_1px_2px_rgba(0,0,0,0.05)] backdrop-blur-sm transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-base hover:text-kumo-default active:scale-[0.96]"
-          aria-label={translate('preview.close')}
+          aria-label="Close preview"
         >
           <X size={18} />
         </button>
@@ -1243,7 +1462,7 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
             <img
               src={objectUrl}
               alt={title}
-              className="max-h-[calc(100vh-96px)] w-full rounded-xl object-contain"
+              className="max-h-[calc(var(--app-height)-96px)] w-full rounded-xl object-contain"
             />
           ) : (
             <div className="grid min-h-56 place-items-center rounded-xl border border-kumo-line/70 bg-kumo-elevated/40 p-6 py-10 text-center">
@@ -1253,16 +1472,16 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
                 </div>
                 <div className="text-[14px] font-medium text-kumo-default">{title}</div>
                 <div className="text-[12px] leading-5 text-kumo-subtle">
-                  {attachment.mimeType || translate('preview.unknownType')}{sizeLabel ? ` · ${sizeLabel}` : ""}
+                  {attachment.mimeType || "Unknown file type"}{sizeLabel ? ` · ${sizeLabel}` : ""}
                 </div>
-                <div className="text-[12px] leading-5 text-kumo-inactive">{translate('preview.unavailable')}</div>
+                <div className="text-[12px] leading-5 text-kumo-inactive">This file can’t be previewed here.</div>
                 {onDownload && (
                   <button
                     type="button"
                     onClick={() => onDownload(attachment)}
                     className="mt-1 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-kumo-line/70 bg-kumo-base px-3 py-1.5 text-[12px] font-medium text-kumo-default transition-colors hover:bg-kumo-tint/40"
                   >
-                    {translate('preview.download')}
+                    Download
                   </button>
                 )}
               </div>
@@ -1285,7 +1504,6 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
     onPreview,
   }: ChatAttachmentThumbnailProps,
 ) {
-  const { t: translate } = useTranslation('chat');
   const isImage = attachment.mimeType.startsWith("image/");
   const objectUrl = useAttachmentObjectUrl(isImage ? attachment.content : undefined, attachment.mimeType);
   const [imageState, setImageState] = useState<"loading" | "loaded" | "error">("loading");
@@ -1295,27 +1513,27 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
       type="button"
       onClick={() => onPreview(attachment.id)}
       className="relative h-28 w-36 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-kumo-line/70 bg-kumo-elevated text-left transition-[border-color,background-color,transform] duration-150 ease-out hover:border-kumo-line hover:bg-kumo-tint/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand/40 active:scale-[0.98]"
-      aria-label={translate('preview.label', { title: attachment.name ?? translate('composer.attachedFile') })}
+      aria-label={`Preview ${attachment.name ?? "attached file"}`}
     >
       {isImage && objectUrl && imageState !== "error" ? (
         <>
           {/* Kept in layout (not display:none) so lazy-loading actually triggers. */}
           <img
             src={objectUrl}
-            alt={attachment.name ?? translate('preview.attachedImage')}
+            alt={attachment.name ?? "Attached image"}
             loading="lazy"
             className="block h-full w-full object-cover"
             onLoad={() => setImageState("loaded")}
             onError={() => setImageState("error")}
           />
           {imageState !== "loaded" && (
-            <div className="absolute inset-0 grid place-items-center bg-kumo-elevated text-[11px] text-kumo-inactive">{translate('preview.loadingImage')}</div>
+            <div className="absolute inset-0 grid place-items-center bg-kumo-elevated text-[11px] text-kumo-inactive">Loading image…</div>
           )}
         </>
       ) : (
         <div className="flex h-full w-full min-w-0 items-center justify-center gap-2 p-3 text-[12px] leading-4 text-kumo-subtle">
           <FileIcon size={20} className="shrink-0 text-kumo-inactive" />
-          <span className="min-w-0 truncate">{attachment.name ?? translate('composer.attachedFile')}</span>
+          <span className="min-w-0 truncate">{attachment.name ?? "Attached file"}</span>
         </div>
       )}
     </button>
@@ -1363,7 +1581,6 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
 const ToolCallDetails = memo(function ToolCallDetails(
   { toolCall: tc }: { toolCall: AiToolCall },
 ) {
-  const { t: translate } = useTranslation('chat');
   return (
     <div className="space-y-2">
       {tc.error && (
@@ -1374,7 +1591,7 @@ const ToolCallDetails = memo(function ToolCallDetails(
       {tc.toolName === "executeCode" ? (
         <>
           <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">
-            {translate('tools.code')}
+            Code
           </span>
           <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
             {tc.input.code}
@@ -1382,7 +1599,7 @@ const ToolCallDetails = memo(function ToolCallDetails(
           {tc.output && (
             <>
               <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">
-                {translate('tools.output')}
+                Output
               </span>
               <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
                 {tc.output}
@@ -1450,7 +1667,6 @@ const NestedToolCallRow = memo(function NestedToolCallRow({
   onToggle: (key: string) => void;
   outputOf?: ToolOutputResolver;
 }) {
-  const { t: translate } = useTranslation('chat');
   const key = `call-${tc.toolCallId}`;
   const summary = getToolCallSummary(tc, outputOf);
   const label = `${summary.verb}${summary.target ? ` ${summary.target}` : ""}`;
@@ -1471,7 +1687,7 @@ const NestedToolCallRow = memo(function NestedToolCallRow({
           <span className="min-w-0 truncate">{label}</span>
           {tc.error && (
             <span className="flex-shrink-0 rounded-full bg-kumo-danger-tint px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-kumo-danger">
-              {translate('tools.error')}
+              Error
             </span>
           )}
           <CaretRight
@@ -1499,12 +1715,9 @@ const NestedObservationRow = memo(function NestedObservationRow({
   open: boolean;
   onToggle: (key: string) => void;
 }) {
-  const { t: translate } = useTranslation('chat');
   const key = `observation-${observation.chatId}-${observation.sequence}`;
   const log = observation.actionLog;
-  const label = translate('tools.readResource', {
-    resource: log.description.title || log.resourceTitle || translate('tools.resource'),
-  });
+  const label = `Read ${log.description.title || log.resourceTitle || "resource"}`;
 
   return (
     <div className="group/nested">
@@ -1574,7 +1787,6 @@ const ToolGroupRow = memo(function ToolGroupRow({
   onFooterRevert?: (sequence: number) => void;
   outputOf?: ToolOutputResolver;
 }) {
-  const { t: translate } = useTranslation('chat');
   const footerLabel = footerChangeSequence !== undefined
     ? getDiscardLabel(footerIsTrailing, footerCreatedGadgetTitles)
     : null;
@@ -1594,7 +1806,7 @@ const ToolGroupRow = memo(function ToolGroupRow({
             <span className="min-w-0 truncate">{group.label}</span>
             {group.hasError && (
               <span className="flex-shrink-0 rounded-full bg-kumo-danger-tint px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-kumo-danger">
-                {translate('tools.error')}
+                Error
               </span>
             )}
             <CaretRight
@@ -1648,7 +1860,7 @@ const ToolGroupRow = memo(function ToolGroupRow({
         )
       )}
       {footerChangeSequence !== undefined && footerTimestamp && footerLabel && onFooterRevert && (
-        <div className="ml-0 mt-0.5 flex items-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
+        <div className="ml-0 mt-0.5 flex items-center gap-1 opacity-100 transition-opacity duration-150 ease-out sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
           <Tooltip content={footerLabel} asChild>
             <button
               type="button"
@@ -1693,9 +1905,11 @@ export const ChatInput = ({
   minRows = 2,
   seedText,
   seedNonce,
+  draftStorageKey,
   attachLabel,
   draftUpdateBanner,
   blockedReason,
+  chatKey,
   onStop,
   showThinkingTraces = true,
   onToggleThinkingTraces,
@@ -1704,8 +1918,10 @@ export const ChatInput = ({
     accountId: number,
     url: string,
   ) => Promise<RpcStub<GatekeeperClient<any>> | null>;
-  // Returns an overseer stub, used by the attach modal to create gatekeepers. Can be async
-  // to support lazy provisional-gadget creation on the Home page.
+  /**
+   * Returns an overseer stub, used by the attach modal to create gatekeepers. Can be async
+   * to support lazy provisional-gadget creation on the Home page.
+   */
   getOverseer: () => Promise<RpcStub<Overseer>> | RpcStub<Overseer>;
   onSend: (
     message: string | SlashCommandRequest,
@@ -1724,9 +1940,11 @@ export const ChatInput = ({
   onConsumeConsoleLogs?: () => string;
   onDiscardConsoleLogs?: () => void;
   newChat?: boolean;
-  // Whether the composer offers the deployment's standard formats. A chosen format rides along as
-  // an instruction on the message; it does not change which workspace is created. Only meaningful
-  // with `newChat`, since a format names something to build rather than something to say.
+  /**
+   * Whether the composer offers the deployment's standard formats. A chosen format rides along as
+   * an instruction on the message; it does not change which workspace is created. Only meaningful
+   * with `newChat`, since a format names something to build rather than something to say.
+   */
   offerFormats?: boolean;
   autoFocus?: boolean;
   /** Minimum number of textarea rows at rest. Defaults to 2. */
@@ -1735,12 +1953,16 @@ export const ChatInput = ({
    * whenever `seedNonce` changes, so the same text can be re-seeded by bumping the nonce. */
   seedText?: string;
   seedNonce?: number;
+  /** Session-storage key used to recover this composer's draft prompt after a page refresh. */
+  draftStorageKey?: string;
   /** Optional label for the attach menu item. */
   attachLabel?: string;
   draftUpdateBanner?: ReactNode;
   /** When set, the composer is disabled and shows this message — the user must resolve something
    * (e.g. accept/deny a pending connection request) before they can type or send. */
   blockedReason?: string;
+  /** Identity of the chat the composer is bound to; a change clears chat-scoped hints. */
+  chatKey?: number | null;
   onStop?: () => void;
   showThinkingTraces?: boolean;
   onToggleThinkingTraces?: () => void;
@@ -1749,14 +1971,22 @@ export const ChatInput = ({
   /** Called after a gatekeeper is connected via the attach flow, so the parent can refresh the
    * pre-approval catalog and proactively offer to pre-approve its actions. */
 }) => {
-  const { t } = useTranslation('chat');
   const toasts = useKumoToastManager();
-  const [inputValue, setInputValue] = useState("");
+  const [initialDraft] = useState(() => readComposerDraft(draftStorageKey));
+  const [inputValue, setInputValue] = useState(() => initialDraft?.text ?? "");
   const [capsules, setCapsules] = useState<InputCapsule[]>([]);
+  const [formatTokens, setFormatTokens] = useState<FormatToken[]>(() =>
+    formatTokensFromDraft(initialDraft));
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
+  // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
+  // leaving the chat dismisses it.
+  const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
+  useEffect(() => setSendHiccup(null), [chatKey]);
   const [isAttachmentDragActive, setIsAttachmentDragActive] = useState(false);
-  const [selectedSlashCommand, setSelectedSlashCommand] = useState<SelectedSlashCommand | null>(null);
+  const [selectedSlashCommand, setSelectedSlashCommand] = useState<SelectedSlashCommand | null>(
+    () => slashCommandFromDraft(initialDraft),
+  );
   // The caret the slash command picker parses at. Deliberately updated only when it moves to a
   // different command token (see `syncPickerCaret`): the mirror owns the caret the user sees,
   // so ordinary caret movement doesn't have to re-render the composer.
@@ -1809,13 +2039,145 @@ export const ChatInput = ({
   // Keep inputValue in a ref so handleCursorChange can read it without re-binding.
   const inputValueRef = useRef(inputValue);
   inputValueRef.current = inputValue;
+  const draftEditedRef = useRef(false);
+
+  const loadedDraftKeyRef = useRef(draftStorageKey);
+  const skipDraftWriteRef = useRef(false);
+  const draftRestoreGenerationRef = useRef(0);
+
+  const placeRestoredCaretAtEnd = (
+    text: string,
+    key: string | undefined,
+    generation: number,
+  ) => {
+    requestAnimationFrame(() => {
+      if (draftRestoreGenerationRef.current !== generation ||
+          loadedDraftKeyRef.current !== key || inputValueRef.current !== text) {
+        return;
+      }
+      const textarea = composerTextareaRef.current;
+      if (!textarea) return;
+      if (autoFocus) textarea.focus();
+      textarea.setSelectionRange(text.length, text.length);
+      autoResizeTextarea(textarea, minRows, newChat ? 10 : 4);
+    });
+  };
+
+  const composerMatchesStoredDraft = (draft: StoredComposerDraft) => {
+    const currentCommand = selectedSlashCommandRef.current;
+    const storedCommand = draft.command;
+    if (inputValueRef.current !== draft.text || capsulesRef.current.length > 0 ||
+        !!currentCommand !== !!storedCommand || currentCommand && storedCommand &&
+        (currentCommand.start !== storedCommand.position ||
+          currentCommand.length !== storedCommand.length ||
+          slashCommandKey(currentCommand.choice.selection) !==
+            slashCommandKey(storedCommand.choice.selection))) {
+      return false;
+    }
+    const currentFormats = formatTokensRef.current;
+    return currentFormats.length === draft.formats.length && currentFormats.every((format, index) => {
+      const stored = draft.formats[index];
+      return !format.logo && format.start === stored.position && format.length === stored.length &&
+        format.noun === stored.noun && format.icon === stored.icon;
+    });
+  };
+
+  const restoreDraftPresentation = (
+    draft: StoredComposerDraft,
+    key: string | undefined,
+    generation: number,
+  ) => {
+    placeRestoredCaretAtEnd(draft.text, key, generation);
+    if (draft.formats.length === 0) return;
+    void Promise.all(draft.formats.map(({icon}) => formatIconDataUrl(icon))).then((logos) => {
+      requestAnimationFrame(() => {
+        if (draftRestoreGenerationRef.current !== generation ||
+            loadedDraftKeyRef.current !== key || !composerMatchesStoredDraft(draft)) {
+          return;
+        }
+        const restored = decorateComposerDraft(draft, logos, CAPSULE_LOGO_SLOT);
+        setInputValue(restored.text);
+        setFormatTokens(restored.formats);
+        setSelectedSlashCommand(restored.command ?? null);
+        placeRestoredCaretAtEnd(restored.text, key, generation);
+      });
+    });
+  };
+
+  useEffect(() => {
+    // On a cold load the user-scoped key usually arrives after authentication; the key-change
+    // effect below restores that draft, while this path handles drafts available at mount.
+    if (!initialDraft) return;
+    const generation = ++draftRestoreGenerationRef.current;
+    restoreDraftPresentation(initialDraft, draftStorageKey, generation);
+    return () => {
+      if (draftRestoreGenerationRef.current === generation) {
+        draftRestoreGenerationRef.current++;
+      }
+    };
+    // Restoration belongs to the draft captured during initialization, not later prop values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (loadedDraftKeyRef.current === draftStorageKey) return;
+    const generation = ++draftRestoreGenerationRef.current;
+    const previousKey = loadedDraftKeyRef.current;
+    loadedDraftKeyRef.current = draftStorageKey;
+    skipDraftWriteRef.current = true;
+    const storedDraft = readComposerDraft(draftStorageKey);
+    const preserveLocalDraft = previousKey === undefined &&
+      (draftEditedRef.current || inputValueRef.current.length > 0);
+    if (preserveLocalDraft) {
+      writeComposerDraft(draftStorageKey, serializeComposerDraft(
+        inputValueRef.current,
+        capsulesRef.current.map(({start, length, description}) => ({
+          start,
+          length,
+          url: description.url,
+        })),
+        formatTokensRef.current,
+        selectedSlashCommandRef.current ?? undefined,
+      ));
+      skipDraftWriteRef.current = false;
+      return;
+    }
+    setInputValue(storedDraft?.text ?? "");
+    if (previousKey !== undefined) {
+      draftEditedRef.current = false;
+      setCapsules([]);
+    }
+    setFormatTokens(formatTokensFromDraft(storedDraft));
+    setSelectedSlashCommand(slashCommandFromDraft(storedDraft));
+    if (storedDraft) restoreDraftPresentation(storedDraft, draftStorageKey, generation);
+  }, [draftStorageKey]);
+
+  useEffect(() => {
+    if (skipDraftWriteRef.current) {
+      skipDraftWriteRef.current = false;
+      return;
+    }
+    writeComposerDraft(draftStorageKey, serializeComposerDraft(
+      inputValue,
+      capsules.map(({start, length, description}) => ({
+        start,
+        length,
+        url: description.url,
+      })),
+      formatTokens,
+      selectedSlashCommand ?? undefined,
+    ));
+  }, [capsules, draftStorageKey, formatTokens, inputValue, selectedSlashCommand]);
 
   // Seed the composer from an external suggestion (Home task cards). Re-runs whenever the nonce
   // changes so picking the same suggestion twice still works. Focus + move the cursor to the end.
   useEffect(() => {
     if (seedNonce === undefined) return;
+    draftRestoreGenerationRef.current++;
     const text = seedText ?? "";
     setSelectedSlashCommand(null);
+    setCapsules([]);
+    setFormatTokens([]);
     setInputValue(text);
     requestAnimationFrame(() => {
       const ta = composerTextareaRef.current;
@@ -1968,9 +2330,9 @@ export const ChatInput = ({
       setPendingAttachments((prev) => prev.map((attachment) => attachment.id === id ? {
         ...attachment,
         uploadState: "error",
-        error: err?.message || t('composer.uploadFailed'),
+        error: err?.message || "Upload failed",
       } : attachment));
-      toasts.add({ title: err?.message || t('composer.attachmentUploadFailed'), variant: "error" });
+      toasts.add({ title: err?.message || "Failed to upload attachment", variant: "error" });
     }
   };
 
@@ -1979,12 +2341,14 @@ export const ChatInput = ({
 
     const initialRoom = MAX_PENDING_ATTACHMENTS - pendingAttachmentsRef.current.length;
     if (initialRoom <= 0) {
-      toasts.add({ title: t('composer.attachmentMaximum', { count: MAX_PENDING_ATTACHMENTS }), variant: "error" });
+      toasts.add({ title: `You can attach up to ${MAX_PENDING_ATTACHMENTS} attachments`, variant: "error" });
       return;
     }
     const accepted = attachmentFiles.slice(0, initialRoom);
     if (attachmentFiles.length > initialRoom) {
-      const title = t('composer.onlyFirstAttached', { count: initialRoom });
+      const title = initialRoom === 1
+        ? "Only the first attachment was attached"
+        : `Only the first ${initialRoom} attachments were attached`;
       toasts.add({ title, variant: "error" });
     }
 
@@ -1997,23 +2361,18 @@ export const ChatInput = ({
     for (const result of prepared) {
       if (result.status === "rejected") {
         console.error("Failed to process chat attachment:", result.reason);
-        toasts.add({ title: result.reason?.message || t('composer.processAttachmentFailed'), variant: "error" });
+        toasts.add({ title: result.reason?.message || "Failed to process attachment", variant: "error" });
         continue;
       }
 
       const { file, blob, mimeType } = result.value;
       if (pendingAttachmentsRef.current.length >= MAX_PENDING_ATTACHMENTS) {
-        toasts.add({ title: t('composer.attachmentMaximum', { count: MAX_PENDING_ATTACHMENTS }), variant: "error" });
+        toasts.add({ title: `You can attach up to ${MAX_PENDING_ATTACHMENTS} attachments`, variant: "error" });
         continue;
       }
       const totalPendingBytes = pendingAttachmentsRef.current.reduce((sum, attachment) => sum + attachment.blob.size, 0);
       if (totalPendingBytes + blob.size > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
-        toasts.add({
-          title: t('composer.attachmentTotalLimit', {
-            size: formatAttachmentSize(MAX_CHAT_ATTACHMENT_TOTAL_BYTES) ?? String(MAX_CHAT_ATTACHMENT_TOTAL_BYTES),
-          }),
-          variant: "error",
-        });
+        toasts.add({ title: `Attached files must total ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_TOTAL_BYTES)} or less`, variant: "error" });
         continue;
       }
       const id = crypto.randomUUID();
@@ -2167,6 +2526,9 @@ export const ChatInput = ({
       capsule.start >= tokenEnd
         ? {...capsule, start: capsule.start + splice.delta}
         : capsule));
+    setFormatTokens(previous => previous.map(token => token.start >= tokenEnd
+      ? {...token, start: token.start + splice.delta}
+      : token));
     setSelectedSlashCommand({choice, start: splice.start, length: splice.length});
     requestAnimationFrame(() => {
       composerTextareaRef.current?.focus();
@@ -2183,6 +2545,13 @@ export const ChatInput = ({
       : previous);
   };
 
+  const shiftFormatTokens = (position: number, delta: number) => {
+    if (delta === 0) return;
+    setFormatTokens(previous => previous.map(token => token.start >= position
+      ? {...token, start: token.start + delta}
+      : token));
+  };
+
   const slashCommandPicker = useSlashCommandPicker({
     inputValue,
     cursorPosition,
@@ -2196,6 +2565,7 @@ export const ChatInput = ({
 
   const handleSend = async () => {
     if (sendInFlightRef.current || isSending || isBlocked) return;
+    setSendHiccup(null);
     const attachmentsSnapshot = pendingAttachments;
     const readyAttachments = attachmentsSnapshot
       .filter((attachment) => attachment.uploadState === "ready" && attachment.ref)
@@ -2205,16 +2575,17 @@ export const ChatInput = ({
 
     if (!inputValue.trim() && !selectedSlashCommand && readyAttachments.length === 0) return;
     if (hasUploadingAttachment) {
-      toasts.add({ title: t('composer.waitForUploads'), variant: "error" });
+      toasts.add({ title: "Please wait for attachment uploads to finish", variant: "error" });
       return;
     }
     if (hasFailedAttachment) {
-      toasts.add({ title: t('composer.removeFailedUploads'), variant: "error" });
+      toasts.add({ title: "Remove failed attachment uploads before sending", variant: "error" });
       return;
     }
 
     sendInFlightRef.current = true;
     setIsSending(true);
+    const sendingDraftKey = draftStorageKey;
     try {
       let messageInput = inputValue;
       let inputCapsules = capsules;
@@ -2226,7 +2597,7 @@ export const ChatInput = ({
         let delta = 0;
         for (const token of formatTokens) {
           if (token.start + token.length <= position) {
-            delta += token.format.output.noun.length - token.length;
+            delta += token.noun.length - token.length;
           }
         }
         return delta;
@@ -2239,7 +2610,7 @@ export const ChatInput = ({
         // back-to-front so earlier offsets stay valid while the text is rewritten.
         let text = messageInput;
         for (const token of [...formatTokens].toSorted((a, b) => b.start - a.start)) {
-          text = text.slice(0, token.start) + token.format.output.noun +
+          text = text.slice(0, token.start) + token.noun +
               text.slice(token.start + token.length);
         }
         inputCapsules = capsules.map(capsule => {
@@ -2265,7 +2636,7 @@ export const ChatInput = ({
         // position 0 would mean the text no longer starts with "/".
         let parsed = parseSlashCommandInput(messageInput, 1);
         if (!parsed) {
-          toasts.add({ title: t('composer.slashInvalid'), variant: "error" });
+          toasts.add({ title: "Slash command is invalid", variant: "error" });
           return;
         }
         let match: SlashCommandChoice | null;
@@ -2273,11 +2644,11 @@ export const ChatInput = ({
           match = await slashCommandPicker.resolveExact(parsed);
         } catch (error) {
           console.error("Failed to resolve slash command:", error);
-          toasts.add({ title: t('composer.slashLoadFailed'), variant: "error" });
+          toasts.add({ title: "Couldn't load slash commands", variant: "error" });
           return;
         }
         if (!match) {
-          toasts.add({ title: t('composer.chooseSlashCommand'), variant: "error" });
+          toasts.add({ title: "Choose a slash command", variant: "error" });
           return;
         }
         slashCommand = match;
@@ -2295,7 +2666,7 @@ export const ChatInput = ({
       }
 
       if (slashCommand && (inputCapsules.length > 0 || readyAttachments.length > 0)) {
-        toasts.add({ title: t('composer.slashCannotInclude'), variant: "error" });
+        toasts.add({ title: "Slash commands cannot include resources or attachments", variant: "error" });
         return;
       }
       let message: string | SlashCommandRequest = messageInput;
@@ -2352,12 +2723,15 @@ export const ChatInput = ({
       // arguments: the part the transcript renders as the user's words.
       const formatRefs = locateMessageFormatRefs(
           typeof message === "string" ? message : message.args,
-          [...formatTokens].toSorted((a, b) => a.start - b.start).map(token => token.format));
+          [...formatTokens].toSorted((a, b) => a.start - b.start));
 
       await onSend(message, selectedModel,
           capsuleSpecifiers?.length ? capsuleSpecifiers : undefined,
           readyAttachments.length ? readyAttachments : undefined,
           formatRefs);
+      writeComposerDraft(sendingDraftKey, undefined);
+      if (loadedDraftKeyRef.current !== sendingDraftKey) return;
+      draftEditedRef.current = false;
       for (const attachment of attachmentsSnapshot) {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       }
@@ -2374,8 +2748,15 @@ export const ChatInput = ({
   };
 
   const submitMessage = () => {
+    const submittedChatKey = chatKey;
     void handleSend().catch((err) => {
-      console.error("Failed to send chat message:", err);
+      if (isTransientRpcError(err)) {
+        setSendHiccup({ chatKey: submittedChatKey });
+      } else {
+        // The onSend handlers log the RPC failures they see; this is the only report for
+        // anything handleSend itself throws before reaching them.
+        console.error("Failed to send chat message:", err);
+      }
     });
   };
 
@@ -2415,6 +2796,7 @@ export const ChatInput = ({
 
         // Adjust positions of existing capsules and add the new one.
         shiftSelectedSlashCommand(urlEnd, splice.delta);
+        shiftFormatTokens(urlEnd, splice.delta);
         setCapsules((prev) => [
           ...prev.map((c) => c.start >= urlEnd ? { ...c, start: c.start + splice.delta } : c),
           {
@@ -2461,6 +2843,7 @@ export const ChatInput = ({
 
     // Adjust positions of any capsules that come after the URL.
     shiftSelectedSlashCommand(urlEnd, lengthDiff);
+    shiftFormatTokens(urlEnd, lengthDiff);
     if (lengthDiff !== 0) {
       setCapsules((prev) => {
         const adjusted = prev.map((c) =>
@@ -2526,6 +2909,7 @@ export const ChatInput = ({
 
     // Shift any existing capsules after the insertion point.
     shiftSelectedSlashCommand(insertPos, splice.delta);
+    shiftFormatTokens(insertPos, splice.delta);
     setCapsules((prev) => [
       ...prev.map((c) =>
         c.start >= insertPos ? { ...c, start: c.start + splice.delta } : c),
@@ -2801,7 +3185,6 @@ export const ChatInput = ({
   // Formats named in the message are inline tokens like capsules, addressed by the caret as one
   // unit. There can be several, and where each sits says which part of the request it belongs to,
   // so they stay in the text rather than becoming a separate field.
-  const [formatTokens, setFormatTokens] = useState<FormatToken[]>([]);
   const formatTokensRef = useRef(formatTokens);
   formatTokensRef.current = formatTokens;
 
@@ -2828,7 +3211,13 @@ export const ChatInput = ({
       ...previous.map(token => token.start >= at
         ? {...token, start: token.start + splice.delta}
         : token),
-      {format, logo, start: splice.start, length: splice.length},
+      {
+        noun: format.output.noun,
+        icon: format.output.icon,
+        logo,
+        start: splice.start,
+        length: splice.length,
+      },
     ]);
     requestAnimationFrame(() => {
       composerTextareaRef.current?.focus();
@@ -2872,12 +3261,12 @@ export const ChatInput = ({
         ? "bg-kumo-warning"
         : "bg-kumo-inactive";
   const logKind = consoleLogSeverity === "error"
-    ? t('composer.logKind.error')
+    ? "error"
     : consoleLogSeverity === "warn"
-      ? t('composer.logKind.warning')
-      : t('composer.logKind.log');
+      ? "warning"
+      : "log";
   const selectedModelLabel = selectedModel == null
-    ? t('composer.noAgent')
+    ? "No agent"
     : models.find((model) => model.id === selectedModel)?.name ?? selectedModel;
 
   const hasReadyAttachment = pendingAttachments.some(
@@ -2896,7 +3285,7 @@ export const ChatInput = ({
     // captured-log floating chip with z-10, the textarea/mirror with z-[1])
     // so they can't paint on top of body-level portaled popovers like the
     // model picker dropdown opening above the composer.
-    <div className={`px-4 py-4 relative isolate ${styles.chatInputRoot}`}>
+    <div className={`relative isolate px-2 py-2 sm:px-4 sm:py-4 ${styles.chatInputRoot}`}>
       <input
         ref={attachmentInputRef}
         type="file"
@@ -2931,7 +3320,8 @@ export const ChatInput = ({
               >
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${logDotClass}`} />
                 <span className="truncate">
-                  {t('composer.sendCaptured', { count: pendingConsoleLogCount, kind: logKind })}
+                  Send {pendingConsoleLogCount} captured {logKind}
+                  {pendingConsoleLogCount !== 1 ? "s" : ""} to chat
                 </span>
               </button>
             </Tooltip>
@@ -2939,7 +3329,7 @@ export const ChatInput = ({
               type="button"
               onClick={onDiscardConsoleLogs}
               className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full opacity-60 transition-opacity hover:bg-kumo-tint hover:opacity-100"
-              aria-label={t('composer.discardLogs')}
+              aria-label="Discard captured logs"
             >
               <X size={10} />
             </button>
@@ -2964,11 +3354,19 @@ export const ChatInput = ({
               <span className={`grid h-7 w-7 place-items-center rounded-full ${canAttachMore ? "bg-kumo-brand/12 text-kumo-brand" : "bg-kumo-warning/15 text-kumo-warning"}`}>
                 <FileIcon size={16} weight="duotone" />
               </span>
-              {canAttachMore ? t('composer.dropFiles') : t('composer.attachmentLimit')}
+              {canAttachMore ? "Drop files to attach" : "Messages are limited to 5 attachments"}
             </div>
           </div>
         )}
         {draftUpdateBanner}
+        {sendHiccup && sendHiccup.chatKey === chatKey && (
+          <div className="px-4 pt-2 text-xs text-kumo-warning">
+            {/* Composers without a chatKey (new-chat, home page) have no thread to check. */}
+            {chatKey != null
+              ? "Connection hiccup — your message may not have been sent. Check the thread, then try again; if it keeps failing, reload the page."
+              : "Connection hiccup — your message may not have been sent. Try again; if it keeps failing, reload the page."}
+          </div>
+        )}
         {/* Textarea */}
         <div className="relative px-4 pb-1 pt-3">
           {slashCommandPicker.popup}
@@ -2976,10 +3374,7 @@ export const ChatInput = ({
           <div className="sr-only" aria-live="polite">
             {slashCommandPicker.status ||
               (selectedSlashCommand
-                ? t('composer.slashReady', {
-                    command: selectedSlashCommand.choice.name,
-                    provider: selectedSlashCommand.choice.providerLabel,
-                  })
+                ? `Slash command /${selectedSlashCommand.choice.name} from ${selectedSlashCommand.choice.providerLabel} is ready to send`
                 : "")}
           </div>
           <div ref={wrapperRef} className={styles.capsuleInputWrapper}>
@@ -3011,6 +3406,8 @@ export const ChatInput = ({
               aria-controls={slashCommandPicker.open ? slashCommandPicker.listboxId : undefined}
               aria-activedescendant={slashCommandPicker.activeDescendant}
               onChange={(e) => {
+                draftEditedRef.current = true;
+                draftRestoreGenerationRef.current++;
                 handleInputChange(e.target.value, e.target.selectionStart ?? 0);
                 syncPickerCaret(e.target.selectionStart ?? 0);
                 requestAnimationFrame(handleCursorChange);
@@ -3050,10 +3447,10 @@ export const ChatInput = ({
                 isBlocked
                   ? blockedReason
                   : isAgentActive
-                    ? t('composer.waiting')
+                    ? "Waiting for agent…"
                     : newChat
-                      ? t('composer.newConversation')
-                      : t('composer.followUp')
+                      ? "Start a new conversation…"
+                      : "Ask a follow-up…"
               }
               autoFocus={autoFocus}
               rows={minRows}
@@ -3068,6 +3465,12 @@ export const ChatInput = ({
                 }
               }}
               onKeyDown={(e) => {
+                // An IME commits a composition with Enter, and the browser reports that as an
+                // ordinary keydown. Reading it as "send" truncates the message mid-word for every
+                // user who types through an IME, so hand the whole keystroke back to the IME: Enter
+                // is not the only key it owns -- Escape cancels a composition and the arrows move
+                // through candidates.
+                if (isImeComposing(e)) return;
                 if (slashCommandPicker.open && e.key === "Escape") {
                   e.preventDefault();
                   slashCommandPicker.dismiss();
@@ -3147,7 +3550,7 @@ export const ChatInput = ({
                   syncMirrorScroll(el);
                 }
               }}
-              className={`relative z-[1] w-full resize-none border-none bg-transparent p-0 text-[14px] leading-[22px] tracking-[-0.25px] outline-none placeholder:text-kumo-inactive disabled:cursor-not-allowed ${composerTextareaClass}`}
+              className={`relative z-[1] w-full resize-none border-none bg-transparent p-0 text-[16px] leading-[22px] outline-none placeholder:text-kumo-inactive disabled:cursor-not-allowed sm:text-[14px] ${composerTextareaClass}`}
             />
           </div>
         </div>
@@ -3157,19 +3560,19 @@ export const ChatInput = ({
             {pendingAttachments.map((attachment) => (
               <div key={attachment.id} className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg border border-kumo-line/70 bg-kumo-elevated">
                 {attachment.previewUrl ? (
-                  <img src={attachment.previewUrl} alt={attachment.name ?? t('composer.attachedFile')} className="h-full w-full object-cover" />
+                  <img src={attachment.previewUrl} alt={attachment.name ?? "Attached file"} className="h-full w-full object-cover" />
                 ) : (
                   <FileIcon size={22} className="text-kumo-inactive" />
                 )}
                 {attachment.uploadState === "uploading" && (
-                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-black/35 text-[10px] text-white">{t('composer.uploading')}</div>
+                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-black/35 text-[10px] text-white">Uploading</div>
                 )}
                 {attachment.uploadState === "error" && (
-                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-kumo-danger/80 px-1 text-center text-[9px] leading-3 text-white">{t('composer.failed')}</div>
+                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-kumo-danger/80 px-1 text-center text-[9px] leading-3 text-white">Failed</div>
                 )}
                 <button
                   type="button"
-                  aria-label={t('composer.removeAttachment')}
+                  aria-label="Remove attachment"
                   onClick={() => removeAttachment(attachment.id)}
                   className="absolute right-0.5 top-0.5 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-black/55 text-white hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
                 >
@@ -3188,8 +3591,8 @@ export const ChatInput = ({
                 render={
                   <button
                     type="button"
-                    className="group flex h-8 w-8 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.96] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-subtle"
-                    aria-label={t('composer.openOptions')}
+                    className="group flex h-10 w-10 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.96] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-subtle sm:h-8 sm:w-8"
+                    aria-label="Open chat options"
                   >
                     <Plus size={18} />
                   </button>
@@ -3210,7 +3613,7 @@ export const ChatInput = ({
                       <Brain size={14} />
                     </span>
                     <span className="flex-1">
-                      {showThinkingTraces ? t('composer.hideThinking') : t('composer.showThinking')}
+                      {showThinkingTraces ? "Hide thinking" : "Show thinking"}
                     </span>
                   </DropdownMenu.Item>
                 )}
@@ -3221,17 +3624,17 @@ export const ChatInput = ({
                   <span className="mr-2 inline-flex h-4 w-4 items-center justify-center text-kumo-inactive">
                     <FileIcon size={14} />
                   </span>
-                  <span className="flex-1">{t('composer.uploadFile')}</span>
+                  <span className="flex-1">Upload file</span>
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu>
             <button
               type="button"
               onClick={handleAttachOpen}
-              className="inline-flex h-8 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-none tracking-[-0.25px] text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.97]"
+              className="inline-flex h-10 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[14px] leading-none text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.97] sm:h-8 sm:text-[13px]"
             >
               <Plug size={15} className="flex-shrink-0" />
-              <span className={`leading-none ${styles.attachLabelText}`}>{attachLabel ?? t('composer.addResource')}</span>
+              <span className={`leading-none ${styles.attachLabelText}`}>{attachLabel ?? "Add resource"}</span>
             </button>
           </div>
 
@@ -3242,8 +3645,8 @@ export const ChatInput = ({
                   render={
                     <button
                       type="button"
-                      className="group inline-flex h-8 min-w-0 max-w-[180px] cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-5 tracking-[-0.25px] text-kumo-subtle transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-default focus-visible:bg-kumo-tint focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.97] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-default"
-                      aria-label={t('composer.selectModel')}
+                      className="group inline-flex h-10 min-w-0 max-w-[110px] cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[14px] leading-5 text-kumo-subtle transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-default focus-visible:bg-kumo-tint focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.97] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-default sm:h-8 sm:max-w-[180px] sm:text-[13px]"
+                      aria-label="Select model"
                     >
                       <span className="min-w-0 truncate">{selectedModelLabel}</span>
                       <CaretDown
@@ -3275,7 +3678,7 @@ export const ChatInput = ({
                     onClick={() => onModelChange(null)}
                     className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] leading-4 font-normal tracking-[-0.15px] text-kumo-subtle transition-colors data-highlighted:bg-kumo-tint/70 data-highlighted:text-kumo-default"
                   >
-                    <span className="min-w-0 flex-1 truncate">{t('composer.noAgent')}</span>
+                    <span className="min-w-0 flex-1 truncate">No agent</span>
                     {selectedModel == null && (
                       <Check size={12} weight="bold" className="ml-3 flex-shrink-0 text-kumo-inactive" />
                     )}
@@ -3286,8 +3689,8 @@ export const ChatInput = ({
                 <WorkshopIconButton
                   onClick={onStop}
                   tone="primary"
-                  className="!h-8 !w-8"
-                  aria-label={t('composer.stopAgent')}
+                  className="!h-10 !w-10 sm:!h-8 sm:!w-8"
+                  aria-label="Stop agent"
                 >
                   <svg
                     width="14"
@@ -3303,8 +3706,8 @@ export const ChatInput = ({
                   onClick={submitMessage}
                   disabled={!canSend}
                   tone="primary"
-                  className="!h-8 !w-8 disabled:cursor-not-allowed disabled:opacity-30"
-                  aria-label={t('composer.sendMessage')}
+                  className="!h-10 !w-10 disabled:cursor-not-allowed disabled:opacity-30 sm:!h-8 sm:!w-8"
+                  aria-label="Send message"
                 >
                   {/* Arrow-up icon */}
                   <svg
@@ -3344,9 +3747,9 @@ interface MessageState {
   revertTimestamps: Map<number, Date>; // sequence -> timestamp of reverted-from message
 
   // The accumulated unmerged/unreverted changes (for the proposed changes view). An entry's
-  // `update` is absent for batches that record only gadget creations/binding additions; such
+  // `change` is absent for batches that record only gadget creations/binding additions; such
   // batches still count as proposed changes (they are accepted and reverted like code edits).
-  activeChanges: { sequence: number; update?: Uint8Array }[];
+  activeChanges: { sequence: number; change?: CodeChange }[];
 }
 
 type ChatDisplayEntry =
@@ -3464,12 +3867,10 @@ function appendWorkParts(target: WorkMessageParts, source: WorkMessageParts) {
 
 // Suffix appended to discard labels when the discarded changes include gadget creations, since
 // reverting also deletes the created gadgets.
-function describeCreatedGadgetDeletion(
-  titles: string[] | undefined,
-): string {
+function describeCreatedGadgetDeletion(titles: string[] | undefined): string {
   if (!titles || titles.length === 0) return "";
   const names = titles.map((t) => `“${t}”`).join(", ");
-  return i18n.t('changes.deletesGadget', { ns: 'chat', count: titles.length, titles: names });
+  return ` (deletes ${titles.length === 1 ? "gadget" : "gadgets"} ${names})`;
 }
 
 // Label for the per-turn discard-changes button.
@@ -3477,7 +3878,9 @@ function getDiscardLabel(
   isTrailing: boolean | undefined,
   createdGadgetTitles?: string[],
 ): string {
-  const base = i18n.t(isTrailing ? 'changes.discardThis' : 'changes.discardThisAndLater', { ns: 'chat' });
+  const base = isTrailing
+    ? "Discard changes from this response"
+    : "Discard changes from this response and later responses";
   return base + describeCreatedGadgetDeletion(createdGadgetTitles);
 }
 
@@ -3485,7 +3888,9 @@ function getSavedEditsDiscardLabel(
   isTrailing: boolean | undefined,
   createdGadgetTitles?: string[],
 ): string {
-  const base = i18n.t(isTrailing ? 'changes.discardSaved' : 'changes.discardSavedAndLater', { ns: 'chat' });
+  const base = isTrailing
+    ? "Discard saved edits"
+    : "Discard saved edits and later changes";
   return base + describeCreatedGadgetDeletion(createdGadgetTitles);
 }
 
@@ -3502,7 +3907,6 @@ function DiscardPendingChangesPopover({
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
 }) {
-  const { t: translate } = useTranslation('chat');
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger
@@ -3512,7 +3916,7 @@ function DiscardPendingChangesPopover({
             disabled={disabled}
             className="inline-flex h-[30px] cursor-pointer items-center justify-center rounded-md border border-kumo-fill bg-kumo-base px-2.5 text-[12px] font-medium leading-[18px] tracking-[-0.25px] text-kumo-default transition-colors enabled:hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {translate('changes.discardMenu')}
+            Discard…
           </button>
         }
       />
@@ -3525,13 +3929,14 @@ function DiscardPendingChangesPopover({
       >
         <div className="px-3.5 pb-2.5 pt-3">
           <Popover.Title className="text-[13px] font-medium leading-[18px] tracking-[-0.25px] text-kumo-default">
-            {translate('changes.discardAllTitle')}
+            Discard all pending changes?
           </Popover.Title>
           <p className="mt-0.5 text-[11.5px] leading-4 tracking-[-0.15px] text-kumo-subtle">
-            {translate('changes.discardAllDescription')}
+            Return to the last accepted version. Any gadgets created by these changes will be
+            permanently deleted. Pending changes can&apos;t be restored.
           </p>
           <p className="mt-2 border-t border-kumo-line pt-2 text-[11px] leading-[15px] tracking-[-0.1px] text-kumo-inactive">
-            {translate('changes.useThe')} <ArrowUUpLeft size={12} className="mx-0.5 inline-block align-[-2px]" aria-hidden="true" /><span className="sr-only">{translate('changes.undoArrow')}</span> {translate('changes.discardHintAfterIcon')}
+            Use the <ArrowUUpLeft size={12} className="mx-0.5 inline-block align-[-2px]" aria-hidden="true" /><span className="sr-only">undo arrow</span> under any agent response to discard from that turn onward.
           </p>
         </div>
         <div className="flex items-center justify-end gap-0.5 border-t border-kumo-line px-2 py-1.5">
@@ -3541,7 +3946,7 @@ function DiscardPendingChangesPopover({
             onClick={() => onOpenChange(false)}
             className="flex h-6 cursor-pointer items-center rounded-md px-2 text-[12px] font-medium tracking-[-0.15px] text-kumo-inactive transition-colors enabled:hover:bg-kumo-tint enabled:hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {translate('changes.cancel')}
+            Cancel
           </button>
           <button
             type="button"
@@ -3549,7 +3954,7 @@ function DiscardPendingChangesPopover({
             onClick={onConfirm}
             className="flex h-6 cursor-pointer items-center rounded-md px-2 text-[12px] font-medium tracking-[-0.15px] text-kumo-default transition-colors enabled:hover:bg-kumo-tint enabled:hover:text-kumo-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {isDiscarding ? translate('changes.discarding') : translate('changes.discardChanges')}
+            {isDiscarding ? "Discarding..." : "Discard changes"}
           </button>
         </div>
       </Popover.Content>
@@ -3624,6 +4029,11 @@ export function buildChatDisplayEntries(
   const isVisibleSavedChangesMessage = (msg: AiChatMessage): msg is ChangeChatMessage =>
     msg.type === "changes" &&
     msg.author.type === "user" &&
+    // A conversion boundary is the git-storage migration's bookkeeping, not a user action (see
+    // AiChatMessageBody.conversionBoundary), so it never displays. Its content still reaches
+    // the proposed-changes views, and the "Pending changes" banner's discard-all is the way to
+    // discard it.
+    msg.conversionBoundary !== true &&
     (changeStatus.get(msg.sequence) ?? "pending") === "pending";
 
   for (let i = 0; i < messages.length; ) {
@@ -3851,27 +4261,27 @@ export function computeMessageStates(
   const mergeTimestamps = new Map<number, Date>();
   const revertTimestamps = new Map<number, Date>();
 
-  // Track active updates as we scan (for proposed changes computation)
-  let updates: { sequence: number; update?: Uint8Array }[] = [];
+  // Track active changes as we scan (for proposed changes computation)
+  let updates: { sequence: number; change?: CodeChange }[] = [];
 
-  // The boundary carries the still-proposed pre-boundary changes merged into one update. Fold it
+  // The boundary carries the still-proposed pre-boundary changes composed into one change. Fold it
   // in at the last pre-boundary sequence, so it counts as proposed and a later merge or revert
   // reaching across the boundary still resolves it. Skipped once the page before the boundary has
   // loaded, since its own "changes" messages would then count the same edits again.
   //
-  // Only the bytes appear here, because that is all these entries are read for: reconstructing the
-  // proposed code. A prefix that only created gadgets carries none, and stays reachable through the
-  // server's own cut -- see the accept-changes banner.
+  // Only the change appears here, because that is all these entries are read for: reconstructing
+  // the proposed code. A prefix that only created gadgets carries none, and stays reachable
+  // through the server's own cut -- see the accept-changes banner.
   if (
-    compacted?.proposedChanges !== undefined &&
+    compacted?.proposedChange !== undefined &&
     (messages.length === 0 || messages[0].sequence >= compacted.to)
   ) {
-    updates.push({ sequence: compacted.to - 1, update: compacted.proposedChanges });
+    updates.push({ sequence: compacted.to - 1, change: compacted.proposedChange });
   }
 
   for (let msg of messages) {
     if (msg.type === "changes") {
-      updates.push({ sequence: msg.sequence, update: msg.update });
+      updates.push({ sequence: msg.sequence, change: msg.change });
       changeStatus.set(msg.sequence, "pending");
     } else if (msg.type === "merge") {
       // Mark changes as merged and drop from active set
@@ -3909,6 +4319,62 @@ export function computeMessageStates(
   };
 }
 
+/**
+ * The durable part of a chat's uncommitted code state (see ChatCodeChanges): the current
+ * epoch's non-reverted "changes" messages composed into one change, plus the generation revision
+ * their watermarks reach. `codeBase` is the chat's current ChatCodeBase; only messages at or
+ * after its `epoch` participate ("at" matters for a migrated chat, whose epoch points at its own
+ * conversionBoundary changes message) -- accepting changes resets the chat's code base, so
+ * earlier epochs' changes are composed over pins that no longer exist. Keying the cutoff on the
+ * metadata's epoch rather than on loaded merge messages keeps this consistent with the pin set
+ * the code view reads from the same metadata.
+ *
+ * The oldest loaded compaction boundary stands in for the pages before it -- its proposedChange
+ * blob, unless a loaded revert reached across the boundary -- and drops out once those pages
+ * load, exactly like computeMessageStates' active-changes seeding. The blob folds in at
+ * sequence `to - 1`, so an epoch past that excludes it like any other pre-epoch content.
+ */
+export function computeChatEpochChanges(
+  messages: AiChatMessage[],
+  compacted?: CompactionBoundary,
+  codeBase?: ChatCodeBase,
+): { epochChange?: CodeChange; rowsThrough: number } {
+  const { changeStatus } = computeMessageStates(messages, compacted);
+  const epoch = codeBase?.epoch;
+  const generation = codeBase?.generation ?? 0;
+  const changes: CodeChange[] = [];
+  let rowsThrough = 0;
+
+  if (compacted && (messages.length === 0 || messages[0].sequence >= compacted.to) &&
+      (epoch === undefined || compacted.to - 1 >= epoch)) {
+    // The boundary's proposed-changes entry is folded in at sequence `to - 1` by
+    // computeMessageStates, so a revert reaching across the boundary marks that sequence.
+    if (compacted.proposedChange !== undefined &&
+        changeStatus.get(compacted.to - 1) !== "reverted") {
+      changes.push(compacted.proposedChange);
+    }
+  }
+
+  for (const msg of messages) {
+    if (msg.type !== "changes" || (epoch !== undefined && msg.sequence < epoch) ||
+        changeStatus.get(msg.sequence) === "reverted") {
+      continue;
+    }
+    if (msg.change !== undefined) changes.push(msg.change);
+    // Revisions restart per generation, so only the current generation's watermarks position
+    // the live-row cursor (an older generation's rows were retired by its closing bump).
+    if (msg.watermark !== undefined && msg.watermark.changesGeneration === generation) {
+      rowsThrough = Math.max(rowsThrough, msg.watermark.throughRevision);
+    }
+  }
+
+  return {
+    epochChange:
+        changes.length === 0 ? undefined : changes.reduce((a, b) => composeCodeChange(a, b)),
+    rowsThrough,
+  };
+}
+
 function inferSelectedModelFromMessages(messages: AiChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -3940,19 +4406,23 @@ function fallbackToStoredModelSelection(
 }
 
 interface ChatInterfaceProps {
+  workspaceId: string | undefined;
   overseer: RpcStub<Overseer>;
   selectedChatId: number | null;
   onNavigateToChat: (
     chatId: number | null,
     options?: { replace?: boolean },
   ) => void;
-  onProposedChangesChange?: (proposedChanges: Uint8Array | undefined) => void;
-  onDraftProposedChangesChange?: (
-    updates: StreamingProposedChanges | undefined,
-  ) => void;
-  onStreamingProposedChangesChange?: (
-    updates: StreamingProposedChanges | undefined,
-  ) => void;
+  // The selected chat's code-branch snapshot (see ChatCodeChanges): its code base and the
+  // current epoch's recorded changes, delivered together so the code view always layers a
+  // consistent pair.
+  onChatChangesChange?: (changes: ChatCodeChanges | undefined) => void;
+  // The selected chat's live (unmaterialized) change rows, delivered separately from the durable
+  // snapshot so per-keystroke row arrivals don't churn it (see ChatLiveChangeRows).
+  onLiveRowsChange?: (rows: ChatLiveChangeRows | undefined) => void;
+  // The selected chat's live edit-preview stream, stable per chat like the row stream (see
+  // ChatLiveEditPreviews).
+  onLiveEditPreviewsChange?: (previews: ChatLiveEditPreviews | undefined) => void;
   onStreamingActiveFileChange?: (chatId: number, file: ActiveFileTarget | null | undefined) => void;
   pendingConsoleLogCount: number;
   consoleLogPreview: string;
@@ -3981,6 +4451,12 @@ interface ChatInterfaceProps {
 // Bucket a chat's lastActive into a time grouping for the chat list.
 type ChatTimeBucket = "today" | "yesterday" | "thisWeek" | "earlier";
 
+const CHAT_TIME_BUCKET_LABELS: Record<ChatTimeBucket, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  thisWeek: "Earlier this week",
+  earlier: "Earlier",
+};
 const CHAT_TIME_BUCKET_ORDER: ChatTimeBucket[] = [
   "today",
   "yesterday",
@@ -4008,23 +4484,24 @@ function getChatTimeBucket(date: Date, now: Date): ChatTimeBucket {
 // own the "date" half of the label (via the section header), so rows only show
 // what the header doesn't.
 function formatChatRowTime(date: Date, bucket: ChatTimeBucket, now: Date): string {
-  const time = formatTime(date);
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   if (bucket === "today" || bucket === "yesterday") {
     return time;
   }
   if (bucket === "thisWeek") {
-    return formatDateTime(date, { weekday: "short", hour: "numeric", minute: "2-digit" });
+    const day = date.toLocaleDateString([], { weekday: "short" });
+    return `${day} ${time}`;
   }
   const sameYear = date.getFullYear() === now.getFullYear();
-  return formatDate(
-    date,
+  return date.toLocaleDateString(
+    [],
     sameYear
       ? { month: "short", day: "numeric" }
       : { month: "short", day: "numeric", year: "numeric" },
   );
 }
 
-// A compaction checkpoint reported with a history page.
+/** A compaction checkpoint reported with a history page. */
 export type CompactionBoundary = NonNullable<AiChatHistoryPage["compacted"]>;
 
 // Client-side cache for chats and messages (survives reconnects)
@@ -4058,7 +4535,6 @@ type ProvisionalChatState = {
   compacting: boolean;
   toolCalls: ProvisionalToolCallState[];
   toolCallsById: Map<string, ProvisionalToolCallState>;
-  codeUpdates: Uint8Array[];
   activeEditingFile: ActiveFileTarget | null | undefined;
 };
 
@@ -4069,7 +4545,6 @@ function createProvisionalChatState(): ProvisionalChatState {
     compacting: false,
     toolCalls: [],
     toolCallsById: new Map(),
-    codeUpdates: [],
     activeEditingFile: undefined,
   };
 }
@@ -4079,13 +4554,13 @@ function clearProvisionalTextState(state: ProvisionalChatState) {
   state.reasoning = "";
   state.toolCalls = [];
   state.toolCallsById.clear();
-  // Note: This function only clears chat streaming state, not code streaming state. Chat streaming
-  // is reset when a message arrives (once per step), whereas code streaming is reset when code
-  // changes arrive (at the end of a turn).
+  // Note: This function only clears chat streaming state, not the active-file marker. Chat
+  // streaming is reset when a message arrives (once per step); the active-file marker is reset
+  // when the finalized changes arrive (at the end of a turn). (Streaming *code* needs no
+  // provisional state at all: agent edits arrive as durable change rows via changeApplied.)
 }
 
 function clearProvisionalCodeState(state: ProvisionalChatState) {
-  state.codeUpdates = [];
   state.activeEditingFile = undefined;
 }
 
@@ -4095,7 +4570,6 @@ function isProvisionalChatStateEmpty(state: ProvisionalChatState) {
     state.reasoning === "" &&
     !state.compacting &&
     state.toolCalls.length === 0 &&
-    state.codeUpdates.length === 0 &&
     state.activeEditingFile === undefined
   );
 }
@@ -4126,12 +4600,13 @@ function getOrCreateProvisionalToolCall(
 }
 
 function ChatInterface({
+  workspaceId,
   overseer,
   selectedChatId,
   onNavigateToChat,
-  onProposedChangesChange,
-  onDraftProposedChangesChange,
-  onStreamingProposedChangesChange,
+  onChatChangesChange,
+  onLiveRowsChange,
+  onLiveEditPreviewsChange,
   onStreamingActiveFileChange,
   pendingConsoleLogCount,
   consoleLogPreview,
@@ -4151,21 +4626,6 @@ function ChatInterface({
   onOpenGadget,
   outputOfWorkpiece,
 }: ChatInterfaceProps) {
-  const { t: translate } = useTranslation('chat');
-  const activeLanguage = i18n.resolvedLanguage;
-  const translateRef = useRef(translate);
-  translateRef.current = translate;
-  const chatListScopeLabels: Record<ChatListScope, string> = {
-    all: translate('list.scope.all'),
-    direct: translate('list.scope.direct'),
-    agents: translate('list.scope.agents'),
-  };
-  const chatTimeBucketLabels: Record<ChatTimeBucket, string> = {
-    today: translate('list.time.today'),
-    yesterday: translate('list.time.yesterday'),
-    thisWeek: translate('list.time.thisWeek'),
-    earlier: translate('list.time.earlier'),
-  };
   // Persistent cache that survives reconnects
   const toasts = useKumoToastManager();
   const { currentUser } = useAuthenticatedApi();
@@ -4178,7 +4638,18 @@ function ChatInterface({
     lastMessageTimestamp: null,
   });
   const provisionalRef = useRef<Map<number, ProvisionalChatState>>(new Map());
-  const draftRef = useRef<Map<number, DraftChatState>>(new Map());
+  // Per-chat buffers of live (unmaterialized) change rows (see ChatLiveChangeRows), fed by
+  // changeApplied, pruned by materialization watermarks and generation bumps.
+  const chatChangeRowsRef = useRef<Map<number, ChatChangeRowBuffer>>(new Map());
+  // Live-row subscribers by chat, notified synchronously from changeApplied (before any pruning;
+  // see ChatLiveChangeRows.subscribe).
+  const chatChangeRowListenersRef =
+      useRef<Map<number, Set<(row: ChatChangeRow) => void>>>(new Map());
+  // Per-chat streaming edit previews (retained for subscribe-time replay; see
+  // StreamingEditPreview) and their event subscribers, fed synchronously from stream events.
+  const editPreviewsRef = useRef<Map<number, StreamingEditPreview>>(new Map());
+  const editPreviewListenersRef =
+      useRef<Map<number, Set<(event: EditPreviewEvent) => void>>>(new Map());
   // Last server-instance generation seen (survives reconnects). Used to detect a full DO restart,
   // in which case in-flight provisional streams were lost and must be discarded. See
   // AiChatSubscriber.streamGeneration.
@@ -4198,7 +4669,10 @@ function ChatInterface({
   const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
   const [updateCounter, setUpdateCounter] = useState(0); // Force re-render when cache updates
   const [proposedChangesVersion, setProposedChangesVersion] = useState(0); // Incremented only for change-affecting messages
-  const [draftChangesVersion, setDraftChangesVersion] = useState(0);
+  // Rows live in refs (chatChangeRowsRef); this state only forces re-renders of their readers (the
+  // draft banner) as rows arrive or get pruned. Subscribed consumers are fed synchronously and
+  // don't depend on it (see ChatLiveChangeRows).
+  const [_liveRowsVersion, setLiveRowsVersion] = useState(0);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState("");
   const [renamingChatId, setRenamingChatId] = useState<number | null>(null);
@@ -4215,6 +4689,10 @@ function ChatInterface({
   const [discardingChangesChatIds, setDiscardingChangesChatIds] = useState(
     () => new Set<number>(),
   );
+  // Chat whose accept came back "stale" (mainline advanced past its pins), awaiting the user's
+  // decision in the update-from-mainline dialog.
+  const [staleAcceptChatId, setStaleAcceptChatId] = useState<number | null>(null);
+  const [isUpdatingFromMainline, setIsUpdatingFromMainline] = useState(false);
 
   const [expandedToolCalls, setExpandedToolCalls] = useState<Set<string>>(
     new Set(),
@@ -4532,7 +5010,7 @@ function ChatInterface({
       // edit that actually created it.
       buildChatDisplayEntries(
           currentMessages, messageStates.changeStatus, currentCompactions, resolveToolOutput),
-    [currentMessages, messageStates, currentCompactions, resolveToolOutput, activeLanguage],
+    [currentMessages, messageStates, currentCompactions, resolveToolOutput],
   );
 
   const entryTopClasses = useMemo(() => {
@@ -4599,7 +5077,7 @@ function ChatInterface({
       }
     } catch (err: any) {
       console.error("Failed to download chat attachment:", err);
-      toasts.add({ title: err?.message || translateRef.current('messages.downloadAttachmentFailed'), variant: "error" });
+      toasts.add({ title: err?.message || "Failed to download attachment", variant: "error" });
     }
   }, [overseer, toasts]);
 
@@ -4620,38 +5098,84 @@ function ChatInterface({
       ? (provisionalRef.current.get(selectedChatId) ?? null)
       : null;
 
-  const currentDraftState =
-    selectedChatId !== null ? (draftRef.current.get(selectedChatId) ?? null) : null;
-  const currentDraftChangesCount = currentDraftState?.entries.length ?? 0;
+  const currentRowBuffer =
+    selectedChatId !== null ? (chatChangeRowsRef.current.get(selectedChatId) ?? null) : null;
+  // Whether the live window holds *human* draft edits -- the rows the draft banner describes.
+  // Server-authored rows (agent edits, mainline merges) share the same stream but must not
+  // raise the banner: the agent's activity has its own streaming UI. Derived from the rows
+  // (rather than tracked) so pruning -- materialization watermarks, generation bumps -- can
+  // never leave it stale.
+  const currentHasUserDraftRows =
+    currentRowBuffer !== null && currentRowBuffer.rows.some(row => row.submission !== undefined);
 
   const provisionalToolCalls = currentProvisionalState?.toolCalls ?? [];
   const useConstrainedChatWidth = sidebarMode || constrainChatWidth;
 
-  const currentStreamingChanges = currentProvisionalState?.codeUpdates;
-  const currentStreamingChangesCount = currentStreamingChanges?.length ?? 0;
   const currentStreamingActiveFile = currentProvisionalState?.activeEditingFile;
-  const currentDraftChangesState = useMemo(():
-    | StreamingProposedChanges
-    | undefined => {
-    if (!currentDraftState || currentDraftChangesCount === 0) {
-      return undefined;
-    }
+  // The selected chat's live-row stream in the subscription shape the code view consumes (see
+  // ChatLiveChangeRows). Identity is stable per chat -- the subscription itself outlives row
+  // arrivals and buffer pruning -- so consumers subscribe once per chat.
+  const currentLiveRows = useMemo((): ChatLiveChangeRows | undefined => {
+    if (selectedChatId === null) return undefined;
+    const chatId = selectedChatId;
     return {
-      updates: currentDraftState.entries.map((entry) => entry.update),
-      count: currentDraftChangesCount,
+      chatId,
+      subscribe: (listener) => {
+        let listeners = chatChangeRowListenersRef.current.get(chatId);
+        if (!listeners) {
+          listeners = new Set();
+          chatChangeRowListenersRef.current.set(chatId, listeners);
+        }
+        listeners.add(listener);
+        // Replay what the buffer retains (rows arriving during the replay are impossible: this
+        // is all synchronous). The consumer dedupes, so redundancy is harmless.
+        const buffer = chatChangeRowsRef.current.get(chatId);
+        if (buffer) for (const row of buffer.rows) listener(row);
+        return () => {
+          listeners.delete(listener);
+          if (listeners.size === 0) chatChangeRowListenersRef.current.delete(chatId);
+        };
+      },
     };
-  }, [currentDraftChangesCount, currentDraftState, draftChangesVersion, selectedChatId]);
-  const currentStreamingState = useMemo(():
-    | StreamingProposedChanges
-    | undefined => {
-    if (!currentStreamingChanges || currentStreamingChangesCount === 0) {
-      return undefined;
-    }
+  }, [selectedChatId]);
+
+  // The selected chat's edit-preview stream in subscription shape (see ChatLiveEditPreviews),
+  // stable per chat like the row stream above.
+  const currentLiveEditPreviews = useMemo((): ChatLiveEditPreviews | undefined => {
+    if (selectedChatId === null) return undefined;
+    const chatId = selectedChatId;
     return {
-      updates: currentStreamingChanges,
-      count: currentStreamingChangesCount,
+      chatId,
+      subscribe: (listener) => {
+        let listeners = editPreviewListenersRef.current.get(chatId);
+        if (!listeners) {
+          listeners = new Set();
+          editPreviewListenersRef.current.set(chatId, listeners);
+        }
+        listeners.add(listener);
+        // Replay the streaming preview, if any, so a consumer subscribing mid-stream (a chat
+        // switch, an OT client rebuild) still shows the text streamed so far.
+        const streaming = editPreviewsRef.current.get(chatId);
+        if (streaming !== undefined) {
+          listener({
+            kind: "start",
+            toolCallId: streaming.toolCallId,
+            workpieceId: streaming.workpieceId,
+            filename: streaming.filename,
+            ...(streaming.textToReplace !== undefined
+              ? { textToReplace: streaming.textToReplace } : {}),
+          });
+          if (streaming.text !== "") {
+            listener({ kind: "delta", toolCallId: streaming.toolCallId, delta: streaming.text });
+          }
+        }
+        return () => {
+          listeners.delete(listener);
+          if (listeners.size === 0) editPreviewListenersRef.current.delete(chatId);
+        };
+      },
     };
-  }, [selectedChatId, currentStreamingChanges, currentStreamingChangesCount]);
+  }, [selectedChatId]);
 
   const isCompacting = currentProvisionalState?.compacting === true;
 
@@ -4718,7 +5242,6 @@ function ChatInterface({
   }, [
     currentMessages,
     hasVisibleProvisionalContent,
-    currentStreamingChangesCount,
     isAgentActive,
     scrollMessagesToBottom,
   ]);
@@ -4730,6 +5253,7 @@ function ChatInterface({
   }, [selectedChatId, scrollMessagesToBottom]);
   useEffect(() => {
     setDiscardChangesTarget(null);
+    setStaleAcceptChatId(null);
   }, [selectedChatId]);
 
   // Initialize title input when selecting a chat
@@ -4765,63 +5289,52 @@ function ChatInterface({
     selectedChatIdRef.current = selectedChatId;
   }, [selectedChatId]);
 
-  // Notify parent when proposed changes change for the selected chat.
-  // Only recomputes when proposedChangesVersion changes (i.e. a "changes", "merge",
-  // or "revert" message arrives), NOT on every message.
+  // Notify parent when the selected chat's code-branch snapshot changes (see ChatCodeChanges):
+  // its ChatCodeBase plus the current epoch's recorded changes, derived together so the code
+  // view never pairs one's stale value with the other's fresh one. Recomputes when
+  // proposedChangesVersion changes (i.e. a "changes" or "revert" message arrives, or a history
+  // page loads) or when the codeBase's *content* changes -- metadata is redelivered on every
+  // chat activity (title, lastActive, ...), so it is deduped by signature. "merge" messages bump
+  // neither directly: the epoch reset they perform arrives through the metadata's codeBase
+  // (advanced epoch, cleared pins, bumped generation), redelivered with the merge.
+  const currentCodeBaseSignature = currentChatMetadata
+    ? JSON.stringify(currentChatMetadata.codeBase ?? null) : undefined;
   useEffect(() => {
-    if (!currentChatMetadata?.hasProposedChanges) {
-      onProposedChangesChange?.(undefined);
+    if (selectedChatId === null || currentCodeBaseSignature === undefined ||
+        !cacheRef.current.messages.has(selectedChatId)) {
+      // No chat selected, or its metadata or history hasn't loaded yet -- the code view can't
+      // build the chat's doc until both have.
+      onChatChangesChange?.(undefined);
       return;
     }
 
-    // Read messages directly from the cache (always current) rather than using the
-    // memoized currentMessages, so we don't need it as a dependency.
-    const messages =
-      selectedChatId !== null
-        ? (cacheRef.current.messages.get(selectedChatId) || []).filter(
-            (msg) => msg !== undefined,
-          )
-        : [];
-    const { activeChanges } = computeMessageStates(
+    // Read messages and metadata directly from the cache (always current) rather than using the
+    // memoized currentMessages, so we don't need them as dependencies.
+    const messages = (cacheRef.current.messages.get(selectedChatId) || []).filter(
+      (msg) => msg !== undefined,
+    );
+    const codeBase = cacheRef.current.chats.get(selectedChatId)?.codeBase;
+    const { epochChange, rowsThrough } = computeChatEpochChanges(
       messages,
-      selectedChatId !== null
-        ? cacheRef.current.compacted.get(selectedChatId)?.[0]
-        : undefined,
+      cacheRef.current.compacted.get(selectedChatId)?.[0],
+      codeBase,
     );
 
-    if (activeChanges.length === 0) {
-      onProposedChangesChange?.(undefined);
-      return;
-    }
-
-    const updatePayloads = activeChanges
-      .map((c) => c.update)
-      .filter((u): u is Uint8Array => u !== undefined);
-
-    // Creation/binding-only batches carry no code update; preserve the "proposed changes exist"
-    // signal with an empty update in that case.
-    const mergedUpdate =
-      updatePayloads.length === 1
-        ? updatePayloads[0]
-        : updatePayloads.length > 0
-          ? Y.mergeUpdatesV2(updatePayloads)
-          : Y.encodeStateAsUpdateV2(new Y.Doc());
-
-    onProposedChangesChange?.(mergedUpdate);
+    onChatChangesChange?.({ chatId: selectedChatId, codeBase, epochChange, rowsThrough });
   }, [
-    currentChatMetadata?.hasProposedChanges,
     proposedChangesVersion,
     selectedChatId,
-    onProposedChangesChange,
+    currentCodeBaseSignature,
+    onChatChangesChange,
   ]);
 
   useEffect(() => {
-    onStreamingProposedChangesChange?.(currentStreamingState);
-  }, [currentStreamingState, onStreamingProposedChangesChange]);
+    onLiveRowsChange?.(currentLiveRows);
+  }, [currentLiveRows, onLiveRowsChange]);
 
   useEffect(() => {
-    onDraftProposedChangesChange?.(currentDraftChangesState);
-  }, [currentDraftChangesState, onDraftProposedChangesChange]);
+    onLiveEditPreviewsChange?.(currentLiveEditPreviews);
+  }, [currentLiveEditPreviews, onLiveEditPreviewsChange]);
 
   const onStreamingActiveFileChangeRef = useRef(onStreamingActiveFileChange);
   onStreamingActiveFileChangeRef.current = onStreamingActiveFileChange;
@@ -4830,6 +5343,19 @@ function ChatInterface({
       onStreamingActiveFileChangeRef.current?.(selectedChatId, currentStreamingActiveFile);
     }
   }, [currentStreamingActiveFile, selectedChatId]);
+
+  // Deliver one edit-preview event to a chat's subscribers. Touches only refs, so the
+  // first-render closures the subscriber instance captures stay correct.
+  const emitEditPreviewEvent = (chatId: number, event: EditPreviewEvent) => {
+    editPreviewListenersRef.current.get(chatId)?.forEach((listener) => listener(event));
+  };
+  // The turn-boundary mop-up: drop all of a chat's preview state (see EditPreviewEvent's
+  // `reset`). Emitted even when no preview is *streaming* -- finished previews awaiting their
+  // rows live in the consumer, which this tells to let go of them.
+  const resetEditPreviews = (chatId: number) => {
+    editPreviewsRef.current.delete(chatId);
+    emitEditPreviewEvent(chatId, { kind: "reset" });
+  };
 
   // Proper class implementation of AiChatSubscriber
   // This is necessary so the server receives a single stub for the object,
@@ -4845,6 +5371,9 @@ function ChatInterface({
         // re-streamed content isn't appended to it. Clearing all chats is safe: provisional state
         // is purely ephemeral display state, and idle chats already have none.
         provisionalRef.current.clear();
+        // Reset every subscribed chat's previews, not just those with a streaming entry:
+        // consumers also hold finished previews awaiting rows that were lost with the DO.
+        for (const chatId of editPreviewListenersRef.current.keys()) resetEditPreviews(chatId);
         forceUpdate();
       }
       lastStreamGenerationRef.current = generation;
@@ -4859,6 +5388,7 @@ function ChatInterface({
       const prevChat = cacheRef.current.chats.get(chat.id);
       if (prevChat?.activeAgent && !chat.activeAgent) {
         provisionalRef.current.delete(chat.id);
+        resetEditPreviews(chat.id);
       }
 
       // A revert reaching across a boundary rolls compaction back, lowering or clearing
@@ -4881,6 +5411,22 @@ function ChatInterface({
         refreshBoundaryRef.current(chat.id);
       }
 
+      // A generation bump obsoletes buffered rows: a *destructive* bump (revert / draft
+      // discard -- no `prior`) erased every row, so drop them all; a content-preserving bump
+      // (a merge's epoch reset) retires the closed generation's rows but the code view may
+      // still be draining its tail, so keep exactly the prior generation and the new one.
+      // (The buffers are advisory replay caches -- the OT client dedupes and prunes on its own
+      // stream position -- so pruning here is memory hygiene, not correctness.)
+      const codeBase = chat.codeBase;
+      if (prevChat !== undefined && codeBase !== undefined &&
+          (prevChat.codeBase?.generation ?? 0) !== codeBase.generation) {
+        const keepFrom = codeBase.prior?.generation ?? codeBase.generation;
+        if (pruneChatChangeRows(chatChangeRowsRef.current, chat.id,
+                                row => row.generation >= keepFrom)) {
+          setLiveRowsVersion((prev) => prev + 1);
+        }
+      }
+
       cacheRef.current.chats.set(chat.id, chat);
       bumpChatListVersion();
       forceUpdate();
@@ -4893,7 +5439,8 @@ function ChatInterface({
       cacheRef.current.compacted.delete(chatId);
       removeChatFromActionMessageIndex(chatId);
       provisionalRef.current.delete(chatId);
-      draftRef.current.delete(chatId);
+      editPreviewsRef.current.delete(chatId);
+      chatChangeRowsRef.current.delete(chatId);
       bumpChatListVersion();
 
       // If currently viewing this chat, go back to list
@@ -4905,37 +5452,37 @@ function ChatInterface({
       forceUpdate();
     }
 
-    draftUpdate(
+    changeApplied(
       chatId: number,
-      timestamp: Date,
+      generation: number,
+      revision: number,
       author: AiChatAuthorInfo,
-      update: Uint8Array,
+      change: CodeChange,
+      submission?: { clientId: string; seq: number },
     ) {
-      let draft = getOrCreateDraftChatState(draftRef.current, chatId);
-      let existingIndex = draft.entries.findIndex(
-        (entry) => entry.timestamp.getTime() === timestamp.getTime(),
-      );
-
-      if (existingIndex >= 0) {
-        draft.entries[existingIndex] = { timestamp, author, update };
-      } else {
-        draft.entries.push({ timestamp, author, update });
-        draft.entries.sort(
-          (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
-        );
+      let buffer = chatChangeRowsRef.current.get(chatId);
+      if (!buffer) {
+        buffer = { rows: [], seen: new Set(), lastUserEditAt: null };
+        chatChangeRowsRef.current.set(chatId, buffer);
       }
-
-      refreshDraftLatestAuthor(draft);
-      if (existingIndex >= 0) {
-        setDraftChangesVersion((prev) => prev + 1);
+      // Dedupe: subscribe-replay redelivers every retained row (see Overseer.subscribeToChat).
+      const key = `${generation}:${revision}`;
+      if (buffer.seen.has(key)) return;
+      buffer.seen.add(key);
+      const row: ChatChangeRow = {
+        generation, revision, author, change,
+        ...(submission !== undefined ? { submission } : {}),
+      };
+      buffer.rows.push(row);
+      if (submission !== undefined) {
+        // Only human submissions drive the draft banner (see ChatChangeRowBuffer).
+        buffer.lastUserEditAt = new Date();
       }
+      // Deliver to subscribers synchronously: the message that materializes this row may prune
+      // it from the buffer before any effect runs (see ChatLiveChangeRows).
+      chatChangeRowListenersRef.current.get(chatId)?.forEach((listener) => listener(row));
+      setLiveRowsVersion((prev) => prev + 1);
       scheduleUpdate();
-    }
-
-    draftCleared(chatId: number) {
-      if (draftRef.current.delete(chatId)) {
-        scheduleUpdate();
-      }
     }
 
     message(msg: AiChatMessage) {
@@ -4962,15 +5509,31 @@ function ChatInterface({
       }
 
       // Only trigger proposed-changes recomputation for message types that affect the code.
-      // "merge" is excluded: it reclassifies changes from proposed to committed but doesn't
-      // change the total code (committed + proposed). The hasProposedChanges metadata
-      // dependency handles the transition when all changes are merged.
+      // "merge" is excluded: the epoch reset it performs reaches the doc through the metadata's
+      // codeBase.epoch (redelivered with the merge), which the chat-doc effect above depends on
+      // -- recomputing here as well would race the metadata and transiently pair the old epoch's
+      // updates with the new epoch's (empty) pin set.
       if (msg.type === "changes" || msg.type === "revert") {
         setProposedChangesVersion((prev) => prev + 1);
       }
 
-      if (msg.type === "changes" && msg.author.type === "user") {
-        pruneDraftEntriesBefore(draftRef.current, msg.chatId, msg.timestamp);
+      // A "changes" message's watermark absorbs the rows it materialized; drop our copies (see
+      // AiChatMessageBody.watermark). Rows of other generations are untouched -- revisions
+      // restart per generation, so an unqualified prune could clear the wrong stream's rows.
+      if (msg.type === "changes" && msg.watermark !== undefined) {
+        const { changesGeneration, throughRevision } = msg.watermark;
+        if (pruneChatChangeRows(chatChangeRowsRef.current, msg.chatId,
+                                row => row.generation !== changesGeneration ||
+                                       row.revision > throughRevision)) {
+          setLiveRowsVersion((prev) => prev + 1);
+        }
+      }
+
+      // The turn-flush "changes" message covers every row a successful edit appended, and an
+      // error message ends the step -- either way this step's previews are over (ordinarily
+      // each previewed edit's own row already resolved it; see GadgetCodeInterface).
+      if (msg.type === "changes" || msg.type === "error") {
+        resetEditPreviews(msg.chatId);
       }
 
       const provisional = provisionalRef.current.get(msg.chatId);
@@ -5008,7 +5571,7 @@ function ChatInterface({
           provisional.compacting = false;
           if (event.nothingToCompact) {
             toastsRef.current.add({
-              title: translateRef.current('compaction.nothingToCompact'),
+              title: "Nothing to compact — there are no earlier messages to summarize.",
             });
           }
           break;
@@ -5080,12 +5643,44 @@ function ChatInterface({
           toolCall.target = event.file.filename;
           break;
         }
-        case "codeReset":
-          provisional.codeUpdates = [];
+        case "editPreviewStart":
+          editPreviewsRef.current.set(chatId, {
+            toolCallId: event.toolCallId,
+            workpieceId: event.file.workpieceId,
+            filename: event.file.filename,
+            ...(event.textToReplace !== undefined
+              ? { textToReplace: event.textToReplace } : {}),
+            text: "",
+          });
+          emitEditPreviewEvent(chatId, {
+            kind: "start",
+            toolCallId: event.toolCallId,
+            workpieceId: event.file.workpieceId,
+            filename: event.file.filename,
+            ...(event.textToReplace !== undefined
+              ? { textToReplace: event.textToReplace } : {}),
+          });
           break;
-        case "codeUpdate":
-          provisional.codeUpdates.push(event.update);
+        case "editPreviewDelta": {
+          const preview = editPreviewsRef.current.get(chatId);
+          if (preview !== undefined && preview.toolCallId === event.toolCallId) {
+            preview.text += event.delta;
+          }
+          emitEditPreviewEvent(chatId,
+            { kind: "delta", toolCallId: event.toolCallId, delta: event.delta });
           break;
+        }
+        case "editPreviewClear": {
+          const preview = editPreviewsRef.current.get(chatId);
+          if (preview !== undefined && preview.toolCallId === event.toolCallId) {
+            editPreviewsRef.current.delete(chatId);
+          }
+          // Forwarded regardless of which call it names: a failed call's clear arrives at
+          // execution time, when a later call's preview may already be the streaming one, and
+          // the consumer still holds the named call's finished preview.
+          emitEditPreviewEvent(chatId, { kind: "clear", toolCallId: event.toolCallId });
+          break;
+        }
       }
 
       if (isProvisionalChatStateEmpty(provisional)) {
@@ -5141,9 +5736,10 @@ function ChatInterface({
           forceUpdate();
         }
       } catch (err) {
-        console.error("Failed to subscribe to chats:", err);
-        reportIssue('chat.subscription-load', err)
-        toasts.add({ title: translateRef.current('messages.loadConversationsFailed'), variant: "error" });
+        if (!logRpcFailure("Failed to subscribe to chats:", err)) {
+          reportIssue('chat.subscription-load', err)
+          toasts.add({ title: "Unable to load conversations", variant: "error" });
+        }
       }
     };
 
@@ -5169,6 +5765,47 @@ function ChatInterface({
   useActionEntries(overseer, (record) => {
     if (applyActionLogUpdateToCachedMessages(record)) scheduleUpdate();
   });
+  // On a resumed reconnect the subscription replays the gap, so the entries above cover cached
+  // cards. Otherwise (cold open, or the prior session never settled) re-fetch cached action
+  // cards whose log can still change: blank or pending cards (a resolution may have landed
+  // while we were away), and bindHook cards, which stay mutable after resolution (`enabled`
+  // toggles). Runs after useActionEntries, whose effect creates the store and its resumed flag.
+  useEffect(() => {
+    if (actionLogResumed(overseer)) return;
+    let cancelled = false;
+    const targets = [...cacheRef.current.actionMessages.values()].flatMap((locations) => {
+      const location = locations.values().next().value;
+      const msg = location && getCachedActionMessage(location)?.msg;
+      return msg && (!msg.actionLog || msg.actionLog.state === "pending" ||
+          msg.actionLog.type === "bindHook") ? [location] : [];
+    });
+
+    const refresh = async (location: { chatId: number; sequence: number }) => {
+      try {
+        const fetched = await overseer.getChatMessage(location.chatId, location.sequence);
+        if (cancelled || fetched?.type !== "action" || !fetched.actionLog) return;
+        // Resolution is monotonic: never regress a card another channel already resolved.
+        const current = getCachedActionMessage(location)?.msg;
+        if (fetched.actionLog.state === "pending" &&
+            current?.actionLog && current.actionLog.state !== "pending") return;
+        if (applyActionLogUpdateToCachedMessages(fetched.actionLog)) scheduleUpdate();
+      } catch (err) {
+        console.error("Failed to refresh action card:", err);
+      }
+    };
+
+    // A few at a time: a large cache refreshing all at once would flood the workspace DO.
+    let next = 0;
+    for (let i = Math.min(4, targets.length); i > 0; i--) {
+      void (async () => {
+        while (next < targets.length) {
+          if (cancelled) return;
+          await refresh(targets[next++]);
+        }
+      })();
+    }
+    return () => { cancelled = true; };
+  }, [overseer]);
 
   // Reset per-chat UI state when selectedChatId changes
   useEffect(() => {
@@ -5254,7 +5891,7 @@ function ChatInterface({
       forceUpdate();
     } catch (err) {
       console.error("Failed to load earlier messages:", err);
-      toasts.add({ title: translateRef.current('messages.loadEarlierFailed'), variant: "error" });
+      toasts.add({ title: "Failed to load earlier messages", variant: "error" });
     } finally {
       setIsLoadingEarlier(false);
     }
@@ -5294,8 +5931,9 @@ function ChatInterface({
         );
       }
     } catch (err) {
-      console.error("Failed to send message:", err);
-      toasts.add({ title: translateRef.current('messages.sendFailed'), variant: "error" });
+      if (!logRpcFailure("Failed to send message:", err, { reportSite: "chat.send" })) {
+        toasts.add({ title: "Failed to send message", variant: "error" });
+      }
       throw err;
     }
   };
@@ -5316,8 +5954,9 @@ function ChatInterface({
           message, model, capsules, attachments, formats);
       onNavigateToChatRef.current(newChatId);
     } catch (err) {
-      console.error("Failed to create new chat:", err);
-      toasts.add({ title: translateRef.current('messages.startFailed'), variant: "error" });
+      if (!logRpcFailure("Failed to create new chat:", err, { reportSite: "chat.new" })) {
+        toasts.add({ title: "Failed to start conversation", variant: "error" });
+      }
       throw err;
     }
   };
@@ -5336,7 +5975,7 @@ function ChatInterface({
       await overseer.stopAgent(selectedChatId);
     } catch (err) {
       console.error("Failed to stop agent:", err);
-      toasts.add({ title: translateRef.current('messages.stopFailed'), variant: "error" });
+      toasts.add({ title: "Failed to stop agent", variant: "error" });
     }
   };
 
@@ -5360,10 +5999,10 @@ function ChatInterface({
       }
 
       setIsEditingTitle(false);
-      toasts.add({ title: translateRef.current('messages.titleUpdated'), variant: "success" });
+      toasts.add({ title: "Chat title updated successfully", variant: "success" });
     } catch (err) {
       console.error("Failed to update chat title:", err);
-      toasts.add({ title: translateRef.current('messages.titleUpdateFailed'), variant: "error" });
+      toasts.add({ title: "Failed to update chat title", variant: "error" });
     }
   };
 
@@ -5387,10 +6026,10 @@ function ChatInterface({
     setIsDeleting(true);
     try {
       await overseer.deleteChat(deleteTarget.id);
-      toasts.add({ title: translateRef.current('messages.deleted'), variant: "success" });
+      toasts.add({ title: "Chat deleted successfully", variant: "success" });
     } catch (err) {
       console.error("Failed to delete chat:", err);
-      toasts.add({ title: translateRef.current('messages.deleteFailed'), variant: "error" });
+      toasts.add({ title: "Failed to delete chat", variant: "error" });
     }
     setIsDeleting(false);
     setDeleteTarget(null);
@@ -5429,26 +6068,63 @@ function ChatInterface({
         bumpChatListVersion();
         forceUpdate();
       }
-      toasts.add({ title: translateRef.current('messages.titleUpdated'), variant: "success" });
+      toasts.add({ title: "Chat title updated successfully", variant: "success" });
     } catch (err) {
       console.error("Failed to update chat title:", err);
-      toasts.add({ title: translateRef.current('messages.titleUpdateFailed'), variant: "error" });
+      toasts.add({ title: "Failed to update chat title", variant: "error" });
     }
   };
 
-  // Handle merging changes up to a specific sequence number
-  const handleMergeChanges = async (
-    mergeThrough: number | null,
-    options?: { includeDraft?: boolean },
-  ) => {
+  // Handle accepting the chat's proposed changes. A merge always takes everything the chat
+  // proposes -- live drafts are swept in and there is no partial accept (see
+  // Overseer.mergeChanges()). Accepting is only ever a fast-forward; a "stale" outcome (mainline
+  // advanced past the chat's pins) is expected control flow that opens the update-from-mainline
+  // dialog rather than an error.
+  const handleMergeChanges = async () => {
     if (selectedChatId === null) return;
 
     try {
-      await overseer.mergeChanges(selectedChatId, mergeThrough, options);
-      toasts.add({ title: translateRef.current('messages.changesAccepted'), variant: "success" });
+      const result = await overseer.mergeChanges(selectedChatId);
+      if (result.outcome === "stale") {
+        setStaleAcceptChatId(selectedChatId);
+        return;
+      }
+      toasts.add({ title: "Changes accepted", variant: "success" });
     } catch (err) {
       console.error("Failed to accept changes:", err);
-      toasts.add({ title: translateRef.current('messages.acceptChangesFailed'), variant: "error" });
+      toasts.add({ title: "Failed to accept changes", variant: "error" });
+    }
+  };
+
+  // Merge mainline commits that landed after this chat's pins into the chat's uncommitted state
+  // (see Overseer.updateChatFromMainline()). Offered when an accept comes back stale. Conflicts
+  // are left inline as 3-way markers for the user (or their agent) to resolve; once the chat is
+  // clean, accepting again is a plain fast-forward.
+  const handleUpdateFromMainline = async () => {
+    if (staleAcceptChatId === null) return;
+    const chatId = staleAcceptChatId;
+    setIsUpdatingFromMainline(true);
+    try {
+      const { conflictPaths } = await overseer.updateChatFromMainline(chatId);
+      setStaleAcceptChatId(null);
+      if (conflictPaths.length > 0) {
+        toasts.add({
+          title: `Updated this draft with the gadget's latest changes. ` +
+            `${conflictPaths.length} ${conflictPaths.length === 1 ? "file has" : "files have"} ` +
+            `conflicts marked in the code -- resolve them (or ask the agent to), then accept again.`,
+          variant: "warning",
+        });
+      } else {
+        toasts.add({
+          title: "Updated this draft with the gadget's latest changes. Review and accept again.",
+          variant: "success",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to update from mainline:", err);
+      toasts.add({ title: "Failed to bring in the latest changes", variant: "error" });
+    } finally {
+      setIsUpdatingFromMainline(false);
     }
   };
 
@@ -5457,10 +6133,10 @@ function ChatInterface({
 
     try {
       await overseer.finalizeChatDraft(selectedChatId);
-      toasts.add({ title: translateRef.current('messages.changesSaved'), variant: "success" });
+      toasts.add({ title: "Changes saved", variant: "success" });
     } catch (err) {
       console.error("Failed to save changes:", err);
-      toasts.add({ title: translateRef.current('messages.saveChangesFailed'), variant: "error" });
+      toasts.add({ title: "Failed to save changes", variant: "error" });
     }
   };
 
@@ -5468,13 +6144,13 @@ function ChatInterface({
     if (selectedChatId === null) return;
 
     try {
+      // The destructive generation bump this causes prunes the buffered rows when its
+      // metadata arrives (see the metadata handler).
       await overseer.discardChatDraftChanges(selectedChatId);
-      draftRef.current.delete(selectedChatId);
-      forceUpdate();
-      toasts.add({ title: translateRef.current('messages.changesDiscarded'), variant: "success" });
+      toasts.add({ title: "Changes discarded", variant: "success" });
     } catch (err) {
       console.error("Failed to discard changes:", err);
-      toasts.add({ title: translateRef.current('messages.discardChangesFailed'), variant: "error" });
+      toasts.add({ title: "Failed to discard changes", variant: "error" });
     }
   };
 
@@ -5484,21 +6160,22 @@ function ChatInterface({
     const target = discardChangesTarget;
     setDiscardingChangesChatIds((chatIds) => new Set(chatIds).add(target.chatId));
     try {
-      // Rewind durable checkpoints first. If discarding the live editor draft then fails, the user
-      // still retains those edits rather than losing both layers after a partial operation.
+      // One call covers everything: live change rows are strictly newer than every materialized
+      // message, so revertChanges(0) erases them along with the recorded batches (and a
+      // rows-only revert degenerates to a draft discard server-side).
       await overseer.revertChanges(target.chatId, 0);
-      if ((draftRef.current.get(target.chatId)?.entries.length ?? 0) > 0) {
-        await overseer.discardChatDraftChanges(target.chatId);
-        draftRef.current.delete(target.chatId);
-        forceUpdate();
-      }
       setDiscardChangesTarget((current) =>
         current?.chatId === target.chatId ? null : current,
       );
-      toasts.add({ title: translateRef.current('messages.pendingChangesDiscarded'), variant: "success" });
+      toasts.add({ title: "Pending changes discarded", variant: "success" });
     } catch (err) {
       console.error("Failed to discard pending changes:", err);
-      toasts.add({ title: translateRef.current('messages.discardPendingFailed'), variant: "error" });
+      // See handleRevertChanges: the server's refusals are instructive, so surface them.
+      toasts.add({
+        title: err instanceof Error && err.message
+          ? err.message : "Failed to discard pending changes",
+        variant: "error",
+      });
     } finally {
       setDiscardingChangesChatIds((chatIds) => {
         const next = new Set(chatIds);
@@ -5508,21 +6185,29 @@ function ChatInterface({
     }
   };
 
+  // Resolves an actionMessages location to the cached action message it points at (with its
+  // containing message array, for copy-on-write patches). Undefined if the cache no longer holds
+  // an action message there.
+  const getCachedActionMessage = (location: { chatId: number; sequence: number }) => {
+    const messages = cacheRef.current.messages.get(location.chatId);
+    const msg = messages?.[location.sequence];
+    return msg?.type === "action" ? { messages: messages!, msg } : undefined;
+  };
+
   const applyActionLogUpdateToCachedMessages = (record: ActionLogEntry): boolean => {
     let changed = false;
     const locations = cacheRef.current.actionMessages.get(record.id);
     if (!locations) return false;
 
     for (const [key, location] of locations) {
-      const messages = cacheRef.current.messages.get(location.chatId);
-      const msg = messages?.[location.sequence];
-      if (msg?.type !== "action" || msg.actionId !== record.id) {
+      const cached = getCachedActionMessage(location);
+      if (!cached || cached.msg.actionId !== record.id) {
         locations.delete(key);
         continue;
       }
 
-      const nextMessages = [...messages!];
-      nextMessages[location.sequence] = { ...msg, actionLog: record };
+      const nextMessages = [...cached.messages];
+      nextMessages[location.sequence] = { ...cached.msg, actionLog: record };
       cacheRef.current.messages.set(location.chatId, nextMessages);
       changed = true;
     }
@@ -5537,17 +6222,16 @@ function ChatInterface({
     if (!locations) return false;
 
     for (const [key, location] of locations) {
-      const messages = cacheRef.current.messages.get(location.chatId);
-      const msg = messages?.[location.sequence];
-      if (msg?.type !== "action" || msg.actionId !== actionId || !msg.actionLog) {
+      const cached = getCachedActionMessage(location);
+      if (!cached || cached.msg.actionId !== actionId || !cached.msg.actionLog) {
         locations.delete(key);
         continue;
       }
 
-      const nextMessages = [...messages!];
+      const nextMessages = [...cached.messages];
       nextMessages[location.sequence] = {
-        ...msg,
-        actionLog: { ...msg.actionLog, state, appliedAt: new Date() },
+        ...cached.msg,
+        actionLog: { ...cached.msg.actionLog, state, appliedAt: new Date() },
       };
       cacheRef.current.messages.set(location.chatId, nextMessages);
       changed = true;
@@ -5563,17 +6247,16 @@ function ChatInterface({
     if (!locations) return false;
 
     for (const [key, location] of locations) {
-      const messages = cacheRef.current.messages.get(location.chatId);
-      const msg = messages?.[location.sequence];
-      if (msg?.type !== "action" || msg.actionId !== actionId || msg.actionLog?.type !== "bindHook") {
+      const cached = getCachedActionMessage(location);
+      if (!cached || cached.msg.actionId !== actionId || cached.msg.actionLog?.type !== "bindHook") {
         locations.delete(key);
         continue;
       }
 
-      const nextMessages = [...messages!];
+      const nextMessages = [...cached.messages];
       nextMessages[location.sequence] = {
-        ...msg,
-        actionLog: { ...msg.actionLog, enabled },
+        ...cached.msg,
+        actionLog: { ...cached.msg.actionLog, enabled },
       };
       cacheRef.current.messages.set(location.chatId, nextMessages);
       changed = true;
@@ -5589,10 +6272,15 @@ function ChatInterface({
 
     try {
       await overseer.revertChanges(selectedChatId, revertFrom);
-      toasts.add({ title: translateRef.current('messages.draftRewound'), variant: "success" });
+      toasts.add({ title: "Draft rewound", variant: "success" });
     } catch (err) {
       console.error("Failed to rewind draft:", err);
-      toasts.add({ title: translateRef.current('messages.rewindFailed'), variant: "error" });
+      // The server's refusals here are instructive (e.g. a still-proposed update-from-mainline
+      // batch can't be reverted), so surface them rather than a generic failure.
+      toasts.add({
+        title: err instanceof Error && err.message ? err.message : "Failed to rewind draft",
+        variant: "error",
+      });
     }
   }, [overseer, selectedChatId, toasts]);
 
@@ -5624,10 +6312,7 @@ function ChatInterface({
       }
     } catch (err) {
       console.error("Failed to toggle hook:", err);
-      toasts.add({
-        title: translateRef.current(enabled ? 'messages.enableHookFailed' : 'messages.disableHookFailed'),
-        variant: "error",
-      });
+      toasts.add({ title: `Failed to ${enabled ? "enable" : "disable"} hook`, variant: "error" });
       // Revert the optimistic update.
       if (applyOptimisticHookEnabled(actionId, !enabled)) forceUpdate();
     } finally {
@@ -5668,7 +6353,7 @@ function ChatInterface({
       setConnectionAccept(null);
     } catch (err) {
       console.error("Failed to finalize connection:", err);
-      toasts.add({ title: translateRef.current('messages.addConnectionFailed'), variant: "error" });
+      toasts.add({ title: "Failed to add connection", variant: "error" });
     } finally {
       gk[Symbol.dispose]();
       setProcessingConnections((prev) => {
@@ -5689,7 +6374,7 @@ function ChatInterface({
       }
     } catch (err) {
       console.error("Failed to deny connection:", err);
-      toasts.add({ title: translateRef.current('messages.denyConnectionFailed'), variant: "error" });
+      toasts.add({ title: "Failed to deny connection", variant: "error" });
     } finally {
       setProcessingConnections((prev) => {
         const next = new Set(prev);
@@ -5769,14 +6454,14 @@ function ChatInterface({
       await overseer.retryAgent(selectedChatId, selectedModel);
     } catch (err) {
       console.error("Failed to retry agent:", err);
-      toasts.add({ title: translateRef.current('messages.retryAgentFailed'), variant: "error" });
+      toasts.add({ title: "Failed to retry agent", variant: "error" });
     }
   };
 
   const handleCopyMessage = useCallback(async (message: string) => {
     const ok = await copyToClipboard(message);
     toasts.add({
-        title: translateRef.current(ok ? 'messages.copied' : 'messages.copyFailed'),
+      title: ok ? "Copied message" : "Unable to copy message",
       variant: ok ? "success" : "error",
     });
   }, [toasts]);
@@ -5828,6 +6513,14 @@ function ChatInterface({
     }
     return latest;
   }, [completedAgentTurnMessageSeqs]);
+
+  // The current epoch's opening sequence (see ChatCodeBase.epoch), zero when the epoch spans the
+  // whole chat. A *pending* changes message before it exists only in chats converted from
+  // pre-git storage -- its content rides the conversion boundary's collapsed change, and the
+  // server refuses to revert it individually -- so no per-message discard affordance is offered
+  // below the epoch. (In merge-opened epochs every pre-epoch change is already merged, so the
+  // cutoff changes nothing there.)
+  const chatEpoch = currentChatMetadata?.codeBase?.epoch ?? 0;
 
   const pendingChangeByTurnItemSeq = useMemo(() => {
     const out = new Map<number, PendingTurnChanges>();
@@ -5885,6 +6578,7 @@ function ChatInterface({
       if (
         m.type === "changes" &&
         m.author.type !== "user" &&
+        m.sequence >= chatEpoch &&
         (messageStates.changeStatus.get(m.sequence) ?? "pending") === "pending"
       ) {
         const createdTitles = (m.createdGadgets ?? []).map((g) => g.title);
@@ -5900,7 +6594,7 @@ function ChatInterface({
     }
 
     return out;
-  }, [currentMessages, messageStates]);
+  }, [currentMessages, messageStates, chatEpoch]);
 
   // Accepted creations remain in the transcript; reverted ones disappear.
   const createdGadgetsByTurnItemSeq = useMemo(() => {
@@ -5984,11 +6678,7 @@ function ChatInterface({
     const isDenied = msg.state === "denied";
     const isProc = processingConnections.has(msg.requestId);
 
-    const stateLabel = isAccepted
-      ? translate('actions.connected')
-      : isDenied
-        ? translate('actions.denied')
-        : null;
+    const stateLabel = isAccepted ? "Connected" : isDenied ? "Denied" : null;
     const stateLabelCls = isDenied ? "text-kumo-danger" : "text-kumo-success";
     const scope = msg.resourceTitle ?? msg.resourceUrl;
 
@@ -6004,7 +6694,7 @@ function ChatInterface({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span className="font-medium text-kumo-default">
-                  {translate('actions.connectVendor', { vendor: msg.vendorName })}
+                  Connect {msg.vendorName}
                 </span>
                 {scope && (
                   <span className="rounded-full bg-kumo-tint px-2 py-0.5 text-[11px] leading-4 text-kumo-subtle">
@@ -6031,7 +6721,7 @@ function ChatInterface({
                   disabled={isProc}
                   className="cursor-pointer rounded-md px-2 py-1 font-medium text-kumo-inactive transition-colors duration-150 ease-out hover:text-kumo-danger focus-visible:text-kumo-danger focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {translate('actions.deny')}
+                  Deny
                 </button>
                 <button
                   type="button"
@@ -6039,7 +6729,7 @@ function ChatInterface({
                   disabled={isProc}
                   className="cursor-pointer rounded-md bg-kumo-brand px-3 py-1 font-medium text-white transition-[opacity,transform] duration-150 ease-out hover:opacity-90 focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {translate('actions.setUp')}
+                  Set up
                 </button>
               </div>
             )}
@@ -6062,10 +6752,10 @@ function ChatInterface({
     if (log.type === "bindHook") {
       const isDeleted = log.hookId === undefined;
       const stateLabel = isDeleted
-        ? translate('actions.deleted')
+        ? "Deleted"
         : log.enabled
-          ? translate('actions.enabled')
-          : translate('actions.disabled');
+          ? "Enabled"
+          : "Disabled";
       const stateLabelCls = isDeleted
         ? "text-kumo-inactive"
         : log.enabled
@@ -6083,7 +6773,7 @@ function ChatInterface({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="font-medium text-kumo-default">
-                    {translate('actions.hook', { title: log.description.title })}
+                    Hook: {log.description.title}
                   </span>
                   <span className={`text-[12px] font-medium ${stateLabelCls}`}>
                     {stateLabel}
@@ -6180,9 +6870,9 @@ function ChatInterface({
     const showDescription = isPending || open;
     const metadata = log.resourceTitle;
     const stateLabel = isApproved
-      ? translate('actions.approved')
+      ? "Approved"
       : isRejected
-        ? translate('actions.denied')
+        ? "Denied"
         : null;
     const stateLabelCls = isRejected
       ? "text-kumo-danger"
@@ -6207,7 +6897,7 @@ function ChatInterface({
       <>
         {autoApproveTarget &&
           !isTagAutoApproved(autoApproveTarget.gatekeeperId, autoApproveTarget.actionKind.tag) && (
-          <Tooltip content={translate('actions.alwaysApproveDescription')} asChild>
+          <Tooltip content="Always approve this type of action on this connection, without future prompts." asChild>
             <span className="flex">
               <AlwaysApproveButton
                 onClick={() => setAutoApproveConfirm(autoApproveTarget)}
@@ -6353,10 +7043,10 @@ function ChatInterface({
               <button
                 type="button"
                 className="group flex h-8 -ml-1.5 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-kumo-tint/60 focus-visible:bg-kumo-tint/60 focus-visible:outline-none data-[popup-open]:bg-kumo-tint/60"
-                aria-label={translate('list.filter')}
+                aria-label="Filter conversations"
               >
                 <span className="text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                  {chatListScopeLabels[chatListScope]}
+                  {CHAT_LIST_SCOPE_LABELS[chatListScope]}
                 </span>
                 <CaretDown
                   size={10}
@@ -6378,7 +7068,7 @@ function ChatInterface({
                   <span className="mr-2 inline-flex h-3 w-3 items-center justify-center text-kumo-default">
                     {active ? <Check size={11} weight="bold" /> : null}
                   </span>
-                  <span className="flex-1">{chatListScopeLabels[scope.value]}</span>
+                  <span className="flex-1">{CHAT_LIST_SCOPE_LABELS[scope.value]}</span>
                   <span className="ml-3 font-mono text-[11px] text-kumo-inactive">
                     {scope.count}
                   </span>
@@ -6396,7 +7086,7 @@ function ChatInterface({
           </div>
         ) : chatList.length === 0 ? (
           <p className="text-sm text-kumo-inactive text-center py-8">
-            {translate('list.empty')}
+            No conversations yet
           </p>
         ) : (
           <div className="flex flex-col gap-1">
@@ -6405,14 +7095,14 @@ function ChatInterface({
               // the all-empty case is handled by the outer chatList.length check.
               <div className="py-8 text-center">
                 <p className="text-[13px] leading-[18px] text-kumo-inactive">
-                  {chatListScope === "agents" ? translate('list.noAgentConversations') : translate('list.noPeopleConversations')}
+                  No conversations started by {chatListScope === "agents" ? "agents" : "people"} yet
                 </p>
                 <button
                   type="button"
                   onClick={() => setChatListScope("all")}
                   className="mt-2 cursor-pointer rounded-md px-2 py-1 text-[12px] leading-4 font-medium text-kumo-subtle transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none"
                 >
-                  {translate('list.showAll')}
+                  Show all
                 </button>
               </div>
             ) : (
@@ -6420,7 +7110,7 @@ function ChatInterface({
                 {bucketedVisibleChats.map(({ bucket, items }) => (
                   <section key={bucket} className="flex flex-col gap-0.5">
                     <p className="mb-1 px-1 text-[11px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
-                      {chatTimeBucketLabels[bucket]}
+                      {CHAT_TIME_BUCKET_LABELS[bucket]}
                     </p>
                     {items.map((chat) => (
               <div key={chat.id} className="relative">
@@ -6446,6 +7136,7 @@ function ChatInterface({
                             onChange={(e) => setRenamingInput(e.target.value)}
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => {
+                              if (isImeComposing(e)) return;
                               if (e.key === "Enter") {
                                 e.preventDefault();
                                 handleSaveListRename(chat.id);
@@ -6459,7 +7150,7 @@ function ChatInterface({
                             spellCheck={false}
                             autoCapitalize="off"
                             autoCorrect="off"
-                            aria-label={translate('list.renameAria', { title: chat.title })}
+                            aria-label={`Rename ${chat.title}`}
                             className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive"
                           />
                         ) : (
@@ -6470,13 +7161,13 @@ function ChatInterface({
                         {!isRenaming && chat.activeAgent ? (
                           <span className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1 text-[11px] leading-4 font-medium text-kumo-brand">
                             <span className="h-1.5 w-1.5 rounded-full bg-kumo-brand animate-pulse" />
-                            {translate('list.working')}
+                            Working
                           </span>
                         ) : !isRenaming && chat.hasProposedChanges ? (
-                          <Tooltip content={translate('list.pendingChangesTitle')} asChild>
+                          <Tooltip content="This conversation has pending changes" asChild>
                             <span className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1 text-[11px] leading-4 font-medium text-kumo-warning">
                               <span className="h-1.5 w-1.5 rounded-full bg-kumo-warning" />
-                              {translate('list.pendingChanges')}
+                              Pending changes
                             </span>
                           </Tooltip>
                         ) : null}
@@ -6484,7 +7175,7 @@ function ChatInterface({
                       <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-kumo-inactive">
                         {chat.spawnerName && (
                           <>
-                            <span className="truncate">{translate('list.agent', { name: chat.spawnerName })}</span>
+                            <span className="truncate">Agent · {chat.spawnerName}</span>
                             <span className="flex-shrink-0" aria-hidden="true">·</span>
                           </>
                         )}
@@ -6495,7 +7186,7 @@ function ChatInterface({
                           <>
                             <span className="flex-shrink-0" aria-hidden="true">·</span>
                             <span className="flex-shrink-0 font-mono">
-                              {formatNumber(chat.totalCost, { style: 'currency', currency: 'USD', minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+                              ${chat.totalCost.toFixed(4)}
                             </span>
                           </>
                         )}
@@ -6506,9 +7197,9 @@ function ChatInterface({
                         <DropdownMenu.Trigger
                           render={
                             <WorkshopIconButton
-                              aria-label={translate('list.actionsAria', { title: chat.title })}
+                              aria-label={`Actions for ${chat.title}`}
                               onClick={(e) => e.stopPropagation()}
-                              className="!h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-0 focus:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
+                              className="!h-9 !w-9 flex-shrink-0 text-kumo-inactive opacity-100 focus:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100 sm:!h-7 sm:!w-7 sm:opacity-0"
                             >
                               <DotsThreeVertical size={14} />
                             </WorkshopIconButton>
@@ -6523,7 +7214,7 @@ function ChatInterface({
                             onClick={() => startListRename(chat.id, chat.title)}
                             className="!h-auto rounded-md !px-2.5 !py-1.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-default transition-colors data-highlighted:bg-kumo-tint"
                           >
-                            {translate('list.rename')}
+                            Rename
                           </DropdownMenu.Item>
                           <DropdownMenu.Item
                             icon={<Trash size={12} className="mr-2" />}
@@ -6531,7 +7222,7 @@ function ChatInterface({
                             onClick={() => handleDeleteChat(chat.id, chat.title)}
                             className="!h-auto rounded-md !px-2.5 !py-1.5 text-[12px] leading-4 tracking-[-0.2px] transition-colors data-highlighted:bg-kumo-danger-tint"
                           >
-                            {translate('list.delete')}
+                            Delete
                           </DropdownMenu.Item>
                         </DropdownMenu.Content>
                       </DropdownMenu>
@@ -6554,7 +7245,9 @@ function ChatInterface({
           extra p-4 (which would shrink the input vs. the in-chat composer). */}
       <div className="flex-shrink-0 border-t border-kumo-line">
         <div className={useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}>
+          {/* Attachments and pending resource operations belong to this workspace's composer. */}
           <ChatInput
+            key={workspaceId}
             createCapsuleGatekeeper={(accountId, url) =>
               overseer.newGatekeeper(accountId, url)
             }
@@ -6568,6 +7261,9 @@ function ChatInterface({
             onToggleThinkingTraces={toggleShowThinkingTraces}
             minRows={2}
             newChat
+            draftStorageKey={currentUser && workspaceId
+              ? composerDraftStorageKey(currentUser.id, `workspace:${workspaceId}:new`)
+              : undefined}
           />
           {/* Reserve the same height as the token/cost row to avoid layout shift. */}
           <div aria-hidden className="min-h-[1rem]" />
@@ -6607,7 +7303,7 @@ function ChatInterface({
       {!sidebarMode && selectedChatId === null ? (
         chatListPanel
       ) : selectedChatId !== null ? (
-        <div className="flex-1 flex flex-col overflow-auto">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {/* Tab bar — in sidebar mode, show Chat / Connections tabs */}
           {sidebarMode && (
             <div className="flex h-12 flex-shrink-0 items-center gap-5 border-b border-kumo-line px-4">
@@ -6620,7 +7316,7 @@ function ChatInterface({
                     : "font-normal text-kumo-subtle hover:text-kumo-default"
                 }`}
               >
-                {translate('tabs.chat')}
+                Chat
               </button>
               <button
                 type="button"
@@ -6631,7 +7327,7 @@ function ChatInterface({
                     : "font-normal text-kumo-subtle hover:text-kumo-default"
                 }`}
               >
-                {translate('tabs.connections')}
+                Connections
               </button>
             </div>
           )}
@@ -6652,8 +7348,8 @@ function ChatInterface({
                   <WorkshopIconButton
                     onClick={() => onNavigateToChat(null)}
                     className="!h-8 !w-8 flex-shrink-0"
-                    title={translate('header.back')}
-                    aria-label={translate('header.back')}
+                    title="Back to conversations"
+                    aria-label="Back to conversations"
                   >
                     <CaretLeft size={14} />
                   </WorkshopIconButton>
@@ -6665,6 +7361,7 @@ function ChatInterface({
                         value={titleInput}
                         onChange={(e) => setTitleInput(e.target.value)}
                         onKeyDown={(e) => {
+                          if (isImeComposing(e)) return;
                           if (e.key === "Enter") handleSaveChatTitle();
                           if (e.key === "Escape") handleCancelTitleEdit();
                         }}
@@ -6675,14 +7372,14 @@ function ChatInterface({
                         onClick={handleSaveChatTitle}
                         disabled={!titleInput.trim()}
                         className="!h-8 !w-8 hover:text-kumo-brand disabled:opacity-30"
-                        aria-label={translate('header.saveTitle')}
+                        aria-label="Save chat title"
                       >
                         <Check size={13} />
                       </WorkshopIconButton>
                       <WorkshopIconButton
                         onClick={handleCancelTitleEdit}
                         className="!h-8 !w-8"
-                        aria-label={translate('header.cancelTitle')}
+                        aria-label="Cancel title edit"
                       >
                         <X size={13} />
                       </WorkshopIconButton>
@@ -6690,13 +7387,13 @@ function ChatInterface({
                   ) : (
                     <>
                       <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                        {currentChatMetadata?.title || translate('header.fallbackTitle')}
+                        {currentChatMetadata?.title || "Chat"}
                       </span>
                       <WorkshopIconButton
                         onClick={() => setIsEditingTitle(true)}
                         className="!h-8 !w-8 flex-shrink-0 text-kumo-inactive hover:text-kumo-subtle"
-                        title={translate('header.rename')}
-                        aria-label={translate('header.rename')}
+                        title="Rename chat"
+                        aria-label="Rename chat"
                       >
                         <Pencil size={11} />
                       </WorkshopIconButton>
@@ -6707,8 +7404,8 @@ function ChatInterface({
                     onClick={() => handleDeleteChat()}
                     danger
                     className="!h-8 !w-8 flex-shrink-0 text-kumo-inactive"
-                    title={translate('header.delete')}
-                    aria-label={translate('header.delete')}
+                    title="Delete chat"
+                    aria-label="Delete chat"
                   >
                     <Trash size={14} />
                   </WorkshopIconButton>
@@ -6719,7 +7416,7 @@ function ChatInterface({
               <div
                 ref={messagesContainerRef}
                 onScroll={handleMessagesScroll}
-                className="flex-1 overflow-y-auto chat-panel"
+                className="chat-panel min-h-0 flex-1 overscroll-contain overflow-y-auto"
               >
                 {isLoading ? (
                   <div className="flex items-center justify-center py-10">
@@ -6727,11 +7424,11 @@ function ChatInterface({
                   </div>
                 ) : (
                   <div
-                    className={`flex flex-col px-6 pt-8 ${pendingConsoleLogCount > 0 ? "pb-16" : "pb-8"} ${useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}`}
+                    className={`flex flex-col px-3 pt-5 sm:px-6 sm:pt-8 ${pendingConsoleLogCount > 0 ? "pb-16" : "pb-8"} ${useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}`}
                   >
                     {isLoadingEarlier && (
                       <div className="mx-auto mb-6 text-[12px] leading-4 font-medium text-kumo-inactive">
-                        {translate('header.loadingEarlier')}
+                        Loading earlier messages…
                       </div>
                     )}
 
@@ -6746,7 +7443,7 @@ function ChatInterface({
                             <div className="flex items-center gap-3" role="separator">
                               <span className="h-px flex-1 bg-kumo-line/60" aria-hidden="true" />
                               <span className="flex-shrink-0 text-[11px] leading-4 font-medium tracking-[0.6px] text-kumo-inactive uppercase">
-                                {translate('compaction.keptFromHere')}
+                                Kept in full from here
                               </span>
                               <span className="h-px flex-1 bg-kumo-line/60" aria-hidden="true" />
                             </div>
@@ -6763,10 +7460,10 @@ function ChatInterface({
                               // Says what the agent traded away and what it still has, since the
                               // marker sits at the request rather than at the cut it describes.
                               <p className="mb-3 text-[12px] leading-[17px] text-kumo-subtle">
-                                {translate('compaction.summaryDescription')}{' '}
+                                The agent reads this in place of everything earlier in the chat.{" "}
                                 {kept === 0
-                                  ? translate('compaction.nothingKept')
-                                  : translate('compaction.keptRows', { count: kept })}
+                                  ? "Nothing after it was kept."
+                                  : `The ${kept === 1 ? "message" : `${kept} messages`} after the cut ${kept === 1 ? "was" : "were"} kept in full.`}
                               </p>
                             )}
                             <div className={`min-w-0 text-[13px] leading-[19px] ${styles.markdownContent}`}>
@@ -6791,7 +7488,7 @@ function ChatInterface({
                                   <Brain size={16} />
                                 </span>
                                 <span className="font-medium">
-                                  {translate('compaction.byUser', { name: entry.requestedBy.name })}
+                                  {entry.requestedBy.name} compacted the context
                                 </span>
                                 <CaretRight
                                   size={11}
@@ -6806,7 +7503,7 @@ function ChatInterface({
 
                         return (
                           <div key={entry.key} className={`${entryTopClass} mb-4 max-w-[860px]`}>
-                            <div className="flex items-center gap-3" role="separator" aria-label={translate('compaction.contextCompacted')}>
+                            <div className="flex items-center gap-3" role="separator" aria-label="Context compacted">
                               <span className="h-px flex-1 bg-kumo-line" aria-hidden="true" />
                               <button
                                 type="button"
@@ -6815,7 +7512,7 @@ function ChatInterface({
                                 className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] leading-4 font-medium tracking-[0.6px] text-kumo-inactive uppercase transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none"
                               >
                                 <Brain size={13} aria-hidden="true" />
-                                {translate('compaction.contextCompacted')}
+                                Context compacted
                                 <CaretRight
                                   size={11}
                                   weight="bold"
@@ -6837,7 +7534,7 @@ function ChatInterface({
                                 <Swap size={16} />
                               </span>
                               <span className="min-w-0 truncate">
-                                {translate('activity.switchedTo', { name: entry.author.name })}
+                                Switched to {entry.author.name}
                               </span>
                             </div>
                           </div>
@@ -6846,22 +7543,34 @@ function ChatInterface({
 
                       if (entry.type === "savedChanges") {
                         const isOwnChange = entry.message.author.id === currentUser?.id;
-                        const actor = isOwnChange ? translate('activity.you') : entry.message.author.name;
+                        const actor = isOwnChange ? "You" : entry.message.author.name;
                         // A user-authored creation is recorded as a "changes" message carrying
                         // createdGadgets over a no-op update, so label it as a creation rather
                         // than as saved edits.
                         const createdGadgets = entry.message.createdGadgets ?? [];
-                        const label = createdGadgets.length > 0
-                          ? translate('activity.createdGadgets', {
-                            actor,
-                            count: createdGadgets.length,
-                            titles: createdGadgets.map((g) => `“${g.title}”`).join(", "),
-                          })
-                          : translate('activity.savedEdits', { actor });
-                        const discardLabel = getSavedEditsDiscardLabel(
-                          entry.message.sequence === lastDurablePendingChange?.sequence,
-                          createdGadgets.map((g) => g.title),
-                        );
+                        // An update-from-mainline batch merged other chats' accepted work into
+                        // this draft (see Overseer.updateChatFromMainline()); label it as such,
+                        // including how many files still carry conflict markers.
+                        const mainlineMerge = entry.message.mainlineMerge;
+                        const conflictCount = mainlineMerge?.conflictPaths.length ?? 0;
+                        const label = mainlineMerge
+                          ? `${actor} brought the gadget's latest changes into this draft${
+                              conflictCount > 0
+                                ? ` — ${conflictCount} ${conflictCount === 1 ? "file has" : "files have"} conflicts marked in the code`
+                                : ""}`
+                          : createdGadgets.length > 0
+                          ? `${actor} created ${createdGadgets.length === 1 ? "gadget" : "gadgets"} ${
+                              createdGadgets.map((g) => `“${g.title}”`).join(", ")}`
+                          : `${actor} saved edits`;
+                        // A still-proposed mainline merge can't be reverted: it advanced the
+                        // chat's pins, and erasing it would let a later accept silently overwrite
+                        // the mainline content it brought in (the server refuses too).
+                        const discardLabel = mainlineMerge
+                          ? "This update can't be discarded: it brought in changes already accepted elsewhere. Edit the files instead."
+                          : getSavedEditsDiscardLabel(
+                              entry.message.sequence === lastDurablePendingChange?.sequence,
+                              createdGadgets.map((g) => g.title),
+                            );
                         return (
                           <div key={entry.key} className={`${entryTopClass} group/savedChanges max-w-[860px] py-1 text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle`}>
                             <div className="flex items-center gap-3 px-1.5 py-1">
@@ -6871,11 +7580,15 @@ function ChatInterface({
                               <span className="min-w-0 truncate font-medium">
                                 {label}
                               </span>
-                              <div className="flex flex-shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover/savedChanges:opacity-100 group-focus-within/savedChanges:opacity-100">
+                              <div className="flex flex-shrink-0 items-center gap-1 opacity-100 transition-opacity duration-150 ease-out sm:opacity-0 sm:group-hover/savedChanges:opacity-100 sm:group-focus-within/savedChanges:opacity-100">
+                                {/* Edits from before the current epoch (i.e. before the chat's
+                                    conversion to git-backed storage) can't be discarded
+                                    individually -- only the banner's discard-all covers them. */}
+                                {entry.message.sequence >= chatEpoch && (
                                 <Tooltip content={discardLabel} asChild>
                                   <button
                                     type="button"
-                                    disabled={isAgentActive}
+                                    disabled={isAgentActive || mainlineMerge !== undefined}
                                     onClick={() => handleRevertChanges(entry.message.sequence)}
                                     className="flex cursor-pointer items-center rounded-md p-1 text-kumo-inactive transition-[color,opacity,transform] duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40"
                                     aria-label={discardLabel}
@@ -6883,6 +7596,7 @@ function ChatInterface({
                                     <ArrowUUpLeft size={15} />
                                   </button>
                                 </Tooltip>
+                                )}
                                 <Tooltip content={formatFullTimestamp(entry.message.timestamp)} asChild>
                                   <span className="px-1 font-mono text-[11px] leading-4 text-kumo-inactive">
                                     {entry.message.timestamp.toLocaleTimeString([], {
@@ -6966,7 +7680,7 @@ function ChatInterface({
                                 />
                               </span>
                             </div>
-                            <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                            <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-100 transition-opacity duration-150 ease-out sm:opacity-0 sm:group-hover/message:opacity-100 sm:group-focus-within/message:opacity-100">
                               {!(hideOwnUserName && msg.author.id === currentUser?.id) && (
                                 <span className="font-medium">{msg.author.name}</span>
                               )}
@@ -7015,7 +7729,7 @@ function ChatInterface({
                                   </div>
                                 )}
                               </div>
-                              <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                              <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-100 transition-opacity duration-150 ease-out sm:opacity-0 sm:group-hover/message:opacity-100 sm:group-focus-within/message:opacity-100">
                                 {/* hideOwnUserName implies currentUser is non-null (see memo). */}
                                 {!(hideOwnUserName && msg.author.id === currentUser?.id) && (
                                   <span className="font-medium">{msg.author.name}</span>
@@ -7074,15 +7788,15 @@ function ChatInterface({
                                 <div className={`mt-0.5 -ml-1 flex items-center gap-1 transition-opacity duration-150 ease-out ${
                                   keepActionsVisible
                                     ? "opacity-100"
-                                    : "opacity-0 group-hover/agentMessage:opacity-100 group-focus-within/agentMessage:opacity-100"
+                                    : "opacity-100 sm:opacity-0 sm:group-hover/agentMessage:opacity-100 sm:group-focus-within/agentMessage:opacity-100"
                                 }`}>
                                   {hasMessageText && (
-                                    <Tooltip content={translate('activity.copyMessage')} asChild>
+                                    <Tooltip content="Copy message" asChild>
                                       <button
                                         type="button"
                                         onClick={() => handleCopyMessage(msg.message)}
                                         className="flex cursor-pointer items-center rounded-md p-1 text-kumo-inactive transition-[color,transform] duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.96]"
-                                        aria-label={translate('activity.copyMessage')}
+                                        aria-label="Copy message"
                                       >
                                         <Copy size={15} />
                                       </button>
@@ -7179,12 +7893,8 @@ function ChatInterface({
                                 <Tooltip
                                   content={
                                     isMerge
-                                      ? ts
-                                        ? translate('activity.acceptedDraftThrough', { time: formatFullTimestamp(ts) })
-                                        : translate('activity.acceptedDraft')
-                                      : ts
-                                        ? translate('activity.returnedBeforeAt', { time: formatTime(ts) })
-                                        : translate('activity.returnedBeforeEarlier')
+                                      ? `Accepted draft changes${ts ? ` through ${formatFullTimestamp(ts)}` : ""}.`
+                                      : `Returned to the gadget state before the prompt sent ${ts ? `at ${ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "earlier"}.`
                                   }
                                   asChild
                                 >
@@ -7193,9 +7903,10 @@ function ChatInterface({
                                       {isMerge ? <Check size={16} /> : <ArrowUUpLeft size={16} />}
                                     </span>
                                     <span className="font-medium">
+                                      {msg.author.name}{" "}
                                       {isMerge
-                                        ? translate('activity.acceptedBy', { name: msg.author.name })
-                                        : translate('activity.discardedBy', { name: msg.author.name })}
+                                        ? "accepted changes"
+                                        : "discarded changes"}
                                     </span>
                                   </span>
                                 </Tooltip>
@@ -7209,12 +7920,12 @@ function ChatInterface({
 
                         {msg.type === "useGadget" && (
                           <div className="max-w-[860px] text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-                            <Tooltip content={translate('activity.usedAt', { time: formatFullTimestamp(msg.timestamp) })} asChild>
+                            <Tooltip content={`Used the gadget at ${formatFullTimestamp(msg.timestamp)}`} asChild>
                               <span className="inline-flex items-center gap-3 px-1.5 py-1">
                                 <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center text-kumo-inactive" aria-hidden="true">
                                   <Plug size={16} />
                                 </span>
-                                <span>{translate('activity.usedGadget')}</span>
+                                <span>Used the gadget</span>
                               </span>
                             </Tooltip>
                           </div>
@@ -7243,7 +7954,7 @@ function ChatInterface({
                                         </span>
                                         <span className="flex min-w-0 flex-1 items-center gap-1">
                                           <span className="min-w-0 truncate">
-                                            <span className="font-medium text-kumo-danger">{translate('activity.errorPrefix')} </span>
+                                            <span className="font-medium text-kumo-danger">Error: </span>
                                             <span className="text-kumo-subtle">{msg.message}</span>
                                           </span>
                                           <CaretRight
@@ -7256,19 +7967,19 @@ function ChatInterface({
                                     </Tooltip>
                                   </button>
                                   {isLast && msg.code === "usage_limit" && (
-                                    <Tooltip content={translate('activity.addCreditsDescription')} asChild>
+                                    <Tooltip content="Add credits to continue." asChild>
                                       <button
                                         type="button"
                                         onClick={() => setUsageModalOpen(true)}
                                         className="flex flex-shrink-0 cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 text-[13px] leading-4 font-medium text-kumo-default transition-[color,opacity,transform] duration-150 ease-out hover:text-kumo-default-hover focus-visible:text-kumo-default-hover focus-visible:outline-none active:scale-[0.98]"
                                       >
                                         <Lightning size={12} weight="bold" />
-                                        {translate('activity.continue')}
+                                        Continue
                                       </button>
                                     </Tooltip>
                                   )}
                                   {isLast && msg.code !== "usage_limit" && (
-                                    <Tooltip content={translate('activity.retryDescription')} asChild>
+                                    <Tooltip content="Retry the last action." asChild>
                                       <button
                                         type="button"
                                         onClick={() => handleRetry()}
@@ -7276,7 +7987,7 @@ function ChatInterface({
                                         className="flex flex-shrink-0 cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 text-[13px] leading-4 font-medium text-kumo-default transition-[color,opacity,transform] duration-150 ease-out hover:text-kumo-default-hover focus-visible:text-kumo-default-hover focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                                       >
                                         <ArrowsClockwise size={12} weight="bold" />
-                                        {translate('activity.retry')}
+                                        Retry
                                       </button>
                                     </Tooltip>
                                   )}
@@ -7315,19 +8026,8 @@ function ChatInterface({
                       );
                     })}
 
-                    {currentDraftState && currentDraftState.entries.length > 0 && (() => {
-                      const latestAuthor = currentDraftState.latestAuthor;
-                      const isUserAuthored = latestAuthor?.type === "user";
-                      const title = isUserAuthored
-                        ? translate('draft.pending')
-                        : translate('draft.inProgress');
-                      const description = isUserAuthored
-                        ? translate('draft.yourEditsLive')
-                        : translate('draft.agentEditing', { name: latestAuthor?.name ?? translate('draft.agentFallback') });
-                      const lastDraftEntry =
-                        currentDraftState.entries[
-                          currentDraftState.entries.length - 1
-                        ];
+                    {currentRowBuffer && currentHasUserDraftRows && (() => {
+                      const lastEditedAt = currentRowBuffer.lastUserEditAt;
                       const lastEntry = displayEntries[displayEntries.length - 1] ?? null;
                       const draftTopClass = !lastEntry
                         ? ""
@@ -7343,35 +8043,32 @@ function ChatInterface({
                               <Pencil size={16} />
                             </span>
                             <Tooltip
-                              content={translate('draft.lastEdited', {
-                                description,
-                                time: formatFullTimestamp(lastDraftEntry.timestamp),
-                              })}
+                              content={`Your edits are still a live draft.${lastEditedAt !== null ? ` Last edited ${formatFullTimestamp(lastEditedAt)}` : ''}`}
                               asChild
                             >
                               <span className="font-medium text-kumo-subtle">
-                                {title}
+                                Draft changes pending
                               </span>
                             </Tooltip>
                             <div className="flex flex-wrap items-center gap-2 text-[13px] leading-4">
-                              <Tooltip content={translate('draft.discardDescription')} asChild>
+                              <Tooltip content="Throw away these draft edits." asChild>
                                 <button
                                   type="button"
                                   disabled={isAgentActive}
                                   onClick={handleDiscardDraftChanges}
                                   className="cursor-pointer rounded-md px-1 py-0.5 font-medium text-kumo-inactive transition-colors duration-150 ease-out hover:text-kumo-danger focus-visible:text-kumo-danger focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
                                 >
-                                  {translate('draft.discard')}
+                                  Discard
                                 </button>
                               </Tooltip>
-                              <Tooltip content={translate('draft.saveDescription')} asChild>
+                              <Tooltip content="Save these edits as a draft version. They won't affect the gadget until you accept changes." asChild>
                                 <button
                                   type="button"
                                   disabled={isAgentActive}
                                   onClick={handleFinalizeDraftChanges}
                                   className="cursor-pointer rounded-md px-1 py-0.5 font-medium text-kumo-default transition-[color,opacity,transform] duration-150 ease-out hover:text-kumo-default-hover focus-visible:text-kumo-default-hover focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                                 >
-                                  {translate('draft.save')}
+                                  Save draft
                                 </button>
                               </Tooltip>
                             </div>
@@ -7421,13 +8118,13 @@ function ChatInterface({
                         <div className={`group/agent min-w-0 w-full max-w-[860px] space-y-2 ${provisionalTopClass}`}>
                           {isCompacting && (
                             <div className={`inline-flex px-1.5 py-1 text-[14px] leading-5 tracking-[-0.25px] ${styles.thinkingShimmer}`}>
-                              {translate('compaction.compacting')}
+                              Compacting…
                             </div>
                           )}
 
                           {showThinking && (
                             <div className={`inline-flex px-1.5 py-1 text-[14px] leading-5 tracking-[-0.25px] ${styles.thinkingShimmer}`}>
-                              {translate('activity.thinking')}
+                              Thinking
                             </div>
                           )}
 
@@ -7487,7 +8184,7 @@ function ChatInterface({
                                         >
                                           {toolCall.code && (
                                             <>
-                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">{translate('tools.code')}</span>
+                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Code</span>
                                               <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
                                                 {toolCall.code}
                                               </pre>
@@ -7495,7 +8192,7 @@ function ChatInterface({
                                           )}
                                           {toolCall.output && (
                                             <>
-                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">{translate('tools.output')}</span>
+                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Output</span>
                                               <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
                                                 {toolCall.output}
                                               </pre>
@@ -7519,7 +8216,10 @@ function ChatInterface({
               {/* ── Bottom: input, update state, and cost ──────────────── */}
               <div className={`flex-shrink-0 bg-kumo-base ${sidebarMode ? "" : "border-t border-kumo-line"}`}>
                 <div className={useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}>
+                  {/* Remount all transient composer state when the conversation changes. */}
                   <ChatInput
+                    key={`${workspaceId}:${selectedChatId}`}
+                    chatKey={selectedChatId}
                     createCapsuleGatekeeper={(accountId, url) =>
                       overseer.newGatekeeper(accountId, url)
                     }
@@ -7537,32 +8237,26 @@ function ChatInterface({
                     onStop={handleStop}
                     showThinkingTraces={showThinkingTraces}
                     onToggleThinkingTraces={toggleShowThinkingTraces}
+                    draftStorageKey={currentUser && workspaceId && selectedChatId !== null
+                      ? composerDraftStorageKey(
+                          currentUser.id,
+                          `workspace:${workspaceId}:chat:${selectedChatId}`,
+                        )
+                      : undefined}
                     blockedReason={
                       hasPendingConnectionRequest
-                        ? translate('blocked.connectionRequest')
+                        ? "Set up or deny the connection request above to continue."
                         : hasPendingAwaitedAction
-                          ? translate('blocked.pendingAction')
+                          ? "Approve or reject the pending action above to continue."
                           : undefined
                     }
                     draftUpdateBanner={(() => {
                       if (!currentChatMetadata?.hasProposedChanges) return null;
 
-                      // Accept through the newest still-proposed batch, but never below the cut the
-                      // server seeds the compacted prefix at. That prefix is accepted as a unit, so
-                      // addressing anything under it drains nothing -- which is reachable both when
-                      // it only created gadgets (no Yjs bytes, hence no entry here) and when paging
-                      // backward leaves the newest loaded batch below the boundary. Discard-all uses
-                      // sequence zero because compacted batches retain their original, earlier
-                      // sequences; the synthetic prefix sequence is only meaningful when merging.
-                      const { activeChanges } = messageStates;
-                      const cuts = [
-                        ...(activeChanges.length > 0
-                          ? [activeChanges[activeChanges.length - 1].sequence] : []),
-                        ...(currentChatMetadata.compactedTo !== undefined
-                          ? [currentChatMetadata.compactedTo - 1] : []),
-                      ];
-                      if (cuts.length === 0) return null;
-                      const mergeThrough = Math.max(...cuts);
+                      // Accepting always merges everything the chat proposes (drafts swept in,
+                      // no partial accepts -- see Overseer.mergeChanges()), so the banner needs
+                      // no accept cut of its own. Discard-all still uses sequence zero, which
+                      // covers every batch including the compacted prefix's.
                       const isDiscardingChanges = discardingChangesChatIds.has(
                         currentChatMetadata.id,
                       );
@@ -7571,7 +8265,7 @@ function ChatInterface({
                         <div className="themed-surface-inset relative flex items-center gap-2 overflow-hidden rounded-t-[calc(1rem-1px)] border-b border-kumo-line bg-kumo-elevated px-3.5 py-2">
                           <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-kumo-brand/40 to-transparent" aria-hidden="true" />
                           <span className="min-w-0 flex-1 truncate text-[12px] font-medium leading-4 tracking-[-0.2px] text-kumo-default">
-                            {translate('changes.pending')}
+                            Pending changes
                           </span>
                           <DiscardPendingChangesPopover
                             open={discardChangesTarget?.chatId === currentChatMetadata.id}
@@ -7586,20 +8280,18 @@ function ChatInterface({
                             onConfirm={handleDiscardPendingChanges}
                           />
                           <Tooltip content={isAgentActive
-                            ? translate('changes.waitForAgent')
+                            ? "Wait for the agent to finish before accepting changes."
                             : isDiscardingChanges
-                              ? translate('changes.waitForDiscard')
-                              : translate('changes.acceptDescription')} asChild>
+                              ? "Wait for pending changes to finish discarding."
+                              : "Keep this draft and make it the gadget's current version."} asChild>
                             <WorkshopButton
                               disabled={changesActionsDisabled}
-                              onClick={() =>
-                                handleMergeChanges(mergeThrough, { includeDraft: true })
-                              }
+                              onClick={() => handleMergeChanges()}
                               tone="primary"
                               className="!h-7 !cursor-pointer !rounded-md !border-transparent !shadow-none gap-1 text-[12px]"
                             >
                               <Check size={11} weight="bold" />
-                              {translate('changes.accept')}
+                              Accept changes
                             </WorkshopButton>
                           </Tooltip>
                         </div>
@@ -7611,11 +8303,11 @@ function ChatInterface({
                   <div className="-mt-1 flex min-h-[1.25rem] items-start justify-end gap-4 px-4 pb-1 font-mono text-[11px] leading-4 text-kumo-inactive">
                     {currentChatMetadata?.totalTokens != null && (
                       <span>
-                        {translate('usage.tokens', { value: formatNumber(currentChatMetadata.totalTokens) })}
+                        {currentChatMetadata.totalTokens.toLocaleString()} tokens
                       </span>
                     )}
                     {currentChatMetadata?.totalCost != null && (
-                      <span>{formatNumber(currentChatMetadata.totalCost, { style: 'currency', currency: 'USD', minimumFractionDigits: 4, maximumFractionDigits: 4 })}</span>
+                      <span>${currentChatMetadata.totalCost.toFixed(4)}</span>
                     )}
                   </div>
                 </div>
@@ -7625,10 +8317,72 @@ function ChatInterface({
         </div>
       ) : null}
 
+      {/* An accept came back stale: mainline advanced past this chat's pins, so the changes can
+          only land after merging the gadget's current version into the chat first. */}
+      <Dialog.Root
+        open={staleAcceptChatId !== null}
+        onOpenChange={(nextOpen) => {
+          if (!isUpdatingFromMainline && !nextOpen) setStaleAcceptChatId(null);
+        }}
+      >
+        <Dialog
+          className="!z-[1000] !w-[min(440px,calc(100vw-32px))] overflow-hidden bg-kumo-base p-0 !top-[20%] !-translate-y-0"
+          size="sm"
+        >
+          <div className="flex items-start justify-between gap-4 border-b border-kumo-line px-5 py-4">
+            <div className="min-w-0">
+              <Dialog.Title className="text-[15px] leading-5 font-medium tracking-[-0.3px] text-kumo-default">
+                The gadget changed since this draft started
+              </Dialog.Title>
+              <Dialog.Description className="mt-1 text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
+                Someone else&apos;s changes were accepted in the meantime, so this draft&apos;s
+                changes can&apos;t be applied as-is. Bring the latest changes into this draft
+                first; any conflicts will be marked in the code for you (or the agent) to resolve
+                before accepting again.
+              </Dialog.Description>
+            </div>
+            <Dialog.Close
+              render={(props) => (
+                <WorkshopIconButton
+                  {...props}
+                  className="!h-7 !w-7"
+                  disabled={isUpdatingFromMainline}
+                  aria-label="Close"
+                >
+                  <X size={16} />
+                </WorkshopIconButton>
+              )}
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-kumo-line bg-kumo-base px-5 py-3">
+            <Dialog.Close
+              render={(props) => (
+                <WorkshopButton
+                  {...props}
+                  className="!h-9"
+                  disabled={isUpdatingFromMainline}
+                >
+                  Not now
+                </WorkshopButton>
+              )}
+            />
+            <WorkshopButton
+              tone="primary"
+              onClick={() => { void handleUpdateFromMainline(); }}
+              disabled={isUpdatingFromMainline}
+              className="!h-9 min-w-[64px]"
+            >
+              {isUpdatingFromMainline ? "Updating..." : "Bring in latest changes"}
+            </WorkshopButton>
+          </div>
+        </Dialog>
+      </Dialog.Root>
+
       <DeleteConfirmationDialog
         open={deleteTarget !== null}
-        title={translate('deleteDialog.title')}
-        description={translate('deleteDialog.description', { title: deleteTarget?.title ?? translate('header.fallbackTitle') })}
+        title="Delete conversation?"
+        description={<>This removes <span className="font-medium text-kumo-default">{deleteTarget?.title}</span>. You can&apos;t undo this.</>}
         isDeleting={isDeleting}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null);
