@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "desktopName": "cinaseek.desktop",
   "author": "Cina Group",
   "description": "Secure CinaSeek desktop shell",
   "main": "dist/main.js",
@@ -72,6 +73,8 @@
     },
     "linux": {
       "target": ["AppImage", "deb"],
+      "executableName": "cinaseek",
+      "syncDesktopName": true,
       "icon": "../app-mobile/ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png",
       "category": "Development"
     }
