@@ -56,7 +56,8 @@ function transcriptFromUnknown(value: unknown): WorkersAiTranscript {
   if (!info || typeof info.text !== "string") {
     throw new Error("Workers AI returned an invalid transcription.");
   }
-  const words = transcriptWords(info.words) ?? transcriptWords(info.segments);
+  const words = transcriptWords(info.words) ?? transcriptWords(info.segments) ??
+    transcriptWords(root?.words) ?? transcriptWords(root?.segments);
   const language = typeof info.language === "string" ? info.language : undefined;
   const durationSeconds = finiteNumber(info.duration) ?? finiteNumber(info.duration_seconds);
   return { text: info.text, language, durationSeconds, words };

@@ -19,24 +19,26 @@ describe("Workers AI speech transcription", () => {
   it("normalizes audio bytes and a language field", async () => {
     const runJson = vi.fn(async () => ({
       transcription_info: { text: "你好", language: "zh", duration: 1.25 },
+      segments: [{ text: "你好", start: 0.1, end: 1.1 }],
     }));
     const transcript = await transcribeWorkersAiAudio(
       { runJson },
       "@cf/openai/whisper-large-v3-turbo",
-      new Set(["audio", "language"]),
+      new Set(["audio", "language", "word_timestamps"]),
       new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" }),
-      { language: "zh" },
+      { language: "zh", wordTimestamps: true },
     );
 
     expect(runJson).toHaveBeenCalledWith("@cf/openai/whisper-large-v3-turbo", {
       audio: [1, 2, 3],
       language: "zh",
+      word_timestamps: true,
     });
     expect(transcript).toEqual({
       text: "你好",
       language: "zh",
       durationSeconds: 1.25,
-      words: undefined,
+      words: [{ text: "你好", startSeconds: 0.1, endSeconds: 1.1 }],
     });
   });
 

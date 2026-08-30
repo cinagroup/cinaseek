@@ -1,9 +1,8 @@
 import { RpcStub, RpcTarget, newHttpBatchRpcResponse, newWebSocketRpcSession, RpcSessionOptions } from "capnweb";
 import { validateRpc } from "capnweb-validate";
-import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, LoginAttempt, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, WorkersAiSpeechRequest, WorkersAiSpeechSettings, WorkersAiSpeechSettingsUpdate, SpeechInputTranscription, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, LoginAttempt, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
 import type {
   WorkersAiModelInfo,
-  WorkersAiSpeechTranscription,
   WorkersAiTask,
 } from "@gadgets/workshop-shared/workers-ai-gatekeeper";
 import type { UiFeatureFlags } from "@gadgets/workshop-shared/feature-flags";
@@ -165,8 +164,19 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   listWorkersAiCatalog(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
     return retryOnDoReset(() => this.#user.listWorkersAiCatalog(task));
   }
-  transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription> {
-    return this.#user.transcribeSpeech(audio, language);
+  getWorkersAiSpeechSettings(): Promise<WorkersAiSpeechSettings> {
+    return retryOnDoReset(() => this.#user.getWorkersAiSpeechSettings());
+  }
+  updateWorkersAiSpeechSettings(
+    update: WorkersAiSpeechSettingsUpdate,
+  ): Promise<WorkersAiSpeechSettings> {
+    return this.#user.updateWorkersAiSpeechSettings(update);
+  }
+  transcribeSpeech(
+    audio: Blob,
+    request: WorkersAiSpeechRequest,
+  ): Promise<SpeechInputTranscription> {
+    return this.#user.transcribeSpeech(audio, request);
   }
   setQuickModel(id: string | null): Promise<void> {
     return this.#user.setQuickModel(id);

@@ -1,5 +1,5 @@
 import { RpcStub } from "capnweb";
-import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, WorkersAiSpeechModelOption, WorkersAiSpeechRequest, WorkersAiSpeechSettings, WorkersAiSpeechSettingsUpdate, SpeechInputTranscription, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, SPEECH_INPUT_ERROR_CODES, createAuthError, createSpeechInputError, getSpeechInputErrorCode } from '@gadgets/workshop-shared/api';
 import { Gatekeeper, GatekeeperUser, GatekeeperUserVerifier, GatekeeperVendor, AccountDescription, VendorDescription, GatekeeperConnectCallback, SupportedResource, ResourceConfiguratorFrame, AppUiContext, GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import { shouldAutoProvisionAccount, ambientGatekeeperMode } from "./provisioning-policy.js";
 import { CloudflareGatekeeperUser } from "@gadgets/workshop-shared/cloudflare-gatekeeper";
@@ -7,7 +7,6 @@ import type {
   WorkersAiCredentials,
   WorkersAiGatekeeperUser,
   WorkersAiModelInfo,
-  WorkersAiSpeechTranscription,
   WorkersAiTask,
 } from "@gadgets/workshop-shared/workers-ai-gatekeeper";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
@@ -25,6 +24,8 @@ import { filterEnabledResources, isResourceDisabled, readAdminConfig } from "./a
 import { buildGatekeeperVendorMap } from "./auth/auth-vendors.js";
 import {
   normalizeWorkersAiCredentials,
+  isShareableWorkersAiSpeechModelId,
+  SHAREABLE_WORKERS_AI_SPEECH_MODEL_IDS,
   WorkersAiCredentialPool,
   type WorkersAiPoolStatus,
 } from "./workers-ai-credential-pool.js";
@@ -34,6 +35,22 @@ const logger = createWorkshopLogger("workshop.user");
 // How many workspaces one Outputs catch-up pass examines, bounding the Durable Objects a single
 // listOutputs() call wakes and how long it waits. The client calls again until catch-up is done.
 const OUTPUTS_BACKFILL_PAGE = 16;
+const SHARED_SPEECH_DAILY_SECONDS = 30 * 60;
+const SHARED_SPEECH_DAILY_REQUESTS = 120;
+const SPEECH_REQUEST_INTERVAL_MS = 1_000;
+
+type StoredWorkersAiSpeechSettings = {
+  modelId?: string;
+  language?: string;
+  shareWithUsers?: boolean;
+};
+
+type SpeechDailyUsage = {
+  day: string;
+  sharedSeconds: number;
+  sharedRequests: number;
+  lastRequestAt: number;
+};
 
 type ConnectedAccountRecord = {
   id: number;
@@ -218,6 +235,8 @@ function makeUserStorage(storage: DurableObjectStorage) {
       },
       quickModel: <string | null>null,
       preferredModel: <string | null>null,
+      workersAiSpeechSettings: <StoredWorkersAiSpeechSettings | null>null,
+      speechDailyUsage: <SpeechDailyUsage | null>null,
       onboardingCompleted: false,
 
       // Set once the user's pre-existing workspaces have been asked to populate the outputs index
@@ -573,12 +592,252 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     return account ? account.listModels(task) : [];
   }
 
-  async transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription> {
-    const account = this.#workersAiGatekeeperAccount();
-    if (!account) {
-      throw new Error("Connect Cloudflare Workers AI to use voice input.");
+  async #workersAiSpeechPoolStatus(modelId: string): Promise<WorkersAiPoolStatus> {
+    const pool = this.#workersAiPool(modelId);
+    using status = await pool.speechStatus();
+    return { total: status.total, available: status.available };
+  }
+
+  #speechUsage(now = Date.now()): SpeechDailyUsage {
+    const day = utcDayKey(new Date(now));
+    const stored = this.storage.speechDailyUsage.get();
+    return stored?.day === day
+      ? stored
+      : { day, sharedSeconds: 0, sharedRequests: 0, lastRequestAt: 0 };
+  }
+
+  #settleSharedSpeechUsage(
+    day: string,
+    reservedSeconds: number,
+    reportedDurationSeconds: number | undefined,
+  ): void {
+    if (reportedDurationSeconds === undefined || !Number.isFinite(reportedDurationSeconds) ||
+        reportedDurationSeconds <= 0 || reportedDurationSeconds > 60) {
+      return;
     }
-    return account.transcribeSpeech(audio, language);
+    const stored = this.storage.speechDailyUsage.get();
+    if (!stored || stored.day !== day) return;
+    const actualSeconds = Math.max(1, Math.ceil(reportedDurationSeconds));
+    this.storage.speechDailyUsage.put({
+      ...stored,
+      sharedSeconds: Math.max(0, stored.sharedSeconds - reservedSeconds + actualSeconds),
+    });
+  }
+
+  async #workersAiSpeechOptions(): Promise<WorkersAiSpeechModelOption[]> {
+    const account = this.#workersAiGatekeeperAccount();
+    const [privateModels, poolEntries] = await Promise.all([
+      account ? account.listModels("automatic-speech-recognition") : Promise.resolve([]),
+      Promise.all(SHAREABLE_WORKERS_AI_SPEECH_MODEL_IDS.map(async modelId => {
+        try {
+          return [modelId, await this.#workersAiSpeechPoolStatus(modelId)] as const;
+        } catch (error) {
+          logger.warn("failed to read shared Workers AI speech pool status", {
+            event: "workers_ai.speech.pool.status.failed", modelId, error,
+          });
+          return [modelId, { total: 0, available: 0 }] as const;
+        }
+      })),
+    ]);
+    const statuses = new Map<string, WorkersAiPoolStatus>(poolEntries);
+    const preferences = this.storage.workersAiSpeechSettings.get();
+    const result = new Map<string, WorkersAiSpeechModelOption>();
+
+    for (const model of privateModels) {
+      const status = statuses.get(model.id) ?? { total: 0, available: 0 };
+      result.set(model.id, {
+        id: model.id,
+        name: model.name,
+        access: preferences?.shareWithUsers && preferences.modelId === model.id
+          ? "shared-by-you"
+          : "private",
+        shareable: isShareableWorkersAiSpeechModelId(model.id),
+        poolSize: status.total,
+        availableCredentials: status.available,
+        deprecated: model.deprecated,
+        experimental: model.experimental,
+      });
+    }
+
+    for (const [index, modelId] of SHAREABLE_WORKERS_AI_SPEECH_MODEL_IDS.entries()) {
+      if (result.has(modelId)) continue;
+      const status = statuses.get(modelId) ?? { total: 0, available: 0 };
+      if (status.total === 0) continue;
+      result.set(modelId, {
+        id: modelId,
+        name: index === 0 ? "Whisper Large V3 Turbo" : "Whisper",
+        access: "shared-pool",
+        shareable: true,
+        poolSize: status.total,
+        availableCredentials: status.available,
+      });
+    }
+
+    const preferredOrder = new Map<string, number>(
+        SHAREABLE_WORKERS_AI_SPEECH_MODEL_IDS.map((modelId, index) => [modelId, index]));
+    return [...result.values()].toSorted((a, b) => {
+      const aOrder = preferredOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const bOrder = preferredOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      return aOrder - bOrder || a.name.localeCompare(b.name);
+    });
+  }
+
+  async getWorkersAiSpeechSettings(): Promise<WorkersAiSpeechSettings> {
+    const models = await this.#workersAiSpeechOptions();
+    const stored = this.storage.workersAiSpeechSettings.get();
+    const selected = models.find(model => model.id === stored?.modelId) ??
+      models.find(model => model.access !== "shared-pool" && !model.deprecated) ??
+      models.find(model => model.access !== "shared-pool") ??
+      models.find(model => model.availableCredentials > 0) ?? models[0];
+    const usage = this.#speechUsage();
+    return {
+      modelId: selected?.id ?? null,
+      language: stored?.language ?? null,
+      shareWithUsers: Boolean(
+        stored?.shareWithUsers && selected && stored.modelId === selected.id &&
+        selected.access === "shared-by-you"),
+      models,
+      sharedSecondsUsed: usage.sharedSeconds,
+      sharedSecondsLimit: SHARED_SPEECH_DAILY_SECONDS,
+      sharedRequestsUsed: usage.sharedRequests,
+      sharedRequestsLimit: SHARED_SPEECH_DAILY_REQUESTS,
+      quotaResetAt: nextUtcMidnightIso(),
+    };
+  }
+
+  async updateWorkersAiSpeechSettings(
+    update: WorkersAiSpeechSettingsUpdate,
+  ): Promise<WorkersAiSpeechSettings> {
+    const language = update.language?.trim() || undefined;
+    if (language && !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)) {
+      throw new Error("Speech language must be a valid language code.");
+    }
+    const models = await this.#workersAiSpeechOptions();
+    const selected = models.find(model => model.id === update.modelId);
+    if (!selected) throw createSpeechInputError(SPEECH_INPUT_ERROR_CODES.modelUnavailable);
+    if (update.shareWithUsers &&
+        (selected.access === "shared-pool" || !selected.shareable)) {
+      throw new Error("Only a private curated speech model can be shared.");
+    }
+
+    const previous = this.storage.workersAiSpeechSettings.get();
+    const previousSharedModel = previous?.shareWithUsers ? previous.modelId : undefined;
+    let credentials: WorkersAiCredentials | null = null;
+    if (update.shareWithUsers) {
+      credentials = await this.#workersAiCredentials();
+      if (!credentials) {
+        throw createSpeechInputError(SPEECH_INPUT_ERROR_CODES.notConfigured);
+      }
+    }
+
+    const nextSharedModel = update.shareWithUsers ? update.modelId : undefined;
+    try {
+      if (nextSharedModel && nextSharedModel !== previousSharedModel) {
+        await this.#upsertWorkersAiPoolCredential(
+            nextSharedModel, credentials!.accountId, credentials!.apiToken);
+      }
+      if (previousSharedModel && previousSharedModel !== nextSharedModel) {
+        await this.#removeWorkersAiPoolCredential(previousSharedModel);
+      }
+      this.storage.workersAiSpeechSettings.put({
+        modelId: update.modelId,
+        language,
+        shareWithUsers: update.shareWithUsers || undefined,
+      });
+    } catch (error) {
+      if (nextSharedModel && nextSharedModel !== previousSharedModel) {
+        await this.#removeWorkersAiPoolCredential(nextSharedModel).catch(() => undefined);
+      }
+      if (previousSharedModel && previousSharedModel !== nextSharedModel) {
+        const restoreCredentials = credentials ?? await this.#workersAiCredentials();
+        if (restoreCredentials) {
+          await this.#upsertWorkersAiPoolCredential(
+              previousSharedModel, restoreCredentials.accountId, restoreCredentials.apiToken)
+              .catch(() => undefined);
+        }
+      }
+      throw error;
+    }
+    return this.getWorkersAiSpeechSettings();
+  }
+
+  async transcribeSpeech(
+    audio: Blob,
+    request: WorkersAiSpeechRequest,
+  ): Promise<SpeechInputTranscription> {
+    if (audio.size <= 0 || audio.size > 5 * 1024 * 1024) {
+      throw new Error("Audio must be between 1 byte and 5242880 bytes.");
+    }
+    if (!Number.isFinite(request.durationSeconds) || request.durationSeconds <= 0 ||
+        request.durationSeconds > 60) {
+      throw new Error("Speech duration must be between 0 and 60 seconds.");
+    }
+    const settings = await this.getWorkersAiSpeechSettings();
+    const model = settings.models.find(candidate => candidate.id === settings.modelId);
+    if (!model) throw createSpeechInputError(SPEECH_INPUT_ERROR_CODES.notConfigured);
+
+    const now = Date.now();
+    const usage = this.#speechUsage(now);
+    if (now - usage.lastRequestAt < SPEECH_REQUEST_INTERVAL_MS) {
+      throw createSpeechInputError(SPEECH_INPUT_ERROR_CODES.rateLimited);
+    }
+    const shared = model.access === "shared-pool";
+    // Reserve a full clip before inference because durationSeconds comes from an untrusted client.
+    // A provider-reported duration refunds the unused portion after a successful transcription.
+    const reservedSharedSeconds = shared ? 60 : 0;
+    if (shared && (usage.sharedSeconds + reservedSharedSeconds > SHARED_SPEECH_DAILY_SECONDS ||
+        usage.sharedRequests + 1 > SHARED_SPEECH_DAILY_REQUESTS)) {
+      throw createSpeechInputError(SPEECH_INPUT_ERROR_CODES.dailyQuotaExceeded);
+    }
+    this.storage.speechDailyUsage.put({
+      ...usage,
+      lastRequestAt: now,
+      sharedSeconds: usage.sharedSeconds + reservedSharedSeconds,
+      sharedRequests: usage.sharedRequests + (shared ? 1 : 0),
+    });
+
+    try {
+      if (!shared) {
+        const account = this.#workersAiGatekeeperAccount();
+        if (!account) throw createSpeechInputError(SPEECH_INPUT_ERROR_CODES.notConfigured);
+        return {
+          ...await account.transcribeSpeech(audio, {
+            modelId: model.id,
+            language: settings.language ?? undefined,
+            wordTimestamps: request.wordTimestamps,
+          }),
+          access: "private",
+        };
+      }
+      if (model.availableCredentials === 0) {
+        throw createSpeechInputError(SPEECH_INPUT_ERROR_CODES.modelUnavailable);
+      }
+      const pool = this.#workersAiPool(model.id);
+      const transcript = await pool.transcribe(model.id, audio, request.durationSeconds, {
+          language: settings.language ?? undefined,
+          wordTimestamps: request.wordTimestamps,
+        });
+      this.#settleSharedSpeechUsage(
+        usage.day,
+        reservedSharedSeconds,
+        transcript.durationSeconds,
+      );
+      return {
+        ...transcript,
+        access: "shared-pool",
+      };
+    } catch (error) {
+      if (getSpeechInputErrorCode(error)) {
+        throw error;
+      }
+      logger.warn("voice input transcription failed", {
+        event: "workers_ai.speech.transcription.failed",
+        modelId: model.id,
+        size: audio.size,
+        statusText: error instanceof Error ? error.name : "UnknownError",
+      });
+      throw createSpeechInputError(SPEECH_INPUT_ERROR_CODES.upstreamFailed);
+    }
   }
 
   async #workersAiCredentials(config?: AiModelConfig): Promise<WorkersAiCredentials | null> {
@@ -593,24 +852,31 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   }
 
   async #removeSharedWorkersAiCredentials(): Promise<void> {
-    await Promise.all([...this.storage.aiModels.list()]
+    const modelIds = [...this.storage.aiModels.list()]
       .filter(model => model.config.provider === "cloudflare" && model.config.shareWithUsers)
-      .map(model => this.#removeWorkersAiPoolCredential(model.config.model)));
+      .map(model => model.config.model);
+    const speech = this.storage.workersAiSpeechSettings.get();
+    if (speech?.shareWithUsers && speech.modelId) modelIds.push(speech.modelId);
+    await Promise.all([...new Set(modelIds)].map(
+        modelId => this.#removeWorkersAiPoolCredential(modelId)));
   }
 
   async #restoreSharedWorkersAiCredentials(credentials: WorkersAiCredentials): Promise<void> {
-    await Promise.all([...this.storage.aiModels.list()]
+    const modelIds = [...this.storage.aiModels.list()]
       .filter(model => model.config.provider === "cloudflare" && model.config.shareWithUsers)
-      .map(async model => {
+      .map(model => model.config.model);
+    const speech = this.storage.workersAiSpeechSettings.get();
+    if (speech?.shareWithUsers && speech.modelId) modelIds.push(speech.modelId);
+    await Promise.all([...new Set(modelIds)].map(async modelId => {
         try {
           await this.#upsertWorkersAiPoolCredential(
-            model.config.model, credentials.accountId, credentials.apiToken);
+            modelId, credentials.accountId, credentials.apiToken);
         } catch (error) {
           // Reconnecting the source account must not fail because one optional pool shard is down.
           // The credential remains usable privately and can be re-shared from Providers later.
           logger.warn("failed to restore shared Workers AI credential", {
             event: "workers_ai.pool.credential.restore.failed",
-            modelId: model.config.model,
+            modelId,
             error,
           });
         }

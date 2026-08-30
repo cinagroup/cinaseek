@@ -20,6 +20,7 @@ import type {
   WorkersAiCredentials,
   WorkersAiGatekeeperUser,
   WorkersAiModelInfo,
+  WorkersAiSpeechOptions,
   WorkersAiSpeechTranscription,
   WorkersAiTask,
 } from "@gadgets/workshop-shared/workers-ai-gatekeeper";
@@ -493,12 +494,19 @@ export class UserAccount extends DurableObject<Env> {
     }
   }
 
-  async transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription> {
+  async transcribeSpeech(
+    audio: Blob,
+    options: WorkersAiSpeechOptions = {},
+  ): Promise<WorkersAiSpeechTranscription> {
     validateWorkersAiSpeechAudio(audio);
     const models = await this.listModels("automatic-speech-recognition");
-    const model = selectWorkersAiSpeechModel(models);
+    const model = options.modelId
+      ? models.find(candidate => candidate.id === options.modelId)
+      : selectWorkersAiSpeechModel(models);
     if (!model) {
-      throw new Error("No speech-recognition model is available to this Workers AI account.");
+      throw new Error(options.modelId
+        ? "The selected speech-recognition model is not available to this Workers AI account."
+        : "No speech-recognition model is available to this Workers AI account.");
     }
 
     try {
@@ -509,13 +517,14 @@ export class UserAccount extends DurableObject<Env> {
         model.id,
         inputFields,
         audio,
-        { language },
+        { language: options.language, wordTimestamps: options.wordTimestamps },
       );
       const result = {
         text: transcript.text,
         language: transcript.language,
         durationSeconds: transcript.durationSeconds,
         modelId: model.id,
+        words: transcript.words,
       };
       logger.info("Workers AI speech transcription completed", {
         event: "speech.transcription.completed",
@@ -583,8 +592,11 @@ export class WorkersAiUser extends WorkerEntrypoint<Env, WorkersAiUserProps>
     return this.#account().listModels(task);
   }
 
-  async transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription> {
-    return this.#account().transcribeSpeech(audio, language);
+  async transcribeSpeech(
+    audio: Blob,
+    options: WorkersAiSpeechOptions = {},
+  ): Promise<WorkersAiSpeechTranscription> {
+    return this.#account().transcribeSpeech(audio, options);
   }
 
   async getWorkersAiCredentials(): Promise<WorkersAiCredentials> {

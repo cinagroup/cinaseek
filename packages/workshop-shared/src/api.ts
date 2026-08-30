@@ -361,6 +361,41 @@ export const createAuthError = authErrors.create;
 /** Reads the machine-readable code from an authentication failure. */
 export const getAuthErrorCode = authErrors.getCode;
 
+/** Stable error codes attached to expected voice-input failures. */
+export const SPEECH_INPUT_ERROR_CODES = {
+  notConfigured: "SPEECH_PROVIDER_NOT_CONFIGURED",
+  modelUnavailable: "SPEECH_MODEL_UNAVAILABLE",
+  rateLimited: "SPEECH_RATE_LIMITED",
+  dailyQuotaExceeded: "SPEECH_DAILY_QUOTA_EXCEEDED",
+  upstreamFailed: "SPEECH_UPSTREAM_FAILED",
+} as const;
+
+/** An expected voice-input failure code. */
+export type SpeechInputErrorCode =
+    typeof SPEECH_INPUT_ERROR_CODES[keyof typeof SPEECH_INPUT_ERROR_CODES];
+
+/** Messages retained as a compatibility fallback for voice-input errors that lose their code. */
+export const SPEECH_INPUT_ERROR_MESSAGES: Record<SpeechInputErrorCode, string> = {
+  [SPEECH_INPUT_ERROR_CODES.notConfigured]:
+    "Connect Cloudflare Workers AI or select an available shared speech model.",
+  [SPEECH_INPUT_ERROR_CODES.modelUnavailable]:
+    "The selected speech-recognition model is not currently available.",
+  [SPEECH_INPUT_ERROR_CODES.rateLimited]:
+    "Voice input is being used too quickly. Try again in a moment.",
+  [SPEECH_INPUT_ERROR_CODES.dailyQuotaExceeded]:
+    "The shared voice-input daily quota has been reached.",
+  [SPEECH_INPUT_ERROR_CODES.upstreamFailed]:
+    "Cloudflare Workers AI could not transcribe this recording.",
+};
+
+const speechInputErrors = codedErrorFamily(SPEECH_INPUT_ERROR_MESSAGES);
+
+/** Creates an expected voice-input error with a machine-readable code. */
+export const createSpeechInputError = speechInputErrors.create;
+
+/** Reads the machine-readable code from an expected voice-input failure. */
+export const getSpeechInputErrorCode = speechInputErrors.getCode;
+
 /** Top-level API exposed to the user after they have authenticated. */
 export interface AuthenticatedApi extends RpcTarget {
   /** Get profile info for the user who is logged in. */
@@ -414,11 +449,22 @@ export interface AuthenticatedApi extends RpcTarget {
   /** Lists models visible to the user's linked Workers AI account without exposing credentials. */
   listWorkersAiCatalog(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]>;
 
+  /** Returns available private/shared ASR models and the user's current voice-input settings. */
+  getWorkersAiSpeechSettings(): Promise<WorkersAiSpeechSettings>;
+
+  /** Validates and persists the user's voice-input model, language, and sharing choices. */
+  updateWorkersAiSpeechSettings(
+    update: WorkersAiSpeechSettingsUpdate,
+  ): Promise<WorkersAiSpeechSettings>;
+
   /**
-   * Transcribes one short audio clip with the user's connected Workers AI account. Audio is
-   * processed ephemerally and is not stored as a chat attachment.
+   * Transcribes one short audio clip with the user's private account or selected shared ASR pool.
+   * Audio is processed ephemerally and is not stored as a chat attachment.
    */
-  transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription>;
+  transcribeSpeech(
+    audio: Blob,
+    request: WorkersAiSpeechRequest,
+  ): Promise<SpeechInputTranscription>;
 
   /**
    * Set the model to use for simple quick tasks, like generating chat titles. Set null to
@@ -1201,6 +1247,90 @@ export type WorkersAiModelAccessInfo = {
 export type WorkersAiConnectionInfo = {
   /** Display label supplied by the Workers AI gatekeeper. */
   displayName: string;
+};
+
+/** One ASR model that the authenticated user can use privately or through the shared pool. */
+export type WorkersAiSpeechModelOption = {
+  /** Exact Workers AI model identifier. */
+  id: string;
+
+  /** Human-readable model name. */
+  name: string;
+
+  /** Whether this user pays privately, contributes the credential, or uses another contribution. */
+  access: WorkersAiModelAccessKind;
+
+  /** Whether this model may receive an explicitly shared credential. */
+  shareable: boolean;
+
+  /** Total credentials registered in this model's shared ASR pool. */
+  poolSize: number;
+
+  /** Shared credentials currently healthy and below their daily ASR quota. */
+  availableCredentials: number;
+
+  /** Whether Cloudflare marks this model deprecated. */
+  deprecated?: boolean;
+
+  /** Whether Cloudflare marks this model experimental or beta. */
+  experimental?: boolean;
+};
+
+/** Current voice-input settings and safe quota metadata for the authenticated user. */
+export type WorkersAiSpeechSettings = {
+  /** Selected ASR model, or null when no private or shared model is available. */
+  modelId: string | null;
+
+  /** Requested audio language code, or null for automatic detection. */
+  language: string | null;
+
+  /** Whether the user's credential is contributed to the selected ASR model pool. */
+  shareWithUsers: boolean;
+
+  /** Models currently usable by the user, with private access taking precedence over pool access. */
+  models: WorkersAiSpeechModelOption[];
+
+  /** Shared-pool audio seconds charged to this user today. */
+  sharedSecondsUsed: number;
+
+  /** Maximum shared-pool audio seconds this user may consume per UTC day. */
+  sharedSecondsLimit: number;
+
+  /** Shared-pool transcription requests charged to this user today. */
+  sharedRequestsUsed: number;
+
+  /** Maximum shared-pool requests this user may make per UTC day. */
+  sharedRequestsLimit: number;
+
+  /** ISO timestamp at which the daily shared-pool quota resets. */
+  quotaResetAt: string;
+};
+
+/** Complete replacement for the authenticated user's voice-input preferences. */
+export type WorkersAiSpeechSettingsUpdate = {
+  /** ASR model selected from `WorkersAiSpeechSettings.models`. */
+  modelId: string;
+
+  /** Audio language code, or null to keep automatic language detection. */
+  language: string | null;
+
+  /** Whether to contribute the linked Workers AI credential to this ASR model pool. */
+  shareWithUsers: boolean;
+};
+
+/** Metadata supplied with one bounded voice-input recording. */
+export type WorkersAiSpeechRequest = {
+  /** Recording duration measured by the client, in seconds, capped server-side at 60. */
+  durationSeconds: number;
+
+  /** Request word- or segment-level timestamps when the selected model supports them. */
+  wordTimestamps?: boolean;
+};
+
+/** Voice-input transcription plus the credential route used for this request. */
+export type SpeechInputTranscription = WorkersAiSpeechTranscription & {
+  /** Whether inference used the user's linked account or an explicitly shared credential. */
+  access: "private" | "shared-pool";
 };
 
 /** Configuration specifying how to connect to an AI model provider. */

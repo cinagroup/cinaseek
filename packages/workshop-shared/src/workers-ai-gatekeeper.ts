@@ -43,7 +43,31 @@ export type WorkersAiCredentials = {
   apiToken: string;
 };
 
-/** Transcription returned by a user-owned Workers AI speech-recognition model. */
+/** One word or text segment reported by a Workers AI speech-recognition model. */
+export type WorkersAiSpeechTiming = {
+  /** Recognized text for this timing range. */
+  text: string;
+
+  /** Start time relative to the beginning of the audio, in seconds. */
+  startSeconds: number;
+
+  /** End time relative to the beginning of the audio, in seconds. */
+  endSeconds: number;
+};
+
+/** Portable options for one account-scoped Workers AI speech transcription. */
+export type WorkersAiSpeechOptions = {
+  /** Exact account-visible ASR model to use. Omit it to select the preferred model. */
+  modelId?: string;
+
+  /** Audio language code. Omit it to let the model detect the language. */
+  language?: string;
+
+  /** Request word- or segment-level timing when the model supports it. */
+  wordTimestamps?: boolean;
+};
+
+/** Transcription returned by a Workers AI speech-recognition model. */
 export type WorkersAiSpeechTranscription = {
   /** Complete recognized text. */
   text: string;
@@ -56,6 +80,9 @@ export type WorkersAiSpeechTranscription = {
 
   /** Exact Workers AI model used for this transcription. */
   modelId: string;
+
+  /** Word- or segment-level timing, when supported by the selected model. */
+  words?: WorkersAiSpeechTiming[];
 };
 
 /** Workshop-only extension implemented by the Workers AI connected account. */
@@ -70,7 +97,10 @@ export interface WorkersAiGatekeeperUser extends GatekeeperUser {
    * Transcribes one short audio clip with an available automatic-speech-recognition model.
    * The connected credentials remain private to the gatekeeper.
    */
-  transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription>;
+  transcribeSpeech(
+    audio: Blob,
+    options?: WorkersAiSpeechOptions,
+  ): Promise<WorkersAiSpeechTranscription>;
 
   /**
    * Returns the connected Account ID and API Token for trusted Workshop inference routing.
