@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   insertSpeechTranscript,
   preferredSpeechRecordingMimeType,
+  speechInputError,
 } from "./speech-input";
+import {
+  createSpeechInputError,
+  SPEECH_INPUT_ERROR_CODES,
+} from "@gadgets/workshop-shared/api";
 
 describe("speech input", () => {
   it("inserts a transcript at the caret and separates adjacent Latin words", () => {
@@ -22,5 +27,15 @@ describe("speech input", () => {
   it("selects the first supported compressed recording format", () => {
     expect(preferredSpeechRecordingMimeType(type => type === "audio/mp4")).toBe("audio/mp4");
     expect(preferredSpeechRecordingMimeType(() => false)).toBe("");
+  });
+
+  it("maps coded shared-pool failures without parsing error prose", () => {
+    expect(speechInputError(createSpeechInputError(
+      SPEECH_INPUT_ERROR_CODES.dailyQuotaExceeded,
+    ))).toBe("quota-exceeded");
+    expect(speechInputError(createSpeechInputError(
+      SPEECH_INPUT_ERROR_CODES.rateLimited,
+    ))).toBe("rate-limited");
+    expect(speechInputError(new Error("opaque"))).toBe("transcription-failed");
   });
 });
