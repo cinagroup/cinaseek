@@ -23,6 +23,7 @@ const CORE_PACKAGES = [
   "gatekeeper-homeassistant",
   "gatekeeper-mcp",
   "gatekeeper-github",
+  "gatekeeper-email",
   "workshop-backend",
   "router",
 ];
@@ -323,6 +324,7 @@ export function createInstanceConfigs({
     homeassistant: `${slug}-homeassistant`,
     mcp: `${slug}-mcp`,
     github: `${slug}-github`,
+    email: `${slug}-email`,
     backend: `${slug}-backend`,
     router: `${slug}-router`,
   };
@@ -387,6 +389,18 @@ export function createInstanceConfigs({
     BASE_URL: `${publicBaseUrl}/gatekeeper/github`,
   };
 
+  const email = baseProductionConfig(
+      root,
+      "gatekeeper-email",
+      names.email,
+      previousConfig(configPaths["gatekeeper-email"]),
+  );
+  email.vars = {
+    ...email.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/email`,
+    EMAIL_DOMAIN: `mail.${domain}`,
+  };
+
   const backend = baseProductionConfig(
       root,
       "workshop-backend",
@@ -440,6 +454,11 @@ export function createInstanceConfigs({
       service: names.github,
       entrypoint: "GatekeeperVendor",
     },
+    {
+      binding: "GATEKEEPER_EMAIL",
+      service: names.email,
+      entrypoint: "GatekeeperVendor",
+    },
   ];
 
   const router = baseProductionConfig(
@@ -456,6 +475,7 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_HOMEASSISTANT", service: names.homeassistant },
     { binding: "GATEKEEPER_MCP", service: names.mcp },
     { binding: "GATEKEEPER_GITHUB", service: names.github },
+    { binding: "GATEKEEPER_EMAIL", service: names.email },
   ];
   router.assets = {
     ...router.assets,
@@ -481,6 +501,7 @@ export function createInstanceConfigs({
       "gatekeeper-homeassistant": homeassistant,
       "gatekeeper-mcp": mcp,
       "gatekeeper-github": github,
+      "gatekeeper-email": email,
       "workshop-backend": backend,
       router,
     },
@@ -672,6 +693,7 @@ async function main() {
     "@gadgets/homeassistant-gatekeeper",
     "@gadgets/mcp-gatekeeper",
     "@gadgets/github-gatekeeper",
+    "@gadgets/email-gatekeeper",
   ]) {
     run(process.execPath, [
       VITE_PLUS_CLI,

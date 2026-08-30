@@ -106,6 +106,10 @@ BASE_URL=https://app.example.com/gatekeeper/email
 
 All occurrences of `http://localhost:8787/gatekeeper/email` in the doc above will in production be replaced by this `BASE_URL` value.
 
+If inbound email uses a separate domain, set `EMAIL_DOMAIN` to that DNS hostname. For example,
+`BASE_URL=https://app.example.com/gatekeeper/email` and `EMAIL_DOMAIN=mail.example.com` expose
+mailboxes as `<name>@mail.example.com` while keeping the configurator on the app domain.
+
 ### Step 2: Enable Email Routing
 
 1. In the Cloudflare dashboard, go to your domain's **Email Routing** settings.

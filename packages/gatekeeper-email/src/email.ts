@@ -31,6 +31,7 @@ import EMAIL_CONFIGURATOR_HTML from "./generated/email-configurator-ui.txt";
 import type { EmailMailboxConfiguratorRpc } from "./configurator/email-configurator-types";
 import EMAIL_LOGO_SVG from "./email-logo.svg";
 import { obsContext } from "./observability.js";
+import { normalizeEmailDomain } from "./email-domain.js";
 
 const VENDOR_ID = "email";
 
@@ -62,6 +63,8 @@ type Env = Cloudflare.Env & {
   // Base URL (protocol+host+optional path) at which the default fetch handler is served. Should
   // NOT include a trailing slash. Omit for localhost dev server.
   BASE_URL?: string,
+  // DNS hostname whose MX records route inbound mail to this Worker. This can differ from BASE_URL.
+  EMAIL_DOMAIN?: string,
 }
 
 function getBaseUrl(env: Env) {
@@ -88,12 +91,9 @@ function getSupportedResourcesList(env: Env): SupportedResource[] {
 const EMAIL_LOGO_URL = `data:image/svg+xml,${encodeURIComponent(EMAIL_LOGO_SVG)}`;
 
 function getEmailHost(env: Env) {
-  // TODO: This is actually a lie, as email routing can be configured on an entirely different
-  //   domain and forwarded to this worker. We only really care about the name before the `@` for
-  //   routing purposes. At present the returned host isn't really used anywhere important so
-  //   maybe we can get rid of this entirely, or maybe we should bring back the env var that
-  //   specifies the default host.
-  return new URL(getBaseUrl(env)).hostname;
+  return env.EMAIL_DOMAIN
+    ? normalizeEmailDomain(env.EMAIL_DOMAIN)
+    : new URL(getBaseUrl(env)).hostname;
 }
 
 function validateEmailName(value: string | undefined): { ok: true, emailName: string } | { ok: false, message: string } {

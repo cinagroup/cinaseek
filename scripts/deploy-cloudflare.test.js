@@ -206,6 +206,7 @@ test("creates an internal core topology with one public custom domain", () => {
     homeassistant: "cinaseek-ai-homeassistant",
     mcp: "cinaseek-ai-mcp",
     github: "cinaseek-ai-github",
+    email: "cinaseek-ai-email",
     backend: "cinaseek-ai-backend",
     router: "cinaseek-ai-router",
   });
@@ -224,6 +225,7 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.equal(instance.configs["gatekeeper-homeassistant"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-mcp"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-github"].routes, undefined);
+  assert.equal(instance.configs["gatekeeper-email"].routes, undefined);
   assert.equal(instance.configs["workshop-backend"].routes, undefined);
   assert.deepEqual(instance.configs.router.routes, [
     { pattern: "cinaseek.ai", custom_domain: true },
@@ -239,6 +241,7 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
         ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
         ["GATEKEEPER_GITHUB", "cinaseek-ai-github"],
+        ["GATEKEEPER_EMAIL", "cinaseek-ai-email"],
       ],
   );
   assert.deepEqual(
@@ -253,6 +256,7 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
         ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
         ["GATEKEEPER_GITHUB", "cinaseek-ai-github"],
+        ["GATEKEEPER_EMAIL", "cinaseek-ai-email"],
       ],
   );
   assert.equal(
@@ -271,6 +275,11 @@ test("creates an internal core topology with one public custom domain", () => {
       instance.configs["gatekeeper-github"].vars.BASE_URL,
       "https://cinaseek.ai/gatekeeper/github",
   );
+  assert.equal(
+      instance.configs["gatekeeper-email"].vars.BASE_URL,
+      "https://cinaseek.ai/gatekeeper/email",
+  );
+  assert.equal(instance.configs["gatekeeper-email"].vars.EMAIL_DOMAIN, "mail.cinaseek.ai");
   assert.equal(instance.configs["workshop-backend"].vars.ADMINS, undefined);
   assert.equal(instance.configs["workshop-backend"].vars.CF_ACCESS_ISS, "");
   assert.equal(instance.configs["workshop-backend"].vars.CF_ACCESS_AUD, "");
