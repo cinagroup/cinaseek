@@ -239,12 +239,12 @@
     "icon": "appWindow",
     "binding": {
       "name": "WORKERS_AI_MODEL",
-      "gatekeeperName": "workers-ai",
+      "gatekeeperName": "workers_ai",
       "typeUrlPattern": "https://cinaseek.ai/gatekeeper/workers-ai/_resource/model/:modelKey",
       "title": "Workers AI model",
       "description": "Choose one embeddings, image, speech, TTS, or classification model from your Cloudflare account."
     },
-    "revision": 1
+    "revision": 2
   },
   {
     "name": "connector-zoominfo",

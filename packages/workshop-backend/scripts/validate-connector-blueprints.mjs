@@ -44,6 +44,8 @@ for (const entry of manifest) {
   const [bindingName, binding] = bindings[0] ?? [];
   expect(bindingName === entry.binding.name, entry, "archive binding name is stale");
   expect(binding?.type === "gatekeeper", entry, "archive binding must be a gatekeeper");
+  expect(/^[a-z][a-z0-9_]*$/.test(entry.binding.gatekeeperName), entry,
+      "gatekeeper name must be the canonical vendor id used by a GATEKEEPER_* binding");
   expect(binding?.gatekeeperName === entry.binding.gatekeeperName, entry,
       "archive gatekeeper name is stale");
   expect(binding?.typeUrlPattern === entry.binding.typeUrlPattern, entry,
