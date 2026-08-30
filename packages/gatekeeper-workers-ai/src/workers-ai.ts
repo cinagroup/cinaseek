@@ -20,6 +20,7 @@ import type {
   WorkersAiCredentials,
   WorkersAiGatekeeperUser,
   WorkersAiModelInfo,
+  WorkersAiSpeechTranscription,
   WorkersAiTask,
 } from "@gadgets/workshop-shared/workers-ai-gatekeeper";
 import type { WorkersAiModelConfiguratorRpc } from "./configurator/model-configurator-types";
@@ -37,6 +38,11 @@ import {
   WorkersAiSpeechRecognitionSessionImpl,
   WorkersAiTextToSpeechSessionImpl,
 } from "./sessions.js";
+import {
+  selectWorkersAiSpeechModel,
+  transcribeWorkersAiAudio,
+  validateWorkersAiSpeechAudio,
+} from "./speech-transcription.js";
 import type {
   WorkersAiClassificationSession,
   WorkersAiEmbeddingsSession,
@@ -54,6 +60,9 @@ type WorkersAiLogFields = {
   modelId?: string;
   task?: WorkersAiTask;
   modelCount?: number;
+  audioBytes?: number;
+  durationMs?: number;
+  outputCharacters?: number;
   status?: number;
   codes?: number[];
 };
@@ -484,6 +493,53 @@ export class UserAccount extends DurableObject<Env> {
     }
   }
 
+  async transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription> {
+    validateWorkersAiSpeechAudio(audio);
+    const models = await this.listModels("automatic-speech-recognition");
+    const model = selectWorkersAiSpeechModel(models);
+    if (!model) {
+      throw new Error("No speech-recognition model is available to this Workers AI account.");
+    }
+
+    try {
+      const startedAt = Date.now();
+      const inputFields = new Set(await this.getInputFields(model.id));
+      const transcript = await transcribeWorkersAiAudio(
+        new WorkersAiApi(this.getCredentials()),
+        model.id,
+        inputFields,
+        audio,
+        { language },
+      );
+      const result = {
+        text: transcript.text,
+        language: transcript.language,
+        durationSeconds: transcript.durationSeconds,
+        modelId: model.id,
+      };
+      logger.info("Workers AI speech transcription completed", {
+        event: "speech.transcription.completed",
+        modelId: model.id,
+        audioBytes: audio.size,
+        durationMs: Date.now() - startedAt,
+        outputCharacters: transcript.text.length,
+      });
+      return result;
+    } catch (error) {
+      logger.warn("Workers AI speech transcription failed", {
+        event: "speech.transcription.failed",
+        modelId: model.id,
+        audioBytes: audio.size,
+        ...(error instanceof WorkersAiApiError && {
+          status: error.status,
+          codes: error.codes,
+        }),
+      });
+      await this.#noteAuthFailure(error);
+      throw error;
+    }
+  }
+
   async #noteAuthFailure(error: unknown): Promise<void> {
     if (!(error instanceof WorkersAiApiError) || !error.isAuthError) return;
     const callback = this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("callback");
@@ -525,6 +581,10 @@ export class WorkersAiUser extends WorkerEntrypoint<Env, WorkersAiUserProps>
 
   async listModels(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
     return this.#account().listModels(task);
+  }
+
+  async transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription> {
+    return this.#account().transcribeSpeech(audio, language);
   }
 
   async getWorkersAiCredentials(): Promise<WorkersAiCredentials> {

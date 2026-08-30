@@ -43,6 +43,21 @@ export type WorkersAiCredentials = {
   apiToken: string;
 };
 
+/** Transcription returned by a user-owned Workers AI speech-recognition model. */
+export type WorkersAiSpeechTranscription = {
+  /** Complete recognized text. */
+  text: string;
+
+  /** Detected or requested language code, when reported by the model. */
+  language?: string;
+
+  /** Audio duration in seconds, when reported by the model. */
+  durationSeconds?: number;
+
+  /** Exact Workers AI model used for this transcription. */
+  modelId: string;
+};
+
 /** Workshop-only extension implemented by the Workers AI connected account. */
 export interface WorkersAiGatekeeperUser extends GatekeeperUser {
   /**
@@ -50,6 +65,12 @@ export interface WorkersAiGatekeeperUser extends GatekeeperUser {
    * Credentials and account identifiers are never included.
    */
   listModels(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]>;
+
+  /**
+   * Transcribes one short audio clip with an available automatic-speech-recognition model.
+   * The connected credentials remain private to the gatekeeper.
+   */
+  transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription>;
 
   /**
    * Returns the connected Account ID and API Token for trusted Workshop inference routing.

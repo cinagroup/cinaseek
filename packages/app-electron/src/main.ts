@@ -24,6 +24,7 @@ import {
   type DesktopMenuId,
   type DesktopMenuLocale,
 } from './desktop-menu-protocol.js'
+import { mayUseCinaSeekPermission } from './permission-policy.js'
 
 const SESSION_PARTITION = 'persist:cinaseek'
 const DESKTOP_MENU_CHANNEL = 'cinaseek:desktop-menu:open'
@@ -38,8 +39,6 @@ const TITLE_BAR_COLORS = {
   light: { color: '#fcfcfb', symbolColor: '#1c1a18' },
   dark: { color: '#1b1920', symbolColor: '#f0eef3' },
 } as const
-const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen'])
-
 const DESKTOP_MENU_LABELS = {
   en: {
     newWindow: 'New Window', openInBrowser: 'Open in Browser', closeWindow: 'Close Window', exit: 'Exit',
@@ -146,14 +145,22 @@ function configureMainWindow(window: BrowserWindow): void {
 function configureSession(): void {
   const appSession = session.fromPartition(SESSION_PARTITION)
   appSession.setUserAgent(`${appSession.getUserAgent()} CinaSeekDesktop/${app.getVersion()}`)
-  const mayUsePermission = (permission: string, requestingUrl: string): boolean =>
-    ALLOWED_PERMISSIONS.has(permission) && isCinaSeekAppUrl(requestingUrl)
-
   appSession.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) =>
-    mayUsePermission(permission, details.requestingUrl ?? requestingOrigin),
+    mayUseCinaSeekPermission(
+      permission,
+      details.requestingUrl ?? requestingOrigin,
+      details.mediaType ? [details.mediaType] : [],
+    ),
   )
   appSession.setPermissionRequestHandler((contents, permission, callback, details) => {
-    callback(mayUsePermission(permission, details.requestingUrl ?? contents.getURL()))
+    const mediaTypes = permission === 'media' && 'mediaTypes' in details
+      ? details.mediaTypes ?? []
+      : []
+    callback(mayUseCinaSeekPermission(
+      permission,
+      details.requestingUrl ?? contents.getURL(),
+      mediaTypes,
+    ))
   })
   appSession.setDevicePermissionHandler(() => false)
 }

@@ -55,6 +55,8 @@ import {
   Question,
   ArrowUpRight,
   Blueprint,
+  Microphone,
+  SpinnerGap,
 } from "@phosphor-icons/react";
 import { RpcStub, RpcTarget } from "capnweb";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -129,6 +131,11 @@ import OutOfCreditsModal from "./components/billing/OutOfCreditsModal";
 import { useSlashCommandPicker } from "./components/chat/SlashCommandPicker";
 import { formatFullTimestamp } from "./utils/formatTimestamp";
 import { copyToClipboard } from "./clipboard";
+import {
+  insertSpeechTranscript,
+  type SpeechInputError,
+  useSpeechInput,
+} from "./speech-input";
 import { isImeComposing } from "./keyboardEvent";
 import { i18n } from "./i18n";
 import {
@@ -3133,6 +3140,64 @@ export const ChatInput = ({
     }
   };
 
+  const handleSpeechTranscript = (transcript: string) => {
+    const textarea = composerTextareaRef.current;
+    const value = inputValueRef.current;
+    const rawCaret = Math.min(textarea?.selectionEnd ?? value.length, value.length);
+    const caret = snapCaretOutOfRanges(rawCaret, currentTokenRanges(), "right");
+    const insertion = insertSpeechTranscript(value, transcript, caret);
+    if (insertion.value === value) {
+      toasts.add({ title: i18n.t("chat:composer.voiceNoSpeech"), variant: "error" });
+      return;
+    }
+
+    draftEditedRef.current = true;
+    draftRestoreGenerationRef.current++;
+    handleInputChange(insertion.value, insertion.caret);
+    requestAnimationFrame(() => {
+      const current = composerTextareaRef.current;
+      if (!current) return;
+      current.focus();
+      current.setSelectionRange(insertion.caret, insertion.caret);
+      autoResizeTextarea(current, minRows, newChat ? 10 : 4);
+      syncMirrorScroll(current);
+      handleCursorChange();
+    });
+  };
+
+  const handleSpeechError = (error: SpeechInputError) => {
+    const messageKey = {
+      "permission-denied": "chat:composer.voicePermissionDenied",
+      "recording-failed": "chat:composer.voiceRecordingFailed",
+      "audio-too-large": "chat:composer.voiceAudioTooLarge",
+      "no-speech": "chat:composer.voiceNoSpeech",
+      "transcription-failed": "chat:composer.voiceTranscriptionFailed",
+    } as const;
+    toasts.add({ title: i18n.t(messageKey[error]), variant: "error" });
+  };
+
+  const {
+    status: speechInputStatus,
+    recordingSeconds,
+    toggleRecording,
+    cancelRecording,
+  } = useSpeechInput({
+    authenticatedApi,
+    onTranscript: handleSpeechTranscript,
+    onError: handleSpeechError,
+  });
+
+  useEffect(() => {
+    if (speechInputStatus !== "recording") return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      cancelRecording();
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [cancelRecording, speechInputStatus]);
+
   // Detect whether the cursor is currently inside a URL in the input text.
   // Called on every cursor movement (select, click, keyup).
   const handleCursorChange = () => {
@@ -3286,6 +3351,23 @@ export const ChatInput = ({
     (inputValue.trim().length > 0 || selectedSlashCommand !== null || hasReadyAttachment) &&
     !hasUnreadyAttachment;
   const canAttachMore = pendingAttachments.length < MAX_PENDING_ATTACHMENTS;
+  const recordingTime = `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`;
+  const speechInputLabel = speechInputStatus === "recording"
+    ? i18n.t("chat:composer.voiceStopRecording", { time: recordingTime })
+    : speechInputStatus === "transcribing"
+      ? i18n.t("chat:composer.voiceTranscribing")
+      : speechInputStatus === "requesting"
+        ? i18n.t("chat:composer.voiceRequesting")
+        : speechInputStatus === "checking"
+          ? i18n.t("chat:composer.voiceChecking")
+          : speechInputStatus === "unsupported"
+            ? i18n.t("chat:composer.voiceUnsupported")
+            : speechInputStatus === "unavailable"
+              ? i18n.t("chat:composer.voiceUnavailable")
+              : i18n.t("chat:composer.voiceStartRecording");
+  const speechInputDisabled = speechInputStatus !== "recording" && (
+    speechInputStatus !== "idle" || isSending || isAgentActive || isBlocked
+  );
 
   return (
     // isolation: isolate contains z-indexes used inside the composer (the
@@ -3692,6 +3774,40 @@ export const ChatInput = ({
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu>
+              {speechInputStatus === "recording" && (
+                <span
+                  className="min-w-9 text-center font-mono text-[11px] tabular-nums text-kumo-danger"
+                  aria-live="polite"
+                >
+                  {recordingTime}
+                </span>
+              )}
+              {speechInputStatus === "transcribing" && (
+                <span className="hidden text-[11px] text-kumo-inactive sm:inline" aria-live="polite">
+                  {i18n.t("chat:composer.voiceTranscribing")}
+                </span>
+              )}
+              <Tooltip content={speechInputLabel} side="top" asChild>
+                <span className="inline-flex">
+                  <WorkshopIconButton
+                    onClick={() => void toggleRecording()}
+                    disabled={speechInputDisabled}
+                    className={`!h-10 !w-10 sm:!h-8 sm:!w-8 ${
+                      speechInputStatus === "recording"
+                        ? "!bg-kumo-danger !text-white enabled:hover:!bg-kumo-danger enabled:hover:!text-white"
+                        : ""
+                    }`}
+                    aria-label={speechInputLabel}
+                    aria-pressed={speechInputStatus === "recording"}
+                  >
+                    {speechInputStatus === "transcribing" || speechInputStatus === "requesting" ? (
+                      <SpinnerGap size={17} className="animate-spin" />
+                    ) : (
+                      <Microphone size={17} weight={speechInputStatus === "recording" ? "fill" : "regular"} />
+                    )}
+                  </WorkshopIconButton>
+                </span>
+              </Tooltip>
               {isAgentActive && onStop ? (
                 <WorkshopIconButton
                   onClick={onStop}

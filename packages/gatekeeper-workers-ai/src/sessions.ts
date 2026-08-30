@@ -13,17 +13,16 @@ import type {
   WorkersAiSpeechRecognitionSession,
   WorkersAiTextToSpeechSession,
   WorkersAiTranscript,
-  WorkersAiTranscriptWord,
   WorkersAiTranscriptionOptions,
 } from "./types";
 import { WorkersAiApi, unwrapWorkersAiJsonResponse } from "./workers-ai-api.js";
+import {
+  transcribeWorkersAiAudio,
+  validateWorkersAiSpeechAudio,
+} from "./speech-transcription.js";
 
 const MAX_TEXT_LENGTH = 100_000;
 const MAX_EMBEDDING_INPUTS = 100;
-// Workers AI's REST shape requires audio as a JSON number array. Keep the source bounded so the
-// expanded number array plus its serialized body remains within a Worker's memory ceiling.
-const MAX_AUDIO_BYTES = 5 * 1024 * 1024;
-
 type JsonRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -212,40 +211,6 @@ export class WorkersAiImageGenerationSessionImpl extends WorkersAiSessionBase
   }
 }
 
-function transcriptWords(value: unknown): WorkersAiTranscriptWord[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const words: WorkersAiTranscriptWord[] = [];
-  for (const entry of value) {
-    const record = asRecord(entry);
-    if (!record) continue;
-    const text = typeof record.word === "string" ? record.word :
-      typeof record.text === "string" ? record.text : undefined;
-    const start = finiteNumber(record.start) ?? finiteNumber(record.start_seconds);
-    const end = finiteNumber(record.end) ?? finiteNumber(record.end_seconds);
-    if (text !== undefined && start !== undefined && end !== undefined) {
-      words.push({ text, startSeconds: start, endSeconds: end });
-    }
-  }
-  return words.length > 0 ? words : undefined;
-}
-
-function transcriptFromUnknown(value: unknown): WorkersAiTranscript {
-  const root = asRecord(value);
-  const info = asRecord(root?.transcription_info) ?? asRecord(root?.results) ?? root;
-  if (!info || typeof info.text !== "string") {
-    throw new Error("Workers AI returned an invalid transcription.");
-  }
-  const words = transcriptWords(info.words) ?? transcriptWords(info.segments);
-  const language = typeof info.language === "string" ? info.language : undefined;
-  const durationSeconds = finiteNumber(info.duration) ?? finiteNumber(info.duration_seconds);
-  return {
-    text: info.text,
-    language,
-    durationSeconds,
-    words,
-  };
-}
-
 /** RPC implementation for one model-scoped speech-recognition capability. */
 @validateRpc()
 export class WorkersAiSpeechRecognitionSessionImpl extends WorkersAiSessionBase
@@ -254,24 +219,12 @@ export class WorkersAiSpeechRecognitionSessionImpl extends WorkersAiSessionBase
     audio: Blob,
     options: WorkersAiTranscriptionOptions = {},
   ): Promise<WorkersAiTranscript> {
-    if (audio.size <= 0 || audio.size > MAX_AUDIO_BYTES) {
-      throw new Error(`Audio must be between 1 byte and ${MAX_AUDIO_BYTES} bytes.`);
-    }
+    validateWorkersAiSpeechAudio(audio);
     await this.authorize(
       "Transcribe audio with Workers AI",
       `Model ${this.modelId}; audio size ${audio.size} bytes; MIME type ${audio.type || "unknown"}.`,
     );
-
-    const bytes = new Uint8Array(await audio.arrayBuffer());
-    const payload: JsonRecord = { audio: [...bytes] };
-    if (options.language) {
-      const language = requiredText(options.language, "Language");
-      payload[this.inputFields.has("source_lang") ? "source_lang" : "language"] = language;
-    }
-    if (options.wordTimestamps && this.inputFields.has("word_timestamps")) {
-      payload.word_timestamps = true;
-    }
-    return transcriptFromUnknown(await this.api.runJson(this.modelId, payload));
+    return transcribeWorkersAiAudio(this.api, this.modelId, this.inputFields, audio, options);
   }
 }
 

@@ -7,6 +7,7 @@ import type {
   WorkersAiCredentials,
   WorkersAiGatekeeperUser,
   WorkersAiModelInfo,
+  WorkersAiSpeechTranscription,
   WorkersAiTask,
 } from "@gadgets/workshop-shared/workers-ai-gatekeeper";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
@@ -570,6 +571,14 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   async listWorkersAiCatalog(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
     const account = this.#workersAiGatekeeperAccount();
     return account ? account.listModels(task) : [];
+  }
+
+  async transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription> {
+    const account = this.#workersAiGatekeeperAccount();
+    if (!account) {
+      throw new Error("Connect Cloudflare Workers AI to use voice input.");
+    }
+    return account.transcribeSpeech(audio, language);
   }
 
   async #workersAiCredentials(config?: AiModelConfig): Promise<WorkersAiCredentials | null> {

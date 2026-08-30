@@ -27,7 +27,11 @@ import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { AccountDescription, ActionKind, ActionDescription, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
 import type { CodeChange } from "./code-change.js";
 import type { UiFeatureFlags } from "./feature-flags.js";
-import type { WorkersAiModelInfo, WorkersAiTask } from "./workers-ai-gatekeeper.js";
+import type {
+  WorkersAiModelInfo,
+  WorkersAiSpeechTranscription,
+  WorkersAiTask,
+} from "./workers-ai-gatekeeper.js";
 
 export const SERVICE_SALT = new Uint8Array([
   0xd9, 0x4e, 0x54, 0x1d, 0x29, 0xc1, 0x03, 0x74, 0x73, 0x7e, 0xb3, 0xe3, 0x34, 0x6d, 0x8f, 0x21
@@ -409,6 +413,12 @@ export interface AuthenticatedApi extends RpcTarget {
 
   /** Lists models visible to the user's linked Workers AI account without exposing credentials. */
   listWorkersAiCatalog(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]>;
+
+  /**
+   * Transcribes one short audio clip with the user's connected Workers AI account. Audio is
+   * processed ephemerally and is not stored as a chat attachment.
+   */
+  transcribeSpeech(audio: Blob, language?: string): Promise<WorkersAiSpeechTranscription>;
 
   /**
    * Set the model to use for simple quick tasks, like generating chat titles. Set null to
