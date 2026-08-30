@@ -24,6 +24,7 @@ const CORE_PACKAGES = [
   "gatekeeper-cloudflare",
   "gatekeeper-confluence",
   "gatekeeper-homeassistant",
+  "gatekeeper-linear",
   "gatekeeper-mcp",
   "gatekeeper-github",
   "gatekeeper-google",
@@ -49,6 +50,10 @@ const CLOUDFLARE_SECRET_INPUTS = [
 const CONFLUENCE_SECRET_INPUTS = [
   ["CLIENT_ID", "CINASEEK_CONFLUENCE_CLIENT_ID"],
   ["CLIENT_SECRET", "CINASEEK_CONFLUENCE_CLIENT_SECRET"],
+];
+const LINEAR_SECRET_INPUTS = [
+  ["CLIENT_ID", "CINASEEK_LINEAR_CLIENT_ID"],
+  ["CLIENT_SECRET", "CINASEEK_LINEAR_CLIENT_SECRET"],
 ];
 const ACCESS_PREFLIGHT_TIMEOUT_MS = 15_000;
 const AI_GATEWAY_PROVIDERS = new Set([
@@ -341,6 +346,7 @@ export function createInstanceConfigs({
     cloudflare: `${slug}-cloudflare`,
     confluence: `${slug}-confluence`,
     homeassistant: `${slug}-homeassistant`,
+    linear: `${slug}-linear`,
     mcp: `${slug}-mcp`,
     github: `${slug}-github`,
     google: `${slug}-google`,
@@ -407,6 +413,17 @@ export function createInstanceConfigs({
   homeassistant.vars = {
     ...homeassistant.vars,
     BASE_URL: `${publicBaseUrl}/gatekeeper/homeassistant`,
+  };
+
+  const linear = baseProductionConfig(
+      root,
+      "gatekeeper-linear",
+      names.linear,
+      previousConfig(configPaths["gatekeeper-linear"]),
+  );
+  linear.vars = {
+    ...linear.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/linear`,
   };
 
   const mcp = baseProductionConfig(
@@ -508,6 +525,11 @@ export function createInstanceConfigs({
       entrypoint: "GatekeeperVendor",
     },
     {
+      binding: "GATEKEEPER_LINEAR",
+      service: names.linear,
+      entrypoint: "GatekeeperVendor",
+    },
+    {
       binding: "GATEKEEPER_MCP",
       service: names.mcp,
       entrypoint: "GatekeeperVendor",
@@ -543,6 +565,7 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_CLOUDFLARE", service: names.cloudflare },
     { binding: "GATEKEEPER_CONFLUENCE", service: names.confluence },
     { binding: "GATEKEEPER_HOMEASSISTANT", service: names.homeassistant },
+    { binding: "GATEKEEPER_LINEAR", service: names.linear },
     { binding: "GATEKEEPER_MCP", service: names.mcp },
     { binding: "GATEKEEPER_GITHUB", service: names.github },
     { binding: "GATEKEEPER_GOOGLE", service: names.google },
@@ -572,6 +595,7 @@ export function createInstanceConfigs({
       "gatekeeper-cloudflare": cloudflare,
       "gatekeeper-confluence": confluence,
       "gatekeeper-homeassistant": homeassistant,
+      "gatekeeper-linear": linear,
       "gatekeeper-mcp": mcp,
       "gatekeeper-github": github,
       "gatekeeper-google": google,
@@ -762,6 +786,16 @@ async function main() {
           .filter(([, value]) => Boolean(value))
           .map(([name]) => name),
   );
+  const linearSecrets = Object.fromEntries(LINEAR_SECRET_INPUTS.map(([name, inputEnv]) => {
+    const value = process.env[inputEnv]?.trim();
+    delete process.env[inputEnv];
+    return [name, value];
+  }));
+  const providedLinearSecretNames = new Set(
+      Object.entries(linearSecrets)
+          .filter(([, value]) => Boolean(value))
+          .map(([name]) => name),
+  );
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
@@ -795,6 +829,7 @@ async function main() {
     "@gadgets/cloudflare-gatekeeper",
     "@gadgets/confluence-gatekeeper",
     "@gadgets/homeassistant-gatekeeper",
+    "@gadgets/linear-gatekeeper",
     "@gadgets/mcp-gatekeeper",
     "@gadgets/github-gatekeeper",
     "@gadgets/google-gatekeeper",
@@ -884,6 +919,14 @@ async function main() {
         CONFLUENCE_SECRET_INPUTS.map(([name]) => name),
         providedConfluenceSecretNames,
     );
+  const linearConfigPath = instance.configPaths["gatekeeper-linear"];
+  const linearSecretAction = args.dryRun
+    ? "dry-run"
+    : planRequiredWorkerSecrets(
+        readRemoteSecretNames(linearConfigPath),
+        LINEAR_SECRET_INPUTS.map(([name]) => name),
+        providedLinearSecretNames,
+    );
 
   for (const packageName of CORE_PACKAGES) {
     const deployArgs = [
@@ -905,6 +948,9 @@ async function main() {
     }
     if (packageName === "gatekeeper-confluence" && confluenceSecretAction === "provision") {
       putRemoteSecrets(confluenceConfigPath, confluenceSecrets);
+    }
+    if (packageName === "gatekeeper-linear" && linearSecretAction === "provision") {
+      putRemoteSecrets(linearConfigPath, linearSecrets);
     }
   }
 

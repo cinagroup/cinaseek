@@ -206,6 +206,7 @@ test("creates an internal core topology with one public custom domain", () => {
     cloudflare: "cinaseek-ai-cloudflare",
     confluence: "cinaseek-ai-confluence",
     homeassistant: "cinaseek-ai-homeassistant",
+    linear: "cinaseek-ai-linear",
     mcp: "cinaseek-ai-mcp",
     github: "cinaseek-ai-github",
     google: "cinaseek-ai-google",
@@ -228,6 +229,7 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.equal(instance.configs["gatekeeper-cloudflare"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-confluence"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-homeassistant"].routes, undefined);
+  assert.equal(instance.configs["gatekeeper-linear"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-mcp"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-github"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-google"].routes, undefined);
@@ -247,6 +249,7 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_CLOUDFLARE", "cinaseek-ai-cloudflare"],
         ["GATEKEEPER_CONFLUENCE", "cinaseek-ai-confluence"],
         ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
+        ["GATEKEEPER_LINEAR", "cinaseek-ai-linear"],
         ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
         ["GATEKEEPER_GITHUB", "cinaseek-ai-github"],
         ["GATEKEEPER_GOOGLE", "cinaseek-ai-google"],
@@ -265,6 +268,7 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_CLOUDFLARE", "cinaseek-ai-cloudflare"],
         ["GATEKEEPER_CONFLUENCE", "cinaseek-ai-confluence"],
         ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
+        ["GATEKEEPER_LINEAR", "cinaseek-ai-linear"],
         ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
         ["GATEKEEPER_GITHUB", "cinaseek-ai-github"],
         ["GATEKEEPER_GOOGLE", "cinaseek-ai-google"],
@@ -286,6 +290,10 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.equal(
       instance.configs["gatekeeper-homeassistant"].vars.BASE_URL,
       "https://cinaseek.ai/gatekeeper/homeassistant",
+  );
+  assert.equal(
+      instance.configs["gatekeeper-linear"].vars.BASE_URL,
+      "https://cinaseek.ai/gatekeeper/linear",
   );
   assert.equal(
       instance.configs["gatekeeper-mcp"].vars.BASE_URL,
