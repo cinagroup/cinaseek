@@ -42,7 +42,7 @@ describe("Workers AI REST adapter", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       expect(url.pathname).toContain(`/accounts/${CREDENTIALS.accountId}/ai/models/search`);
-      expect(url.searchParams.get("task")).toBe("Text Generation");
+      expect(url.searchParams.get("task")).toBe("text-generation");
       expect(url.searchParams.get("per_page")).toBe("50");
       expect(url.searchParams.has("include_deprecated")).toBe(false);
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${CREDENTIALS.apiToken}`);
@@ -70,6 +70,26 @@ describe("Workers AI REST adapter", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("falls back to the provider task display name when its task id returns no models", async () => {
+    const queries: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const task = new URL(String(input)).searchParams.get("task")!;
+      queries.push(task);
+      return Response.json({
+        success: true,
+        result: task === "Text Generation"
+          ? [{ id: "@cf/meta/chat", name: "Chat", task: { name: task } }]
+          : [],
+        result_info: { total_pages: 1 },
+      });
+    }));
+
+    await expect(new WorkersAiApi(CREDENTIALS).listModels("text-generation")).resolves.toEqual([
+      { id: "@cf/meta/chat", name: "Chat", task: "text-generation" },
+    ]);
+    expect(queries).toEqual(["text-generation", "Text Generation"]);
+  });
+
   it("queries every supported task when building the complete catalog", async () => {
     const tasks: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -86,12 +106,12 @@ describe("Workers AI REST adapter", () => {
     const models = await new WorkersAiApi(CREDENTIALS).listModels();
     expect(models).toHaveLength(6);
     expect(tasks.toSorted()).toEqual([
-      "Automatic Speech Recognition",
-      "Text Classification",
-      "Text Embeddings",
-      "Text Generation",
-      "Text-to-Image",
-      "Text-to-Speech",
+      "automatic-speech-recognition",
+      "embeddings",
+      "text-classification",
+      "text-generation",
+      "text-to-image",
+      "text-to-speech",
     ]);
   });
 

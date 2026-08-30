@@ -53,6 +53,7 @@ type WorkersAiLogFields = {
   vendorId: string;
   modelId?: string;
   task?: WorkersAiTask;
+  modelCount?: number;
   status?: number;
   codes?: number[];
 };
@@ -66,7 +67,7 @@ const logger = createLogger<WorkersAiLogFields>({
 const NONCE_BYTES = 32;
 const NONCE_LIFETIME_MS = 10 * 60 * 1000;
 const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
-const CATALOG_CACHE_VERSION = 2;
+const CATALOG_CACHE_VERSION = 3;
 const SCHEMA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CONNECT_PATH = "connect";
 const SUPPORTED_RESOURCE_PATH = "_resource/model";
@@ -326,6 +327,23 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
 
 /** Credential store and account-scoped model catalog cache. */
 export class UserAccount extends DurableObject<Env> {
+  #catalogKey(task?: WorkersAiTask): string {
+    return task ? `catalog:${task}` : "catalog";
+  }
+
+  #cacheCatalog(models: WorkersAiModelInfo[], task?: WorkersAiTask): void {
+    const key = this.#catalogKey(task);
+    if (models.length === 0) {
+      this.ctx.storage.kv.delete(key);
+      return;
+    }
+    this.ctx.storage.kv.put<StoredCatalog>(key, {
+      version: CATALOG_CACHE_VERSION,
+      models,
+      expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
+    });
+  }
+
   async setCallback(callback: Fetcher<GatekeeperConnectCallback>, nonce: string): Promise<void> {
     if (!this.ctx.storage.kv.get<WorkersAiCredentials>("credentials")) {
       await this.ctx.storage.setAlarm(Date.now() + 60 * 60 * 1000);
@@ -371,14 +389,16 @@ export class UserAccount extends DurableObject<Env> {
       }
       return { kind: "error", message: error instanceof Error ? error.message : "Unable to validate credentials." };
     }
+    if (models.length === 0) {
+      return {
+        kind: "error",
+        message: "Cloudflare returned no supported Workers AI models for these credentials.",
+      };
+    }
 
     this.ctx.storage.kv.delete("nonce");
     this.ctx.storage.kv.put("credentials", credentials);
-    this.ctx.storage.kv.put<StoredCatalog>("catalog", {
-      version: CATALOG_CACHE_VERSION,
-      models,
-      expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
-    });
+    this.#cacheCatalog(models);
     const callback = this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("callback");
     if (!callback) {
       this.ctx.storage.kv.delete("credentials");
@@ -409,24 +429,34 @@ export class UserAccount extends DurableObject<Env> {
   }
 
   async listModels(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
-    const cached = this.ctx.storage.kv.get<StoredCatalog>("catalog");
+    const key = this.#catalogKey(task);
+    const cached = this.ctx.storage.kv.get<StoredCatalog>(key);
     let models: WorkersAiModelInfo[];
     if (cached?.version === CATALOG_CACHE_VERSION && cached.expiresAt > Date.now()) {
       models = cached.models;
     } else {
       try {
-        models = await new WorkersAiApi(this.getCredentials()).listModels();
-        this.ctx.storage.kv.put<StoredCatalog>("catalog", {
-          version: CATALOG_CACHE_VERSION,
-          models,
-          expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
+        models = await new WorkersAiApi(this.getCredentials()).listModels(task);
+        this.#cacheCatalog(models, task);
+        logger.info("Workers AI catalog refreshed", {
+          event: "catalog.refresh.completed",
+          task,
+          modelCount: models.length,
         });
       } catch (error) {
+        logger.warn("Workers AI catalog refresh failed", {
+          event: "catalog.refresh.failed",
+          task,
+          ...(error instanceof WorkersAiApiError && {
+            status: error.status,
+            codes: error.codes,
+          }),
+        });
         await this.#noteAuthFailure(error);
         throw error;
       }
     }
-    return task ? models.filter(model => model.task === task) : models;
+    return models;
   }
 
   async getModel(modelId: string): Promise<WorkersAiModelInfo> {

@@ -14,16 +14,19 @@ const MAX_TOKEN_LENGTH = 2048;
 const MAX_CATALOG_PAGES = 10;
 const CATALOG_PAGE_SIZE = 50;
 
-const TASK_QUERY_NAMES: Readonly<Record<WorkersAiTask, string>> = {
-  "text-generation": "Text Generation",
-  "text-embeddings": "Text Embeddings",
-  "text-to-image": "Text-to-Image",
-  "automatic-speech-recognition": "Automatic Speech Recognition",
-  "text-to-speech": "Text-to-Speech",
-  "text-classification": "Text Classification",
+const TASK_QUERY_CANDIDATES: Readonly<Record<WorkersAiTask, readonly string[]>> = {
+  "text-generation": ["text-generation", "Text Generation"],
+  "text-embeddings": ["embeddings", "text-embeddings", "Text Embeddings"],
+  "text-to-image": ["text-to-image", "Text-to-Image"],
+  "automatic-speech-recognition": [
+    "automatic-speech-recognition",
+    "Automatic Speech Recognition",
+  ],
+  "text-to-speech": ["text-to-speech", "Text-to-Speech"],
+  "text-classification": ["text-classification", "Text Classification"],
 };
 
-const SUPPORTED_TASKS = Object.keys(TASK_QUERY_NAMES) as WorkersAiTask[];
+const SUPPORTED_TASKS = Object.keys(TASK_QUERY_CANDIDATES) as WorkersAiTask[];
 
 const TASK_ALIASES = new Map<string, WorkersAiTask>([
   ["textgeneration", "text-generation"],
@@ -273,6 +276,17 @@ export class WorkersAiApi {
   }
 
   async #listModelsForTask(task: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
+    for (const taskQuery of TASK_QUERY_CANDIDATES[task]) {
+      const models = await this.#listModelsForTaskQuery(task, taskQuery);
+      if (models.length > 0) return models;
+    }
+    return [];
+  }
+
+  async #listModelsForTaskQuery(
+    task: WorkersAiTask,
+    taskQuery: string,
+  ): Promise<WorkersAiModelInfo[]> {
     const result = new Map<string, WorkersAiModelInfo>();
     for (let page = 1; page <= MAX_CATALOG_PAGES; page++) {
       const url = new URL(
@@ -280,7 +294,7 @@ export class WorkersAiApi {
       );
       url.searchParams.set("page", String(page));
       url.searchParams.set("per_page", String(CATALOG_PAGE_SIZE));
-      url.searchParams.set("task", TASK_QUERY_NAMES[task]);
+      url.searchParams.set("task", taskQuery);
       url.searchParams.set("hide_experimental", "false");
       const response = await fetch(url, {
         headers: this.#headers({ accept: "application/json" }),
