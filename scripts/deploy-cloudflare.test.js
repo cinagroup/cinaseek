@@ -181,6 +181,7 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.deepEqual(instance.names, {
     context: "cinaseek-ai-context",
     scheduler: "cinaseek-ai-scheduler",
+    workersAi: "cinaseek-ai-workers-ai",
     backend: "cinaseek-ai-backend",
     router: "cinaseek-ai-router",
   });
@@ -195,6 +196,7 @@ test("creates an internal core topology with one public custom domain", () => {
   }
   assert.equal(instance.configs["gatekeeper-context"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-scheduler"].routes, undefined);
+  assert.equal(instance.configs["gatekeeper-workers-ai"].routes, undefined);
   assert.equal(instance.configs["workshop-backend"].routes, undefined);
   assert.deepEqual(instance.configs.router.routes, [
     { pattern: "cinaseek.ai", custom_domain: true },
@@ -206,7 +208,23 @@ test("creates an internal core topology with one public custom domain", () => {
         ["WORKSHOP_BACKEND", "cinaseek-ai-backend"],
         ["GATEKEEPER_CONTEXT", "cinaseek-ai-context"],
         ["GATEKEEPER_SCHEDULER", "cinaseek-ai-scheduler"],
+        ["GATEKEEPER_WORKERS_AI", "cinaseek-ai-workers-ai"],
       ],
+  );
+  assert.deepEqual(
+      instance.configs["workshop-backend"].services.map(({ binding, service }) => [
+        binding,
+        service,
+      ]),
+      [
+        ["GATEKEEPER_CONTEXT", "cinaseek-ai-context"],
+        ["GATEKEEPER_SCHEDULER", "cinaseek-ai-scheduler"],
+        ["GATEKEEPER_WORKERS_AI", "cinaseek-ai-workers-ai"],
+      ],
+  );
+  assert.equal(
+      instance.configs["gatekeeper-workers-ai"].vars.BASE_URL,
+      "https://cinaseek.ai/gatekeeper/workers-ai",
   );
   assert.equal(instance.configs["workshop-backend"].vars.ADMINS, undefined);
   assert.equal(instance.configs["workshop-backend"].vars.CF_ACCESS_ISS, "");

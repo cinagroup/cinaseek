@@ -18,6 +18,7 @@ const VITE_CLI = join(ROOT, "node_modules", "vite", "bin", "vite.js");
 const CORE_PACKAGES = [
   "gatekeeper-context",
   "gatekeeper-scheduler",
+  "gatekeeper-workers-ai",
   "workshop-backend",
   "router",
 ];
@@ -310,6 +311,7 @@ export function createInstanceConfigs({
   const names = {
     context: `${slug}-context`,
     scheduler: `${slug}-scheduler`,
+    workersAi: `${slug}-workers-ai`,
     backend: `${slug}-backend`,
     router: `${slug}-router`,
   };
@@ -329,6 +331,17 @@ export function createInstanceConfigs({
       previousConfig(configPaths["gatekeeper-scheduler"]),
   );
   scheduler.vars = { ...scheduler.vars, BASE_URL: `${publicBaseUrl}/gatekeeper/scheduler` };
+
+  const workersAi = baseProductionConfig(
+      root,
+      "gatekeeper-workers-ai",
+      names.workersAi,
+      previousConfig(configPaths["gatekeeper-workers-ai"]),
+  );
+  workersAi.vars = {
+    ...workersAi.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/workers-ai`,
+  };
 
   const backend = baseProductionConfig(
       root,
@@ -363,6 +376,11 @@ export function createInstanceConfigs({
       service: names.scheduler,
       entrypoint: "GatekeeperVendor",
     },
+    {
+      binding: "GATEKEEPER_WORKERS_AI",
+      service: names.workersAi,
+      entrypoint: "GatekeeperVendor",
+    },
   ];
 
   const router = baseProductionConfig(
@@ -375,6 +393,7 @@ export function createInstanceConfigs({
     { binding: "WORKSHOP_BACKEND", service: names.backend },
     { binding: "GATEKEEPER_CONTEXT", service: names.context },
     { binding: "GATEKEEPER_SCHEDULER", service: names.scheduler },
+    { binding: "GATEKEEPER_WORKERS_AI", service: names.workersAi },
   ];
   router.assets = {
     ...router.assets,
@@ -396,6 +415,7 @@ export function createInstanceConfigs({
     configs: {
       "gatekeeper-context": context,
       "gatekeeper-scheduler": scheduler,
+      "gatekeeper-workers-ai": workersAi,
       "workshop-backend": backend,
       router,
     },
@@ -530,10 +550,12 @@ async function main() {
   // These two Gatekeepers embed single-file UIs generated outside their Wrangler custom builds.
   const contextDir = join(ROOT, "packages", "gatekeeper-context");
   const schedulerDir = join(ROOT, "packages", "gatekeeper-scheduler");
+  const workersAiDir = join(ROOT, "packages", "gatekeeper-workers-ai");
   const frontendDir = join(ROOT, "packages", "workshop-frontend");
   const backendDir = join(ROOT, "packages", "workshop-backend");
   run(process.execPath, [join(contextDir, "build-app.mjs")], { cwd: contextDir });
   run(process.execPath, [join(schedulerDir, "build-app.mjs")], { cwd: schedulerDir });
+  run(process.execPath, [join(ROOT, "scripts", "build-gatekeeper-configurator.ts"), workersAiDir]);
   run(process.execPath, [join(backendDir, "build-browser-runtime.mjs")], { cwd: backendDir });
   run(process.execPath, [join(backendDir, "scripts", "build-format-blueprints.mjs")], {
     cwd: backendDir,

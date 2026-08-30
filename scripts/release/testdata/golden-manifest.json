@@ -912,6 +912,50 @@
         "BASE_URL": "$PUBLIC_BASE_URL/gatekeeper/supabase"
       }
     },
+    "gatekeeper-workers-ai": {
+      "bindings": [],
+      "compatibilityDate": "2026-02-02",
+      "compatibilityFlags": [
+        "allow_irrevocable_stub_storage"
+      ],
+      "inputs": [],
+      "installable": true,
+      "kind": "gatekeeper",
+      "mainModule": "workers-ai.js",
+      "migrations": [
+        {
+          "new_sqlite_classes": [
+            "UserAccount",
+            "WorkersAiEmbeddingsGatekeeper",
+            "WorkersAiImageGenerationGatekeeper",
+            "WorkersAiSpeechRecognitionGatekeeper",
+            "WorkersAiTextToSpeechGatekeeper",
+            "WorkersAiClassificationGatekeeper"
+          ],
+          "tag": "v0"
+        }
+      ],
+      "modules": [
+        {
+          "name": "workers-ai.js",
+          "r2Key": "blobs/modules/d27317204645f53b0a58d45ae42c99322497e60a47b5f94ee353c9cb57c165f8",
+          "sha256": "d27317204645f53b0a58d45ae42c99322497e60a47b5f94ee353c9cb57c165f8",
+          "size": 63,
+          "type": "esm"
+        }
+      ],
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1,
+        "logs": {
+          "invocation_logs": false
+        }
+      },
+      "shortName": "workers-ai",
+      "vars": {
+        "BASE_URL": "$PUBLIC_BASE_URL/gatekeeper/workers-ai"
+      }
+    },
     "gatekeeper-zoominfo": {
       "bindings": [
         {

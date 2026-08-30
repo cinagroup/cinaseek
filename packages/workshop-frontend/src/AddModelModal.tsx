@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from './i18n'
 import { Dialog, Button, Input, Select, SensitiveInput, Collapsible, Switch, useKumoToastManager } from '@cloudflare/kumo'
 import { AiChatAuthorInfo, AiModelConfig, AiModelProvider, AiGatewayInfo, SUGGESTED_MODELS } from '@gadgets/workshop-shared/api'
+import type { WorkersAiModelInfo } from '@gadgets/workshop-shared/workers-ai-gatekeeper'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
 
@@ -75,8 +76,17 @@ function buildOptions(gatewayMode: boolean, enabledProviders: Set<string> | null
   for (const provider of providerOrder) {
     if (enabledProviders && provider !== 'cloudflare' && !enabledProviders.has(provider)) continue
 
+    if (provider === 'cloudflare') {
+      options.push({
+        value: encodeSelection(provider),
+        label: PROVIDER_LABELS[provider],
+        provider,
+      })
+      continue
+    }
+
     // Workers AI is always user-funded, even when other providers use deployment Gateway mode.
-    if (!gatewayMode || provider === 'cloudflare') {
+    if (!gatewayMode) {
       for (const [modelId, model] of Object.entries(SUGGESTED_MODELS[provider])) {
         options.push({
           value: encodeSelection(provider, modelId),
@@ -108,9 +118,12 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
   const [modelId, setModelId] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [apiToken, setApiToken] = useState('')
-  const [accountId, setAccountId] = useState('')
   const [apiUrl, setApiUrl] = useState('')
   const [shareWithUsers, setShareWithUsers] = useState(false)
+  const [workersAiConnected, setWorkersAiConnected] = useState(false)
+  const [workersAiAccountName, setWorkersAiAccountName] = useState('')
+  const [workersAiModels, setWorkersAiModels] = useState<WorkersAiModelInfo[]>([])
+  const [workersAiLoading, setWorkersAiLoading] = useState(false)
 
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -131,13 +144,42 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       setModelId('')
       setDisplayName('')
       setApiToken('')
-      setAccountId('')
       setApiUrl('')
       setShareWithUsers(false)
+      setWorkersAiConnected(false)
+      setWorkersAiAccountName('')
+      setWorkersAiModels([])
+      setWorkersAiLoading(false)
       setErrors({})
       setAdvancedOpen(false)
     }
   }, [visible])
+
+  const loadWorkersAi = useCallback(async () => {
+    setWorkersAiLoading(true)
+    try {
+      const connection = await authenticatedApi.getWorkersAiConnectionInfo()
+      setWorkersAiConnected(connection !== null)
+      setWorkersAiAccountName(connection?.displayName ?? '')
+      setWorkersAiModels(connection
+        ? await authenticatedApi.listWorkersAiCatalog('text-generation')
+        : [])
+    } catch (error) {
+      console.error('Failed to load Workers AI connection:', error)
+      setWorkersAiConnected(false)
+      setWorkersAiModels([])
+    } finally {
+      setWorkersAiLoading(false)
+    }
+  }, [authenticatedApi])
+
+  useEffect(() => {
+    if (!visible || selection?.provider !== 'cloudflare') return
+    void loadWorkersAi()
+    const refreshAfterAccountWindow = () => { void loadWorkersAi() }
+    window.addEventListener('focus', refreshAfterAccountWindow)
+    return () => window.removeEventListener('focus', refreshAfterAccountWindow)
+  }, [visible, selection?.provider, loadWorkersAi])
 
   const handleModelSelect = (value: string) => {
     setSelectValue(value)
@@ -153,7 +195,6 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       setDisplayName(sel.displayName)
     }
     setApiToken('')
-    setAccountId('')
     setShareWithUsers(false)
     setApiUrl(sel.provider === 'ollama' ? 'http://localhost:11434' : '')
   }
@@ -165,7 +206,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       newErrors.selection = gatewayMode ? t('addDialog.errors.selectProvider') : t('addDialog.errors.selectModel')
     }
 
-    if (selection?.type === 'custom') {
+    if (selection?.type === 'custom' && selection.provider !== 'cloudflare') {
       if (!modelId.trim()) newErrors.modelId = t('addDialog.errors.modelId')
       if (!displayName.trim()) newErrors.displayName = t('addDialog.errors.displayName')
     }
@@ -173,18 +214,15 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     const isOllama = selection?.provider === 'ollama'
     const isOpenAiCompatible = selection?.provider === 'openai-compatible'
     const isCloudflare = selection?.provider === 'cloudflare'
-    const showCredentials = !gatewayMode || isCloudflare
+    const showCredentials = !gatewayMode && !isCloudflare
+
+    if (isCloudflare) {
+      if (!workersAiConnected) newErrors.workersAi = t('addDialog.errors.workersAiConnection')
+      if (!modelId) newErrors.modelId = t('addDialog.errors.workersAiModel')
+    }
 
     if (showCredentials && selection && !isOllama && !isOpenAiCompatible && !apiToken.trim()) {
       newErrors.apiToken = t('addDialog.errors.apiToken')
-    }
-
-    if (showCredentials && isCloudflare) {
-      if (!accountId.trim()) {
-        newErrors.accountId = t('addDialog.errors.accountId')
-      } else if (!/^[0-9a-f]{32}$/i.test(accountId.trim())) {
-        newErrors.accountId = t('addDialog.errors.accountIdFormat')
-      }
     }
 
     if (((showCredentials && isOllama) || isOpenAiCompatible) && !apiUrl.trim()) {
@@ -217,10 +255,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       const config: AiModelConfig = {
         provider: selection!.provider,
         model: finalModelId,
-        apiToken: gatewayMode && selection!.provider !== 'cloudflare' ? '' : apiToken.trim(),
-        ...((!gatewayMode || selection!.provider === 'cloudflare') && accountId.trim() && {
-          accountId: accountId.trim(),
-        }),
+        apiToken: gatewayMode || selection!.provider === 'cloudflare' ? '' : apiToken.trim(),
         ...(selection!.provider === 'cloudflare' && shareWithUsers && {
           shareWithUsers: true,
         }),
@@ -240,17 +275,38 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     }
   }
 
+  const handleConnectWorkersAi = async () => {
+    try {
+      const { url } = await authenticatedApi.connectAccount('workers_ai')
+      const popup = window.open(url, 'cinaseek-workers-ai', 'popup,width=560,height=720')
+      if (!popup) {
+        toasts.add({ title: t('addDialog.workersAiPopupBlocked'), variant: 'error' })
+      }
+    } catch (error) {
+      console.error('Failed to start Workers AI connection:', error)
+      toasts.add({ title: t('addDialog.workersAiConnectFailed'), variant: 'error' })
+    }
+  }
+
+  const handleWorkersAiModelSelect = (value: string) => {
+    const model = workersAiModels.find(candidate => candidate.id === value)
+    setModelId(value)
+    setDisplayName(model?.name ?? value)
+    setShareWithUsers(false)
+    setErrors(previous => ({ ...previous, modelId: '', workersAi: '' }))
+  }
+
   const options = buildOptions(gatewayMode, enabledProviders).map((option) =>
-    option.value.startsWith('other-')
+    option.value.startsWith('other-') && option.provider !== 'cloudflare'
       ? { ...option, label: t('addDialog.otherProvider', { provider: PROVIDER_LABELS[option.provider as AiModelProvider] || option.provider }) }
       : option)
-  const showCustomFields = selection?.type === 'custom'
-  const example = selection ? exampleModel(selection.provider) : null
   const isOllama = selection?.provider === 'ollama'
   const isOpenAiCompatible = selection?.provider === 'openai-compatible'
   const isCloudflare = selection?.provider === 'cloudflare'
-  const showCredentials = !gatewayMode || isCloudflare
-  const canShare = isCloudflare && selection?.type === 'suggested'
+  const showCustomFields = selection?.type === 'custom' && !isCloudflare
+  const example = selection ? exampleModel(selection.provider) : null
+  const showCredentials = !gatewayMode && !isCloudflare
+  const canShare = isCloudflare && modelId in SUGGESTED_MODELS.cloudflare
 
   // Group options by provider for rendering with visual separators.
   const groupedOptions: { provider: string; items: typeof options }[] = []
@@ -301,6 +357,59 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
             ))}
           </Select>
 
+          {isCloudflare && (
+            <div className="space-y-3 rounded-xl border border-kumo-line bg-kumo-tint px-4 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-kumo-default">
+                    {workersAiConnected
+                      ? t('addDialog.workersAiConnected', { account: workersAiAccountName })
+                      : t('addDialog.workersAiConnectionTitle')}
+                  </p>
+                  <p className="mt-0.5 text-[12px] leading-4 text-kumo-subtle">
+                    {workersAiConnected
+                      ? t('addDialog.workersAiConnectedDescription')
+                      : t('addDialog.workersAiConnectionDescription')}
+                  </p>
+                </div>
+                {workersAiConnected ? (
+                  <Button variant="secondary" size="sm" onClick={() => void loadWorkersAi()}
+                    loading={workersAiLoading}>
+                    {t('addDialog.refreshWorkersAi')}
+                  </Button>
+                ) : (
+                  <Button variant="primary" size="sm" onClick={() => void handleConnectWorkersAi()}
+                    loading={workersAiLoading}>
+                    {t('addDialog.connectWorkersAi')}
+                  </Button>
+                )}
+              </div>
+
+              {workersAiConnected && (
+                <Select
+                  label={t('addDialog.workersAiModel')}
+                  className="w-full text-sm"
+                  placeholder={workersAiLoading
+                    ? t('addDialog.loadingWorkersAiModels')
+                    : t('addDialog.chooseWorkersAiModel')}
+                  value={modelId || undefined}
+                  onValueChange={(value) => handleWorkersAiModelSelect(value as string)}
+                  error={errors.modelId}
+                  renderValue={(value) => workersAiModels.find(model => model.id === value)?.name ?? String(value)}
+                >
+                  {workersAiModels.map(model => (
+                    <Select.Option key={model.id} value={model.id}>
+                      {model.name} · {model.id}
+                    </Select.Option>
+                  ))}
+                </Select>
+              )}
+              {errors.workersAi && (
+                <p className="text-xs text-kumo-danger">{errors.workersAi}</p>
+              )}
+            </div>
+          )}
+
           {/* Custom model fields */}
           {showCustomFields && (
             <>
@@ -324,19 +433,6 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
                 variant={errors.displayName ? 'error' : 'default'}
               />
             </>
-          )}
-
-          {/* Cloudflare account ID (the Workers AI REST endpoint is account-scoped) */}
-          {showCredentials && isCloudflare && (
-            <Input
-              label={t('addDialog.accountId')}
-              placeholder="e.g., 0123456789abcdef0123456789abcdef"
-              description={t('addDialog.accountIdDescription')}
-              value={accountId}
-              onChange={(e) => { setAccountId(e.target.value); setErrors(prev => ({ ...prev, accountId: '' })) }}
-              error={errors.accountId}
-              variant={errors.accountId ? 'error' : 'default'}
-            />
           )}
 
           {/* API Token */}

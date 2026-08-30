@@ -27,6 +27,7 @@ import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { AccountDescription, ActionKind, ActionDescription, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
 import type { CodeChange } from "./code-change.js";
 import type { UiFeatureFlags } from "./feature-flags.js";
+import type { WorkersAiModelInfo, WorkersAiTask } from "./workers-ai-gatekeeper.js";
 
 export const SERVICE_SALT = new Uint8Array([
   0xd9, 0x4e, 0x54, 0x1d, 0x29, 0xc1, 0x03, 0x74, 0x73, 0x7e, 0xb3, 0xe3, 0x34, 0x6d, 0x8f, 0x21
@@ -402,6 +403,12 @@ export interface AuthenticatedApi extends RpcTarget {
 
   /** Returns credential ownership and shared-pool availability for Workers AI models. */
   listWorkersAiModelAccess(): Promise<WorkersAiModelAccessInfo[]>;
+
+  /** Returns the user's Workers AI connection summary, or null when no valid account is linked. */
+  getWorkersAiConnectionInfo(): Promise<WorkersAiConnectionInfo | null>;
+
+  /** Lists models visible to the user's linked Workers AI account without exposing credentials. */
+  listWorkersAiCatalog(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]>;
 
   /**
    * Set the model to use for simple quick tasks, like generating chat titles. Set null to
@@ -1180,6 +1187,12 @@ export type WorkersAiModelAccessInfo = {
   availableCredentials: number;
 };
 
+/** Safe UI metadata for the user's linked Workers AI account. */
+export type WorkersAiConnectionInfo = {
+  /** Display label supplied by the Workers AI gatekeeper. */
+  displayName: string;
+};
+
 /** Configuration specifying how to connect to an AI model provider. */
 export type AiModelConfig = {
   /** Which AI provider hosts the model? */
@@ -1188,7 +1201,10 @@ export type AiModelConfig = {
   /** Name of the specific model, as specified to the provider's API. */
   model: string;
 
-  /** Secret API token for the respective provider, for billing purposes. */
+  /**
+   * Secret API token for the respective provider, for billing purposes. Empty for Workers AI
+   * models that use the user's linked Workers AI account; retained for legacy direct credentials.
+   */
   apiToken: string;
 
   /**
@@ -1198,8 +1214,8 @@ export type AiModelConfig = {
   shareWithUsers?: boolean;
 
   /**
-   * Cloudflare account ID owning the Workers AI deployment the token authorizes. Required for
-   * provider "cloudflare" (whose REST endpoint is account-scoped); unused for other providers.
+   * Cloudflare account ID owning the Workers AI deployment the token authorizes. Present only on
+   * legacy direct Workers AI configurations; new configurations resolve it from the linked account.
    */
   accountId?: string;
 

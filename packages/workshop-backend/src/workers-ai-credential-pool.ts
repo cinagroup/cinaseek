@@ -195,6 +195,7 @@ export class WorkersAiCredentialPool extends DurableObject<Cloudflare.Env> {
         // ID). Record only the error class so credentials and account identifiers stay out of logs.
         statusText: error instanceof Error ? error.name : "UnknownError",
       });
+      // oxlint-disable-next-line eslint/preserve-caught-error -- The upstream error may contain the contributor's account ID.
       throw new Error("Shared Workers AI upstream request failed.");
     }
 

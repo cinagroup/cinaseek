@@ -1,8 +1,14 @@
 import { RpcStub } from "capnweb";
-import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, WorkersAiModelAccessInfo, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
 import { Gatekeeper, GatekeeperUser, GatekeeperUserVerifier, GatekeeperVendor, AccountDescription, VendorDescription, GatekeeperConnectCallback, SupportedResource, ResourceConfiguratorFrame, AppUiContext, GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import { shouldAutoProvisionAccount, ambientGatekeeperMode } from "./provisioning-policy.js";
 import { CloudflareGatekeeperUser } from "@gadgets/workshop-shared/cloudflare-gatekeeper";
+import type {
+  WorkersAiCredentials,
+  WorkersAiGatekeeperUser,
+  WorkersAiModelInfo,
+  WorkersAiTask,
+} from "@gadgets/workshop-shared/workers-ai-gatekeeper";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { createTypedStorage, collection } from "@gadgets/typed-storage";
 import { createWorkshopLogger } from "./observability";
@@ -74,6 +80,9 @@ function areCredentialsValid(record: ConnectedAccountRecord): boolean {
  * Gateway billing flow is Cloudflare-specific, so several places key off this literal.
  */
 export const CLOUDFLARE_VENDOR_ID = "cloudflare";
+
+/** Vendor id for user-funded Workers AI account connections. */
+export const WORKERS_AI_VENDOR_ID = "workers_ai";
 
 export type UserAiModelRecord = {
   profile: AiChatAuthorInfo;
@@ -540,6 +549,65 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     return this.ctx.id.toString();
   }
 
+  #workersAiGatekeeperAccount(): Fetcher<WorkersAiGatekeeperUser> | null {
+    for (const record of this.#connectedAccountRecords()) {
+      if (record.vendorId === WORKERS_AI_VENDOR_ID && areCredentialsValid(record)) {
+        return record.account as unknown as Fetcher<WorkersAiGatekeeperUser>;
+      }
+    }
+    return null;
+  }
+
+  async getWorkersAiConnectionInfo(): Promise<WorkersAiConnectionInfo | null> {
+    for (const record of this.#connectedAccountRecords()) {
+      if (record.vendorId === WORKERS_AI_VENDOR_ID && areCredentialsValid(record)) {
+        return { displayName: record.description.displayName ?? "Cloudflare Workers AI" };
+      }
+    }
+    return null;
+  }
+
+  async listWorkersAiCatalog(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
+    const account = this.#workersAiGatekeeperAccount();
+    return account ? account.listModels(task) : [];
+  }
+
+  async #workersAiCredentials(config?: AiModelConfig): Promise<WorkersAiCredentials | null> {
+    if (config?.accountId || config?.apiToken) {
+      if (!config.accountId || !config.apiToken) {
+        throw new Error("Legacy Workers AI credentials are incomplete.");
+      }
+      return normalizeWorkersAiCredentials(config.accountId, config.apiToken);
+    }
+    const account = this.#workersAiGatekeeperAccount();
+    return account ? account.getWorkersAiCredentials() : null;
+  }
+
+  async #removeSharedWorkersAiCredentials(): Promise<void> {
+    await Promise.all([...this.storage.aiModels.list()]
+      .filter(model => model.config.provider === "cloudflare" && model.config.shareWithUsers)
+      .map(model => this.#removeWorkersAiPoolCredential(model.config.model)));
+  }
+
+  async #restoreSharedWorkersAiCredentials(credentials: WorkersAiCredentials): Promise<void> {
+    await Promise.all([...this.storage.aiModels.list()]
+      .filter(model => model.config.provider === "cloudflare" && model.config.shareWithUsers)
+      .map(async model => {
+        try {
+          await this.#upsertWorkersAiPoolCredential(
+            model.config.model, credentials.accountId, credentials.apiToken);
+        } catch (error) {
+          // Reconnecting the source account must not fail because one optional pool shard is down.
+          // The credential remains usable privately and can be re-shared from Providers later.
+          logger.warn("failed to restore shared Workers AI credential", {
+            event: "workers_ai.pool.credential.restore.failed",
+            modelId: model.config.model,
+            error,
+          });
+        }
+      }));
+  }
+
   #workersAiPool(modelId: string): DurableObjectStub<WorkersAiCredentialPool> {
     return this.workersAiPools.getByName(modelId);
   }
@@ -582,7 +650,13 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   async #resolveAvailableModel(modelId: string): Promise<UserAiModelRecord | undefined> {
     const stored = this.storage.aiModels.get(modelId);
     // User-supplied Workers AI credentials always override deployment AI Gateway configuration.
-    if (stored?.config.provider === "cloudflare") return stored;
+    if (stored?.config.provider === "cloudflare") {
+      const credentials = await this.#workersAiCredentials(stored.config);
+      return credentials ? {
+        profile: stored.profile,
+        config: { ...stored.config, ...credentials },
+      } : undefined;
+    }
 
     const gatewayModel = getAiGatewayConfig(this.env)?.resolveModel(modelId);
     if (gatewayModel) return gatewayModel;
@@ -646,20 +720,22 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     const wasShared = previous?.config.provider === "cloudflare" &&
         previous.config.shareWithUsers === true;
     let storedConfig = config;
+    let workersAiCredentials: WorkersAiCredentials | null = null;
     if (config.provider === "cloudflare") {
-      if (!config.accountId || !config.apiToken) {
-        throw new Error(
-            "Workers AI requires your Cloudflare Account ID and Workers AI API Token.");
+      workersAiCredentials = await this.#workersAiCredentials(config);
+      if (!workersAiCredentials) {
+        throw new Error("Connect a Cloudflare Workers AI account before adding this model.");
       }
-      const { accountId, apiToken } = normalizeWorkersAiCredentials(
-          config.accountId, config.apiToken);
       if (config.shareWithUsers && !isShareableWorkersAiModelId(config.model)) {
         throw new Error("Only curated Workers AI models can be shared.");
       }
+      if (config.accountId && config.apiToken) {
+        storedConfig = { ...config, ...workersAiCredentials };
+      } else {
+        storedConfig = { ...config, apiToken: "", accountId: undefined };
+      }
       storedConfig = {
-        ...config,
-        accountId,
-        apiToken,
+        ...storedConfig,
         ...(config.shareWithUsers ? { shareWithUsers: true } : { shareWithUsers: undefined }),
       };
     }
@@ -668,8 +744,9 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     this.storage.aiModels.put({profile, config: storedConfig});
     try {
       if (storedConfig.provider === "cloudflare" && storedConfig.shareWithUsers) {
+        if (!workersAiCredentials) throw new Error("Workers AI credentials are unavailable.");
         await this.#upsertWorkersAiPoolCredential(
-            storedConfig.model, storedConfig.accountId!, storedConfig.apiToken);
+            storedConfig.model, workersAiCredentials.accountId, workersAiCredentials.apiToken);
       } else if (wasShared) {
         await this.#removeWorkersAiPoolCredential(previous.config.model);
       }
@@ -707,14 +784,20 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     if (!isShareableWorkersAiModelId(model.config.model)) {
       throw new Error("Only curated Workers AI models can be shared.");
     }
-    if (model.config.shareWithUsers === shared) return;
-    if (!model.config.accountId || !model.config.apiToken) {
-      throw new Error("Workers AI credentials are missing. Delete and re-add this model.");
+    if (model.config.shareWithUsers === shared && !shared) return;
+    const credentials = await this.#workersAiCredentials(model.config);
+    if (!credentials) throw new Error("Reconnect your Cloudflare Workers AI account first.");
+    if (model.config.shareWithUsers === shared) {
+      if (shared) {
+        await this.#upsertWorkersAiPoolCredential(
+          model.config.model, credentials.accountId, credentials.apiToken);
+      }
+      return;
     }
 
     if (shared) {
       await this.#upsertWorkersAiPoolCredential(
-          model.config.model, model.config.accountId, model.config.apiToken);
+          model.config.model, credentials.accountId, credentials.apiToken);
     } else {
       await this.#removeWorkersAiPoolCredential(model.config.model);
     }
@@ -1691,6 +1774,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
         });
         return;
       }
+      if (account.vendorId === WORKERS_AI_VENDOR_ID) {
+        // Shared-pool entries carry a copy of the linked secret, so remove them before revoking
+        // the source account. A failed cleanup blocks disconnect rather than orphaning credentials.
+        await this.#removeSharedWorkersAiCredentials();
+      }
       await account.account.revoke();
       this.storage.connectedAccounts.delete(accountId);
       // Disconnecting the Cloudflare account also clears the AI Gateway billing state (selected
@@ -1807,6 +1895,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     }
 
     this.storage.connectedAccounts.put(record);
+    if (record.vendorId === WORKERS_AI_VENDOR_ID) {
+      const account = record.account as unknown as Fetcher<WorkersAiGatekeeperUser>;
+      await this.#restoreSharedWorkersAiCredentials(await account.getWorkersAiCredentials());
+    }
   }
 
   async markCredentialsExpired(accountId: number) {
@@ -1814,6 +1906,9 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     if (!record) throw new Error("No such account.");
 
     if (!record.credentialsExpired) {
+      if (record.vendorId === WORKERS_AI_VENDOR_ID) {
+        await this.#removeSharedWorkersAiCredentials();
+      }
       record.credentialsExpired = true;
       this.storage.connectedAccounts.put(record);
     }
@@ -1828,6 +1923,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     record.credentialsExpired = false;
     record.credentialExpiresAt = expiresAt;
     this.storage.connectedAccounts.put(record);
+    if (record.vendorId === WORKERS_AI_VENDOR_ID) {
+      const account = record.account as unknown as Fetcher<WorkersAiGatekeeperUser>;
+      await this.#restoreSharedWorkersAiCredentials(await account.getWorkersAiCredentials());
+    }
   }
 
   async getGatekeeperClassFor(accountId: number, url: string)
