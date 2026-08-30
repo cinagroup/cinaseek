@@ -27,6 +27,7 @@ const CORE_PACKAGES = [
   "gatekeeper-linear",
   "gatekeeper-notion",
   "gatekeeper-supabase",
+  "gatekeeper-slack",
   "gatekeeper-mcp",
   "gatekeeper-github",
   "gatekeeper-google",
@@ -64,6 +65,10 @@ const NOTION_SECRET_INPUTS = [
 const SUPABASE_SECRET_INPUTS = [
   ["CLIENT_ID", "CINASEEK_SUPABASE_CLIENT_ID"],
   ["CLIENT_SECRET", "CINASEEK_SUPABASE_CLIENT_SECRET"],
+];
+const SLACK_SECRET_INPUTS = [
+  ["CLIENT_ID", "CINASEEK_SLACK_CLIENT_ID"],
+  ["CLIENT_SECRET", "CINASEEK_SLACK_CLIENT_SECRET"],
 ];
 const ACCESS_PREFLIGHT_TIMEOUT_MS = 15_000;
 const AI_GATEWAY_PROVIDERS = new Set([
@@ -359,6 +364,7 @@ export function createInstanceConfigs({
     linear: `${slug}-linear`,
     notion: `${slug}-notion`,
     supabase: `${slug}-supabase`,
+    slack: `${slug}-slack`,
     mcp: `${slug}-mcp`,
     github: `${slug}-github`,
     google: `${slug}-google`,
@@ -458,6 +464,17 @@ export function createInstanceConfigs({
   supabase.vars = {
     ...supabase.vars,
     BASE_URL: `${publicBaseUrl}/gatekeeper/supabase`,
+  };
+
+  const slack = baseProductionConfig(
+      root,
+      "gatekeeper-slack",
+      names.slack,
+      previousConfig(configPaths["gatekeeper-slack"]),
+  );
+  slack.vars = {
+    ...slack.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/slack`,
   };
 
   const mcp = baseProductionConfig(
@@ -574,6 +591,11 @@ export function createInstanceConfigs({
       entrypoint: "GatekeeperVendor",
     },
     {
+      binding: "GATEKEEPER_SLACK",
+      service: names.slack,
+      entrypoint: "GatekeeperVendor",
+    },
+    {
       binding: "GATEKEEPER_MCP",
       service: names.mcp,
       entrypoint: "GatekeeperVendor",
@@ -612,6 +634,7 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_LINEAR", service: names.linear },
     { binding: "GATEKEEPER_NOTION", service: names.notion },
     { binding: "GATEKEEPER_SUPABASE", service: names.supabase },
+    { binding: "GATEKEEPER_SLACK", service: names.slack },
     { binding: "GATEKEEPER_MCP", service: names.mcp },
     { binding: "GATEKEEPER_GITHUB", service: names.github },
     { binding: "GATEKEEPER_GOOGLE", service: names.google },
@@ -644,6 +667,7 @@ export function createInstanceConfigs({
       "gatekeeper-linear": linear,
       "gatekeeper-notion": notion,
       "gatekeeper-supabase": supabase,
+      "gatekeeper-slack": slack,
       "gatekeeper-mcp": mcp,
       "gatekeeper-github": github,
       "gatekeeper-google": google,
@@ -864,6 +888,16 @@ async function main() {
           .filter(([, value]) => Boolean(value))
           .map(([name]) => name),
   );
+  const slackSecrets = Object.fromEntries(SLACK_SECRET_INPUTS.map(([name, inputEnv]) => {
+    const value = process.env[inputEnv]?.trim();
+    delete process.env[inputEnv];
+    return [name, value];
+  }));
+  const providedSlackSecretNames = new Set(
+      Object.entries(slackSecrets)
+          .filter(([, value]) => Boolean(value))
+          .map(([name]) => name),
+  );
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
@@ -900,6 +934,7 @@ async function main() {
     "@gadgets/linear-gatekeeper",
     "@gadgets/notion-gatekeeper",
     "@gadgets/supabase-gatekeeper",
+    "@gadgets/slack-gatekeeper",
     "@gadgets/mcp-gatekeeper",
     "@gadgets/github-gatekeeper",
     "@gadgets/google-gatekeeper",
@@ -1013,6 +1048,14 @@ async function main() {
         SUPABASE_SECRET_INPUTS.map(([name]) => name),
         providedSupabaseSecretNames,
     );
+  const slackConfigPath = instance.configPaths["gatekeeper-slack"];
+  const slackSecretAction = args.dryRun
+    ? "dry-run"
+    : planRequiredWorkerSecrets(
+        readRemoteSecretNames(slackConfigPath),
+        SLACK_SECRET_INPUTS.map(([name]) => name),
+        providedSlackSecretNames,
+    );
 
   for (const packageName of CORE_PACKAGES) {
     const deployArgs = [
@@ -1043,6 +1086,9 @@ async function main() {
     }
     if (packageName === "gatekeeper-supabase" && supabaseSecretAction === "provision") {
       putRemoteSecrets(supabaseConfigPath, supabaseSecrets);
+    }
+    if (packageName === "gatekeeper-slack" && slackSecretAction === "provision") {
+      putRemoteSecrets(slackConfigPath, slackSecrets);
     }
   }
 
