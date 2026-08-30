@@ -25,6 +25,7 @@ const CORE_PACKAGES = [
   "gatekeeper-confluence",
   "gatekeeper-homeassistant",
   "gatekeeper-linear",
+  "gatekeeper-notion",
   "gatekeeper-mcp",
   "gatekeeper-github",
   "gatekeeper-google",
@@ -54,6 +55,10 @@ const CONFLUENCE_SECRET_INPUTS = [
 const LINEAR_SECRET_INPUTS = [
   ["CLIENT_ID", "CINASEEK_LINEAR_CLIENT_ID"],
   ["CLIENT_SECRET", "CINASEEK_LINEAR_CLIENT_SECRET"],
+];
+const NOTION_SECRET_INPUTS = [
+  ["CLIENT_ID", "CINASEEK_NOTION_CLIENT_ID"],
+  ["CLIENT_SECRET", "CINASEEK_NOTION_CLIENT_SECRET"],
 ];
 const ACCESS_PREFLIGHT_TIMEOUT_MS = 15_000;
 const AI_GATEWAY_PROVIDERS = new Set([
@@ -347,6 +352,7 @@ export function createInstanceConfigs({
     confluence: `${slug}-confluence`,
     homeassistant: `${slug}-homeassistant`,
     linear: `${slug}-linear`,
+    notion: `${slug}-notion`,
     mcp: `${slug}-mcp`,
     github: `${slug}-github`,
     google: `${slug}-google`,
@@ -424,6 +430,17 @@ export function createInstanceConfigs({
   linear.vars = {
     ...linear.vars,
     BASE_URL: `${publicBaseUrl}/gatekeeper/linear`,
+  };
+
+  const notion = baseProductionConfig(
+      root,
+      "gatekeeper-notion",
+      names.notion,
+      previousConfig(configPaths["gatekeeper-notion"]),
+  );
+  notion.vars = {
+    ...notion.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/notion`,
   };
 
   const mcp = baseProductionConfig(
@@ -530,6 +547,11 @@ export function createInstanceConfigs({
       entrypoint: "GatekeeperVendor",
     },
     {
+      binding: "GATEKEEPER_NOTION",
+      service: names.notion,
+      entrypoint: "GatekeeperVendor",
+    },
+    {
       binding: "GATEKEEPER_MCP",
       service: names.mcp,
       entrypoint: "GatekeeperVendor",
@@ -566,6 +588,7 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_CONFLUENCE", service: names.confluence },
     { binding: "GATEKEEPER_HOMEASSISTANT", service: names.homeassistant },
     { binding: "GATEKEEPER_LINEAR", service: names.linear },
+    { binding: "GATEKEEPER_NOTION", service: names.notion },
     { binding: "GATEKEEPER_MCP", service: names.mcp },
     { binding: "GATEKEEPER_GITHUB", service: names.github },
     { binding: "GATEKEEPER_GOOGLE", service: names.google },
@@ -596,6 +619,7 @@ export function createInstanceConfigs({
       "gatekeeper-confluence": confluence,
       "gatekeeper-homeassistant": homeassistant,
       "gatekeeper-linear": linear,
+      "gatekeeper-notion": notion,
       "gatekeeper-mcp": mcp,
       "gatekeeper-github": github,
       "gatekeeper-google": google,
@@ -796,6 +820,16 @@ async function main() {
           .filter(([, value]) => Boolean(value))
           .map(([name]) => name),
   );
+  const notionSecrets = Object.fromEntries(NOTION_SECRET_INPUTS.map(([name, inputEnv]) => {
+    const value = process.env[inputEnv]?.trim();
+    delete process.env[inputEnv];
+    return [name, value];
+  }));
+  const providedNotionSecretNames = new Set(
+      Object.entries(notionSecrets)
+          .filter(([, value]) => Boolean(value))
+          .map(([name]) => name),
+  );
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
@@ -830,6 +864,7 @@ async function main() {
     "@gadgets/confluence-gatekeeper",
     "@gadgets/homeassistant-gatekeeper",
     "@gadgets/linear-gatekeeper",
+    "@gadgets/notion-gatekeeper",
     "@gadgets/mcp-gatekeeper",
     "@gadgets/github-gatekeeper",
     "@gadgets/google-gatekeeper",
@@ -927,6 +962,14 @@ async function main() {
         LINEAR_SECRET_INPUTS.map(([name]) => name),
         providedLinearSecretNames,
     );
+  const notionConfigPath = instance.configPaths["gatekeeper-notion"];
+  const notionSecretAction = args.dryRun
+    ? "dry-run"
+    : planRequiredWorkerSecrets(
+        readRemoteSecretNames(notionConfigPath),
+        NOTION_SECRET_INPUTS.map(([name]) => name),
+        providedNotionSecretNames,
+    );
 
   for (const packageName of CORE_PACKAGES) {
     const deployArgs = [
@@ -951,6 +994,9 @@ async function main() {
     }
     if (packageName === "gatekeeper-linear" && linearSecretAction === "provision") {
       putRemoteSecrets(linearConfigPath, linearSecrets);
+    }
+    if (packageName === "gatekeeper-notion" && notionSecretAction === "provision") {
+      putRemoteSecrets(notionConfigPath, notionSecrets);
     }
   }
 
