@@ -118,6 +118,7 @@ describe("SandboxedGatekeeperApp navigation", () => {
     await expect(host.subscribeTheme(themeReceiver)).resolves.toEqual({
       mode: "light",
       accentColor: "#7c3aed",
+      locale: "en",
     });
 
     await act(async () => {

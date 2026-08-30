@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react'
 import { reportIssue } from './error-reporting'
+import { contextMessage } from './i18n'
 
 export default class ErrorBoundary extends Component<{ children: ReactNode }, { crashed: boolean }> {
   state = { crashed: false }
@@ -16,8 +17,8 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
     if (!this.state.crashed) return this.props.children
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
-        <h1 className="text-lg font-semibold">Something went wrong</h1>
-        <button className="rounded-md border px-3 py-2" onClick={() => location.reload()}>Reload</button>
+        <h1 className="text-lg font-semibold">{contextMessage('Something went wrong')}</h1>
+        <button className="rounded-md border px-3 py-2" onClick={() => location.reload()}>{contextMessage('Reload')}</button>
       </main>
     )
   }

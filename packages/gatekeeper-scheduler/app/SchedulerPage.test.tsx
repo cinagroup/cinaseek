@@ -6,6 +6,7 @@ import SchedulerPage, {
   CREATE_SCHEDULE_PROMPT,
   type ScheduleManagementClient,
 } from "./SchedulerPage";
+import { setSchedulerLocale } from "./i18n";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -88,8 +89,24 @@ describe("SchedulerPage", () => {
 
   afterEach(() => {
     act(() => root?.unmount());
+    setSchedulerLocale("en");
     container?.remove();
     vi.restoreAllMocks();
+  });
+
+  it("updates the complete surface when the host locale changes", async () => {
+    const list = vi.fn<ScheduleManagementClient["list"]>(async () => ({
+      schedules: [active],
+    }));
+    setSchedulerLocale("zh-CN");
+    await render(<SchedulerPage api={{ list }} {...hostProps()} />);
+
+    expect(container!.textContent).toContain("定时任务");
+    expect(container!.textContent).toContain("创建定时任务");
+    expect(container!.textContent).toContain("工作日");
+
+    await act(async () => setSchedulerLocale("zh-TW"));
+    expect(container!.textContent).toContain("排程任務");
   });
 
   it("opens the workspace from the row and delegates prompt actions", async () => {

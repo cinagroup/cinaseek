@@ -5745,13 +5745,15 @@ class OverseerImpl implements AgentHooks {
       // them. (`allowDuringTurn` because the callers set activeAgent before starting us.)
       this.materializeChatChanges(chatId, undefined, {allowDuringTurn: true});
 
-      // Enforce the optional free-tier usage limit before starting a user-initiated turn. Callback-
-      // initiated continuations are exempt so outstanding callbacks are never stranded mid-flow.
-      // When the Cloudflare limits flow is disabled, checkUsageAndBalance() always allows.
+      // Enforce the optional platform-funded free-tier limit before a user-initiated turn.
+      // Workers AI is already funded by the model owner's private/shared credential, so it neither
+      // consumes this allowance nor requires the calling user to connect a billing Gateway.
+      // Callback-initiated continuations are exempt so outstanding callbacks are never stranded
+      // mid-flow. When Cloudflare limits are disabled, checkUsageAndBalance() always allows.
       // (This runs inside the try so the `finally` below still clears the active-agent state and
       // emits a stream "clear" — otherwise the UI would spin forever on a block.)
       let byokRouting: UserGatewayRouting | undefined;
-      if (!callbackInitiated && this.ownerId) {
+      if (!callbackInitiated && this.ownerId && aiModel.config.provider !== "cloudflare") {
         let ownerStub = this.users.get(this.users.idFromString(this.ownerId));
         let usage = await checkUsageAndBalance(this.env, ownerStub);
         if (!usage.allowed) {
@@ -5777,6 +5779,7 @@ class OverseerImpl implements AgentHooks {
           this.env, aiModel.config, initiator, {
             sessionAffinity,
             userGateway: byokRouting,
+            workersAiPools: this.ctx.exports.WorkersAiCredentialPool,
             metadata: { source: "chat", gadgetId: this.ctx.id.toString(), chatId },
           });
 
@@ -6329,7 +6332,9 @@ class OverseerImpl implements AgentHooks {
       subject: string, takenNames: Set<string>,
       quick: {config: AiModelConfig, initiator: AiChatAuthorInfo}): Promise<string | undefined> {
     try {
-      let model = getModel(this.env, quick.config, quick.initiator);
+      let model = getModel(this.env, quick.config, quick.initiator, {
+        workersAiPools: this.ctx.exports.WorkersAiCredentialPool,
+      });
       let result = await completeText(model, {
         signal: AbortSignal.timeout(10_000),
         prompt:
@@ -7013,6 +7018,7 @@ class OverseerImpl implements AgentHooks {
                             initiator: AiChatAuthorInfo): Promise<void> {
     try {
       let model = getModel(this.env, modelConfig, initiator, {
+        workersAiPools: this.ctx.exports.WorkersAiCredentialPool,
         metadata: { source: "thread-title", gadgetId: this.ctx.id.toString(), chatId },
       });
 
@@ -7070,6 +7076,7 @@ class OverseerImpl implements AgentHooks {
       }
 
       let model = getModel(this.env, modelConfig, initiator, {
+        workersAiPools: this.ctx.exports.WorkersAiCredentialPool,
         metadata: { source: "gadget-title", gadgetId: this.ctx.id.toString(), chatId },
       });
 

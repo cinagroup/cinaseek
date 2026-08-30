@@ -3,9 +3,8 @@ import {
   AiGatewayLogRetryableError,
   getAiGatewayLogCost,
   getAiGatewayConfig,
-  getWorkersAiBindingModelList,
-  getWorkersAiBindingQuickModel,
-  resolveWorkersAiBindingModel,
+  isShareableWorkersAiModelId,
+  resolveSharedWorkersAiModel,
 } from "../src/ai-gateway.js";
 
 function env(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
@@ -18,20 +17,16 @@ function env(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
 }
 
 describe("AI Gateway configuration", () => {
-  it("offers deployment-owned Workers AI models without Gateway credentials", () => {
-    const models = getWorkersAiBindingModelList();
-    expect(models.map((model) => model.id)).toContain("@cf/zai-org/glm-5.2");
-    expect(resolveWorkersAiBindingModel("@cf/zai-org/glm-5.2")?.config).toEqual({
+  it("resolves only curated Workers AI models for the user-contributed pool", () => {
+    expect(isShareableWorkersAiModelId("@cf/zai-org/glm-5.2")).toBe(true);
+    expect(resolveSharedWorkersAiModel("@cf/zai-org/glm-5.2")?.config).toEqual({
       provider: "cloudflare",
       model: "@cf/zai-org/glm-5.2",
       apiToken: "",
+      shareWithUsers: true,
     });
-    expect(resolveWorkersAiBindingModel("unknown-model")).toBeUndefined();
-    expect(getWorkersAiBindingQuickModel()).toEqual({
-      provider: "cloudflare",
-      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      apiToken: "",
-    });
+    expect(isShareableWorkersAiModelId("unknown-model")).toBe(false);
+    expect(resolveSharedWorkersAiModel("unknown-model")).toBeUndefined();
   });
 
   it("accepts the supported OpenAI-compatible adapter", () => {
@@ -51,30 +46,14 @@ describe("AI Gateway configuration", () => {
     }))).toThrow("Unsupported CF_AI_GATEWAY_PROVIDERS entry: ollama.");
   });
 
-  it("supports a dedicated Workers AI gateway or direct binding mode", () => {
-    const dedicated = getAiGatewayConfig(env({
+  it("never advertises Workers AI from deployment Gateway configuration", () => {
+    const config = getAiGatewayConfig(env({
       CF_AI_GATEWAY_ACCOUNT_ID: "account-id",
       CF_AI_GATEWAY_API_TOKEN: "token",
-      CF_AI_GATEWAY_WAI: "workers-ai-gateway",
+      CF_AI_GATEWAY_PROVIDERS: "anthropic,cloudflare",
     }));
-    expect(dedicated?.workersAiGateway).toBe("workers-ai-gateway");
-    expect(dedicated?.workersAiDirect).toBe(false);
-
-    const direct = getAiGatewayConfig(env({
-      CF_AI_GATEWAY_ACCOUNT_ID: "account-id",
-      CF_AI_GATEWAY_API_TOKEN: "token",
-      CF_AI_GATEWAY_WAI_DIRECT: "true",
-    }));
-    expect(direct?.workersAiGateway).toBeUndefined();
-    expect(direct?.workersAiDirect).toBe(true);
-
-    expect(() => getAiGatewayConfig(env({
-      CF_AI_GATEWAY_ACCOUNT_ID: "account-id",
-      CF_AI_GATEWAY_API_TOKEN: "token",
-      CF_AI_GATEWAY_WAI: "workers-ai-gateway",
-      CF_AI_GATEWAY_WAI_DIRECT: "true",
-    }))).toThrow(
-        "CF_AI_GATEWAY_WAI and CF_AI_GATEWAY_WAI_DIRECT cannot be configured together.");
+    expect(config?.getModelList().some(model => model.id.startsWith("@cf/"))).toBe(false);
+    expect(config?.resolveModel("@cf/zai-org/glm-5.2")).toBeUndefined();
   });
 });
 

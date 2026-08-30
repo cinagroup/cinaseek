@@ -18,7 +18,7 @@ import {
   parseGatekeeperAppWorkspaceTarget,
   type GatekeeperAppWorkspaceTarget,
 } from './gatekeeperAppNavigation'
-import { useTranslation } from './i18n'
+import { getCurrentLocale, useTranslation } from './i18n'
 
 // The content-pane rect, in viewport coordinates, that the app pins its page to while the iframe
 // is full-viewport.
@@ -222,6 +222,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
   gatekeeperVendorId: string,
 }) {
   const { t: translate } = useTranslation('gatekeeperApp')
+  const locale = getCurrentLocale()
   const navigate = useNavigate()
   const { authenticatedApi } = useAuthenticatedApi()
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -237,11 +238,11 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
   const accentColor = configuredAccentColor && isHexColor(configuredAccentColor)
     ? configuredAccentColor
     : null
-  const themeRef = useRef<GatekeeperAppTheme>({ mode: resolvedThemeMode, accentColor })
-  themeRef.current = { mode: resolvedThemeMode, accentColor }
+  const themeRef = useRef<GatekeeperAppTheme>({ mode: resolvedThemeMode, accentColor, locale })
+  themeRef.current = { mode: resolvedThemeMode, accentColor, locale }
   useEffect(() => {
-    hostRef.current?.updateTheme({ mode: resolvedThemeMode, accentColor })
-  }, [resolvedThemeMode, accentColor])
+    hostRef.current?.updateTheme({ mode: resolvedThemeMode, accentColor, locale })
+  }, [resolvedThemeMode, accentColor, locale])
 
   const setOverlayPhase = useCallback((next: OverlayState) => {
     if (overlayRef.current === next) return

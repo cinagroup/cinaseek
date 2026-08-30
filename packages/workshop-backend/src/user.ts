@@ -1,5 +1,5 @@
 import { RpcStub } from "capnweb";
-import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, WorkersAiModelAccessInfo, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
 import { Gatekeeper, GatekeeperUser, GatekeeperUserVerifier, GatekeeperVendor, AccountDescription, VendorDescription, GatekeeperConnectCallback, SupportedResource, ResourceConfiguratorFrame, AppUiContext, GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import { shouldAutoProvisionAccount, ambientGatekeeperMode } from "./provisioning-policy.js";
 import { CloudflareGatekeeperUser } from "@gadgets/workshop-shared/cloudflare-gatekeeper";
@@ -8,15 +8,19 @@ import { createTypedStorage, collection } from "@gadgets/typed-storage";
 import { createWorkshopLogger } from "./observability";
 import {
   getAiGatewayConfig,
-  getWorkersAiBindingModelList,
-  getWorkersAiBindingQuickModel,
-  resolveWorkersAiBindingModel,
+  isShareableWorkersAiModelId,
+  resolveSharedWorkersAiModel,
 } from "./ai-gateway.js";
 import { utcDayKey, nextUtcMidnightIso, DailyQuotaResult } from "./ai-gateway-billing/limits/config.js";
 import type { AdminSettings } from "./admin-settings.js";
 import { isReservedBlueprintKey, readBlueprintKvRecord } from "./blueprint-archive.js";
 import { filterEnabledResources, isResourceDisabled, readAdminConfig } from "./admin-config.js";
 import { buildGatekeeperVendorMap } from "./auth/auth-vendors.js";
+import {
+  normalizeWorkersAiCredentials,
+  WorkersAiCredentialPool,
+  type WorkersAiPoolStatus,
+} from "./workers-ai-credential-pool.js";
 
 const logger = createWorkshopLogger("workshop.user");
 
@@ -288,6 +292,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   private storage: UserStorage;
   private vendors: Map<string, Service<GatekeeperVendor>>;
   private adminSettings: DurableObjectNamespace<AdminSettings>;
+  private workersAiPools: DurableObjectNamespace<WorkersAiCredentialPool>;
 
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env);
@@ -302,6 +307,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
     this.storage = makeUserStorage(ctx.storage);
     this.adminSettings = this.ctx.exports.AdminSettings;
+    this.workersAiPools = this.ctx.exports.WorkersAiCredentialPool;
 
     this.vendors = buildGatekeeperVendorMap(env);
   }
@@ -530,11 +536,72 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     this.storage.profile.put(profile);
   }
 
+  get #workersAiPoolOwnerId(): string {
+    return this.ctx.id.toString();
+  }
+
+  #workersAiPool(modelId: string): DurableObjectStub<WorkersAiCredentialPool> {
+    return this.workersAiPools.getByName(modelId);
+  }
+
+  async #workersAiPoolStatus(modelId: string): Promise<WorkersAiPoolStatus> {
+    const pool = this.#workersAiPool(modelId);
+    using status = await pool.status();
+    return { total: status.total, available: status.available };
+  }
+
+  async #upsertWorkersAiPoolCredential(
+      modelId: string, accountId: string, apiToken: string): Promise<void> {
+    const pool = this.#workersAiPool(modelId);
+    await pool.upsert(this.#workersAiPoolOwnerId, accountId, apiToken);
+  }
+
+  async #removeWorkersAiPoolCredential(modelId: string): Promise<void> {
+    const pool = this.#workersAiPool(modelId);
+    await pool.remove(this.#workersAiPoolOwnerId);
+  }
+
+  async #workersAiPoolStatuses(): Promise<Map<string, WorkersAiPoolStatus>> {
+    const entries = await Promise.all(Object.keys(SUGGESTED_MODELS.cloudflare).map(
+        async (modelId): Promise<readonly [string, WorkersAiPoolStatus]> => {
+          try {
+            return [modelId, await this.#workersAiPoolStatus(modelId)];
+          } catch (error) {
+            // A pool shard outage must not hide private or non-Workers models from Providers.
+            // Treat only that shard as empty; using it still fails closed in
+            // #resolveAvailableModel.
+            logger.warn("failed to read shared Workers AI pool status", {
+              event: "workers_ai.pool.status.failed", modelId, error,
+            });
+            return [modelId, { total: 0, available: 0 }];
+          }
+        }));
+    return new Map(entries);
+  }
+
+  async #resolveAvailableModel(modelId: string): Promise<UserAiModelRecord | undefined> {
+    const stored = this.storage.aiModels.get(modelId);
+    // User-supplied Workers AI credentials always override deployment AI Gateway configuration.
+    if (stored?.config.provider === "cloudflare") return stored;
+
+    const gatewayModel = getAiGatewayConfig(this.env)?.resolveModel(modelId);
+    if (gatewayModel) return gatewayModel;
+    if (stored) return stored;
+
+    if (isShareableWorkersAiModelId(modelId)) {
+      const status = await this.#workersAiPoolStatus(modelId);
+      if (status.total > 0) return resolveSharedWorkersAiModel(modelId);
+    }
+    return undefined;
+  }
+
   async listModels(): Promise<AiChatAuthorInfo[]> {
     let result: AiChatAuthorInfo[] = [];
     const storedModels = [...this.storage.aiModels.list()];
+    const storedModelIds = new Set(storedModels.map(model => model.profile.id));
 
-    // When AI Gateway mode is active, include all suggested models for enabled providers.
+    // Deployment AI Gateway models remain available for non-Cloudflare providers only. Workers AI
+    // is deliberately never platform-funded.
     let gwConfig = getAiGatewayConfig(this.env);
     let protectedModelIds = new Set<string>();
     if (gwConfig) {
@@ -542,13 +609,15 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
         result.push(entry);
         protectedModelIds.add(entry.id);
       }
-    } else {
-      const storedModelIds = new Set(storedModels.map(model => model.profile.id));
-      for (let entry of getWorkersAiBindingModelList()) {
-        // A user may have configured the same Workers AI model with their own account and token.
-        // Preserve that explicit configuration instead of silently replacing it with the
-        // deployment-owned binding model.
-        if (!storedModelIds.has(entry.id)) result.push(entry);
+    }
+
+    // Curated Workers AI models appear only when at least one user explicitly contributed a
+    // credential. An owned private/shared model below overrides the pool entry with the same id.
+    const poolStatuses = await this.#workersAiPoolStatuses();
+    for (const [modelId, status] of poolStatuses) {
+      if (!storedModelIds.has(modelId) && status.total > 0) {
+        const pooled = resolveSharedWorkersAiModel(modelId);
+        if (pooled) result.push(pooled.profile);
       }
     }
 
@@ -563,12 +632,52 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
   async addModel(profile: AiChatAuthorInfo, config: AiModelConfig): Promise<void> {
     let gwConfig = getAiGatewayConfig(this.env);
-    if (gwConfig && !gwConfig.providers.has(config.provider)) {
+    if (gwConfig && config.provider !== "cloudflare" && !gwConfig.providers.has(config.provider)) {
       throw new Error(`Provider "${config.provider}" is not available in AI Gateway mode.`);
+    }
+    if (profile.id !== config.model) {
+      throw new Error("Model profile id must match the provider model id.");
+    }
+    if (config.provider !== "cloudflare" && config.shareWithUsers !== undefined) {
+      throw new Error("Credential sharing is supported only for Workers AI models.");
+    }
+
+    const previous = this.storage.aiModels.get(profile.id);
+    const wasShared = previous?.config.provider === "cloudflare" &&
+        previous.config.shareWithUsers === true;
+    let storedConfig = config;
+    if (config.provider === "cloudflare") {
+      if (!config.accountId || !config.apiToken) {
+        throw new Error(
+            "Workers AI requires your Cloudflare Account ID and Workers AI API Token.");
+      }
+      const { accountId, apiToken } = normalizeWorkersAiCredentials(
+          config.accountId, config.apiToken);
+      if (config.shareWithUsers && !isShareableWorkersAiModelId(config.model)) {
+        throw new Error("Only curated Workers AI models can be shared.");
+      }
+      storedConfig = {
+        ...config,
+        accountId,
+        apiToken,
+        ...(config.shareWithUsers ? { shareWithUsers: true } : { shareWithUsers: undefined }),
+      };
     }
 
     profile.type = "agent";
-    this.storage.aiModels.put({profile, config});
+    this.storage.aiModels.put({profile, config: storedConfig});
+    try {
+      if (storedConfig.provider === "cloudflare" && storedConfig.shareWithUsers) {
+        await this.#upsertWorkersAiPoolCredential(
+            storedConfig.model, storedConfig.accountId!, storedConfig.apiToken);
+      } else if (wasShared) {
+        await this.#removeWorkersAiPoolCredential(previous.config.model);
+      }
+    } catch (error) {
+      if (previous) this.storage.aiModels.put(previous);
+      else this.storage.aiModels.delete(profile.id);
+      throw error;
+    }
   }
 
   async deleteModel(id: string): Promise<void> {
@@ -576,22 +685,86 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let gwConfig = getAiGatewayConfig(this.env);
     if (gwConfig) {
       for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
-        if (gwConfig.providers.has(provider as AiModelConfig["provider"]) && id in models) {
+        if (provider !== "cloudflare" &&
+            gwConfig.providers.has(provider as AiModelConfig["provider"]) && id in models) {
           throw new Error(`Cannot delete built-in model "${models[id].name}".`);
         }
       }
     }
 
+    const model = this.storage.aiModels.get(id);
+    if (model?.config.provider === "cloudflare" && model.config.shareWithUsers) {
+      await this.#removeWorkersAiPoolCredential(model.config.model);
+    }
     this.storage.aiModels.delete(id);
   }
 
+  async setWorkersAiModelShared(id: string, shared: boolean): Promise<void> {
+    const model = this.storage.aiModels.get(id);
+    if (!model || model.config.provider !== "cloudflare") {
+      throw new Error("No owned Workers AI model with that id exists.");
+    }
+    if (!isShareableWorkersAiModelId(model.config.model)) {
+      throw new Error("Only curated Workers AI models can be shared.");
+    }
+    if (model.config.shareWithUsers === shared) return;
+    if (!model.config.accountId || !model.config.apiToken) {
+      throw new Error("Workers AI credentials are missing. Delete and re-add this model.");
+    }
+
+    if (shared) {
+      await this.#upsertWorkersAiPoolCredential(
+          model.config.model, model.config.accountId, model.config.apiToken);
+    } else {
+      await this.#removeWorkersAiPoolCredential(model.config.model);
+    }
+    model.config = {
+      ...model.config,
+      ...(shared ? { shareWithUsers: true } : { shareWithUsers: undefined }),
+    };
+    this.storage.aiModels.put(model);
+  }
+
+  async listWorkersAiModelAccess(): Promise<WorkersAiModelAccessInfo[]> {
+    const statuses = await this.#workersAiPoolStatuses();
+    const result: WorkersAiModelAccessInfo[] = [];
+    const ownedIds = new Set<string>();
+
+    for (const model of this.storage.aiModels.list()) {
+      if (model.config.provider !== "cloudflare") continue;
+      ownedIds.add(model.profile.id);
+      const status = statuses.get(model.profile.id) ?? { total: 0, available: 0 };
+      result.push({
+        modelId: model.profile.id,
+        access: model.config.shareWithUsers ? "shared-by-you" : "private",
+        poolSize: status.total,
+        availableCredentials: status.available,
+      });
+    }
+
+    for (const [modelId, status] of statuses) {
+      if (!ownedIds.has(modelId) && status.total > 0) {
+        result.push({
+          modelId,
+          access: "shared-pool",
+          poolSize: status.total,
+          availableCredentials: status.available,
+        });
+      }
+    }
+    return result;
+  }
+
   async setQuickModel(id: string | null): Promise<void> {
+    if (id !== null && !await this.#resolveAvailableModel(id)) {
+      throw new Error(`No such model: ${id}`);
+    }
     this.storage.quickModel.put(id);
   }
 
   async getQuickModel(): Promise<null | string> {
     let result = this.storage.quickModel.get();
-    if (result && this.storage.aiModels.get(result)) {
+    if (result && await this.#resolveAvailableModel(result)) {
       return result;
     } else {
       return null;
@@ -603,15 +776,8 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   }
 
   async setPreferredModel(id: string | null): Promise<void> {
-    if (id !== null) {
-      // Validate that the model exists in the user's configured models or as a deployment model.
-      let gwConfig = getAiGatewayConfig(this.env);
-      let exists = !!this.storage.aiModels.get(id) || (gwConfig
-        ? !!gwConfig.resolveModel(id)
-        : !!resolveWorkersAiBindingModel(id));
-      if (!exists) {
-        throw new Error(`No such model: ${id}`);
-      }
+    if (id !== null && !await this.#resolveAvailableModel(id)) {
+      throw new Error(`No such model: ${id}`);
     }
     this.storage.preferredModel.put(id);
   }
@@ -710,36 +876,19 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   /** DO NOT MAKE PUBLIC -- returns API keys. Pure read: call sites replay it across DO resets
    * via retryOnDoReset, so it must stay free of writes and side effects. */
   async getChatContext(modelId: string | null): Promise<UserChatContext> {
-    let gwConfig = getAiGatewayConfig(this.env);
-
     let result: UserChatContext = {
       profile: this.storage.profile.get()
     };
     if (modelId) {
-      if (gwConfig) {
-        // Gateway models are deployment policy and remain authoritative in Gateway mode.
-        result.aiModel = gwConfig.resolveModel(modelId) ?? this.storage.aiModels.get(modelId);
-      } else {
-        // Outside Gateway mode, an explicitly stored BYOK model overrides the deployment-owned
-        // Workers AI fallback when both use the same model ID.
-        result.aiModel = this.storage.aiModels.get(modelId) ??
-            resolveWorkersAiBindingModel(modelId);
-      }
+      result.aiModel = await this.#resolveAvailableModel(modelId);
       if (!result.aiModel) throw new Error(`No such model: ${modelId}`);
     }
 
-    // Resolve the quick model (used for lightweight tasks like title generation).
-    if (gwConfig) {
-      result.quickModel = gwConfig.getQuickModelConfig();
-    } else {
-      let quickModelId = this.storage.quickModel.get();
-      if (quickModelId) {
-        let quickModel = this.storage.aiModels.get(quickModelId);
-        if (quickModel) {
-          result.quickModel = quickModel.config;
-        }
-      }
-      result.quickModel ??= getWorkersAiBindingQuickModel();
+    // Quick tasks never fall back to deployment-owned Workers AI. They run only when the user
+    // selected a model that still has private, shared-pool, or non-Workers deployment access.
+    let quickModelId = this.storage.quickModel.get();
+    if (quickModelId) {
+      result.quickModel = (await this.#resolveAvailableModel(quickModelId))?.config;
     }
     return result;
   }

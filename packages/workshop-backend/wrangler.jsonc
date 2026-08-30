@@ -56,6 +56,11 @@
       // login back to the waiting browser.
       "tag": "v2",
       "new_sqlite_classes": [ "PendingLogin" ]
+    },
+    {
+      // User-contributed Workers AI credentials, sharded by model for automatic routing.
+      "tag": "v3",
+      "new_sqlite_classes": [ "WorkersAiCredentialPool" ]
     }
   ],
 

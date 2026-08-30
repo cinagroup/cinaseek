@@ -14,6 +14,7 @@ import type {
 } from "../src/management-types";
 import type { ScheduleStatus } from "../src/types";
 import { formatCadence, formatOccurrences, formatTiming } from "./format";
+import { schedulerMessage, useSchedulerLocale } from "./i18n";
 
 export const CREATE_SCHEDULE_PROMPT =
   "Help me create a scheduled task. Ask me what it should do, which workspace and resources it should use, when it should run, and which timezone to use. Then set up the schedule.";
@@ -77,6 +78,7 @@ export default function SchedulerPage({
   openPrompt,
   resolveWorkspaceTitles,
 }: Props) {
+  const locale = useSchedulerLocale();
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -178,19 +180,19 @@ export default function SchedulerPage({
       <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">
-            Scheduled tasks
+             {schedulerMessage("Scheduled tasks")}
           </h1>
           <p className="mt-1 text-sm text-kumo-subtle">
-            Wake a workspace and run its code on a schedule you choose.
+             {schedulerMessage("Wake a workspace and run its code on a schedule you choose.")}
           </p>
         </div>
         <button
           type="button"
           data-action="create-schedule"
           className="press inline-flex h-9 items-center justify-center gap-2 self-start rounded-lg bg-kumo-brand px-3.5 text-sm font-medium text-white hover:bg-kumo-brand-hover"
-          onClick={() => void runHostAction(() => openPrompt(CREATE_SCHEDULE_PROMPT))}
+          onClick={() => void runHostAction(() => openPrompt(schedulerMessage(CREATE_SCHEDULE_PROMPT)))}
         >
-          <Plus size={16} weight="bold" /> Create schedule
+          <Plus size={16} weight="bold" /> {schedulerMessage("Create schedule")}
         </button>
       </header>
 
@@ -198,18 +200,18 @@ export default function SchedulerPage({
         <>
           <label className="mt-4 flex h-9 items-center gap-2 rounded-lg border border-kumo-line bg-kumo-control px-3 text-kumo-inactive focus-within:ring-2 focus-within:ring-kumo-ring">
             <MagnifyingGlass size={15} />
-            <span className="sr-only">Search scheduled tasks</span>
+            <span className="sr-only">{schedulerMessage("Search scheduled tasks")}</span>
             <input
               className="min-w-0 flex-1 bg-transparent text-sm text-kumo-default outline-none placeholder:text-kumo-inactive"
               type="search"
               value={query}
               maxLength={200}
-              placeholder="Search scheduled tasks…"
+              placeholder={schedulerMessage("Search scheduled tasks…")}
               onChange={(event) => setQuery(event.currentTarget.value)}
             />
           </label>
 
-          <nav className="mt-4 flex gap-5 border-b border-kumo-line" aria-label="Schedule status">
+          <nav className="mt-4 flex gap-5 border-b border-kumo-line" aria-label={schedulerMessage("Schedule status")}>
             {FILTERS.map((item) => (
               <button
                 key={item.value}
@@ -219,7 +221,7 @@ export default function SchedulerPage({
                 className={`relative pb-2 text-sm ${filter === item.value ? "font-medium text-kumo-default" : "text-kumo-subtle hover:text-kumo-default"}`}
                 onClick={() => setFilter(item.value)}
               >
-                {item.label}
+                {schedulerMessage(item.label)}
                 {filter === item.value && (
                   <span className="absolute inset-x-0 -bottom-px h-0.5 bg-kumo-brand" />
                 )}
@@ -231,20 +233,20 @@ export default function SchedulerPage({
 
       <section aria-live="polite" aria-busy={loading} className={isEmpty ? undefined : "min-h-32"}>
         {loading ? (
-          <p className="py-12 text-center text-sm text-kumo-subtle">Loading scheduled tasks…</p>
+          <p className="py-12 text-center text-sm text-kumo-subtle">{schedulerMessage("Loading scheduled tasks…")}</p>
         ) : error ? (
           <div className="flex flex-col items-center gap-3 py-12 text-center">
-            <p className="text-sm text-kumo-danger">Couldn’t load scheduled tasks.</p>
+            <p className="text-sm text-kumo-danger">{schedulerMessage("Couldn’t load scheduled tasks.")}</p>
             <button
               className="text-sm font-medium text-kumo-link hover:text-kumo-brand-hover"
               onClick={() => void load()}
             >
-              Try again
+              {schedulerMessage("Try again")}
             </button>
           </div>
         ) : isEmpty ? null : schedules.length === 0 ? (
           <p className="py-12 text-center text-sm text-kumo-subtle">
-            No scheduled tasks match these filters.
+            {schedulerMessage("No scheduled tasks match these filters.")}
           </p>
         ) : (
           <div className="divide-y divide-kumo-line">
@@ -258,6 +260,7 @@ export default function SchedulerPage({
                   schedule={schedule}
                   targetTitle={targetTitle}
                   now={now}
+                  locale={locale}
                   expanded={detailsOpen}
                   onToggle={() =>
                     setExpanded((current) => {
@@ -284,7 +287,7 @@ export default function SchedulerPage({
               className="rounded-lg border border-kumo-line bg-kumo-control px-4 py-2 text-sm font-medium text-kumo-default hover:bg-kumo-tint disabled:opacity-50"
               onClick={() => void load(cursor)}
             >
-              {loadingMore ? "Loading…" : "Load more"}
+              {schedulerMessage(loadingMore ? "Loading…" : "Load more")}
             </button>
           </div>
         )}
@@ -295,7 +298,7 @@ export default function SchedulerPage({
           id="get-started-heading"
           className="text-xs font-medium uppercase tracking-[0.12em] text-kumo-inactive"
         >
-          Get started
+          {schedulerMessage("Get started")}
         </h2>
         <div className="mt-3 grid gap-1">
           {STARTERS.map((starter) => {
@@ -305,18 +308,18 @@ export default function SchedulerPage({
                 key={starter.title}
                 type="button"
                 className="group flex items-center gap-3 rounded-lg px-1 py-2.5 text-left hover:bg-kumo-tint"
-                onClick={() => void runHostAction(() => openPrompt(starter.prompt))}
+                    onClick={() => void runHostAction(() => openPrompt(schedulerMessage(starter.prompt)))}
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-kumo-fill text-kumo-subtle">
                   <Icon size={15} />
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-kumo-default">
-                    {starter.title}{" "}
-                    <span className="ml-1 font-normal text-kumo-inactive">{starter.cadence}</span>
+                    {schedulerMessage(starter.title)}{" "}
+                    <span className="ml-1 font-normal text-kumo-inactive">{schedulerMessage(starter.cadence)}</span>
                   </span>
                   <span className="block truncate text-xs text-kumo-subtle">
-                    {starter.description}
+                    {schedulerMessage(starter.description)}
                   </span>
                 </span>
               </button>
@@ -332,6 +335,7 @@ function ScheduleRow({
   schedule,
   targetTitle,
   now,
+  locale,
   expanded,
   onToggle,
   onOpen,
@@ -341,12 +345,13 @@ function ScheduleRow({
   // resolved, or when the workspace is gone.
   targetTitle: string | null;
   now: number;
+  locale: "en" | "zh-CN" | "zh-TW";
   expanded: boolean;
   onToggle: () => void;
   onOpen: () => void;
 }) {
-  const timing = formatTiming(schedule, now);
-  const target = targetTitle ?? "Unavailable workspace";
+  const timing = formatTiming(schedule, now, locale);
+  const target = targetTitle ?? schedulerMessage("Unavailable workspace");
   // A workspace the user can no longer see has nothing to open.
   const unavailable = targetTitle === null;
   // Only failed schedules have something to expand: why they need attention. The caret is a sibling
@@ -372,7 +377,7 @@ function ScheduleRow({
               {schedule.title}
             </span>
             <span className="block truncate text-xs text-kumo-subtle">
-              {[formatCadence(schedule.cadence), formatOccurrences(schedule), target]
+              {[formatCadence(schedule.cadence, locale), formatOccurrences(schedule, locale), target]
                 .filter(Boolean).join(" · ")}
               {/* Narrow screens drop the timing column, so carry the relative time here instead. */}
               <span className="sm:hidden"> · {timing.relative}</span>
@@ -394,7 +399,10 @@ function ScheduleRow({
             type="button"
             data-action="toggle-diagnostic"
             aria-expanded={expanded}
-            aria-label={`${expanded ? "Hide" : "Show"} why ${schedule.title} needs attention`}
+            aria-label={schedulerMessage(
+              `${expanded ? "Hide" : "Show"} why {{title}} needs attention`,
+              { title: schedule.title },
+            )}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-kumo-inactive hover:bg-kumo-fill hover:text-kumo-default"
             onClick={onToggle}
           >

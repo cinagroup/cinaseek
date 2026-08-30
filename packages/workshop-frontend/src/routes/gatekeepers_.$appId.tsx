@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import GatekeeperAppPage from '../GatekeeperAppPage'
 import { useDocumentTitle } from '../useDocumentTitle'
 import { useGatekeeperApps } from '../useGatekeeperApps'
+import { useLocalizedGatekeeperAppTitle } from '../useLocalizedGatekeeperAppTitle'
 
 /**
  * Generic host for any gatekeeper-served management app (VendorDescription.providesUi). The set of
@@ -18,6 +19,7 @@ export const Route = createFileRoute('/gatekeepers_/$appId')({
 function GatekeeperApp() {
   const { appId } = Route.useParams()
   const app = useGatekeeperApps().find((a) => a.id === appId)
-  useDocumentTitle(app?.title ?? 'App')
+  const gatekeeperAppTitle = useLocalizedGatekeeperAppTitle()
+  useDocumentTitle(app ? gatekeeperAppTitle(app) : 'App')
   return <GatekeeperAppPage appId={appId} />
 }

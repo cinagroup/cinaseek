@@ -9,12 +9,14 @@ import TopBarNotice from '../TopBarNotice'
 import SiteLogo from './SiteLogo'
 import { useTranslation } from '../i18n'
 import { LanguageMenu } from '../i18n/LanguageSwitcher'
+import { useLocalizedGatekeeperAppTitle } from '../useLocalizedGatekeeperAppTitle'
 
 export default function Header() {
   const auth = useOptionalAuthenticatedApi()
   const gatekeeperApps = useGatekeeperApps()
   const siteName = useSiteName()
   const { t } = useTranslation('shell')
+  const gatekeeperAppTitle = useLocalizedGatekeeperAppTitle()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const headerRef = useRef<HTMLElement>(null)
@@ -90,7 +92,7 @@ export default function Header() {
                 className={navLinkClass}
                 activeProps={{ className: navLinkActiveClass }}
               >
-                {app.title}
+                {gatekeeperAppTitle(app)}
               </Link>
             ))}
           </nav>
@@ -157,7 +159,7 @@ export default function Header() {
                 className={navLinkClass}
                 activeProps={{ className: navLinkActiveClass }}
               >
-                {app.title}
+                {gatekeeperAppTitle(app)}
               </Link>
             ))}
 

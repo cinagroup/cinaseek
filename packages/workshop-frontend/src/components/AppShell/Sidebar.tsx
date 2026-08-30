@@ -24,6 +24,7 @@ import {
 import SidebarUtilityStrip from './SidebarUtilityStrip'
 import { useOptionalAuthenticatedApi } from '../../AuthContext'
 import { useTranslation } from '../../i18n'
+import { useLocalizedGatekeeperAppTitle } from '../../useLocalizedGatekeeperAppTitle'
 
 /**
  * The persistent left rail. Three pinned regions sandwich a single scrolling region of lists, so
@@ -54,6 +55,7 @@ export default function Sidebar({
   // and is connected / enabled for everyone). Disabled or not-yet-connected ones aren't returned, so
   // they simply don't appear. The set is fully dynamic — no gatekeeper is hardcoded.
   const gatekeeperApps = useGatekeeperApps()
+  const gatekeeperAppTitle = useLocalizedGatekeeperAppTitle()
 
   return (
     <aside
@@ -178,7 +180,7 @@ export default function Sidebar({
                 key={app.id}
                 to="/gatekeepers/$appId"
                 params={{ appId: app.id }}
-                label={app.title}
+                label={gatekeeperAppTitle(app)}
                 icon={
                   maskUrl ? (
                     // Render the (monochrome) app icon as a CSS mask filled with the row's current

@@ -8,6 +8,7 @@ import SchedulerPage, { type ScheduleManagementClient } from "./SchedulerPage";
 import ErrorBoundary from "./ErrorBoundary";
 import { installErrorReporting, reportIssue } from "./error-reporting";
 import { applyAppTheme } from "./theme";
+import { setSchedulerLocale } from "./i18n";
 import "./styles.css";
 
 installErrorReporting();
@@ -15,6 +16,7 @@ installErrorReporting();
 class AppIframe extends RpcTarget implements GatekeeperAppThemeReceiver {
   setTheme(theme: GatekeeperAppTheme): void {
     applyAppTheme(theme);
+    setSchedulerLocale(theme.locale);
   }
 }
 
@@ -36,7 +38,7 @@ function main() {
   const host = newMessagePortRpcSession<HostCapability>(port1, iframe);
   host
     .subscribeTheme(iframe)
-    .then(applyAppTheme)
+    .then((theme) => iframe.setTheme(theme))
     .catch(() => {});
 
   createRoot(element, {

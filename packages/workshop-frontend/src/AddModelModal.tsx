@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from './i18n'
-import { Dialog, Button, Input, Select, SensitiveInput, Collapsible, useKumoToastManager } from '@cloudflare/kumo'
+import { Dialog, Button, Input, Select, SensitiveInput, Collapsible, Switch, useKumoToastManager } from '@cloudflare/kumo'
 import { AiChatAuthorInfo, AiModelConfig, AiModelProvider, AiGatewayInfo, SUGGESTED_MODELS } from '@gadgets/workshop-shared/api'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
@@ -73,10 +73,10 @@ function buildOptions(gatewayMode: boolean, enabledProviders: Set<string> | null
   const providerOrder = Object.keys(SUGGESTED_MODELS) as AiModelProvider[]
 
   for (const provider of providerOrder) {
-    if (enabledProviders && !enabledProviders.has(provider)) continue
+    if (enabledProviders && provider !== 'cloudflare' && !enabledProviders.has(provider)) continue
 
-    // In gateway mode, suggested models are already built-in, so don't list them.
-    if (!gatewayMode) {
+    // Workers AI is always user-funded, even when other providers use deployment Gateway mode.
+    if (!gatewayMode || provider === 'cloudflare') {
       for (const [modelId, model] of Object.entries(SUGGESTED_MODELS[provider])) {
         options.push({
           value: encodeSelection(provider, modelId),
@@ -110,6 +110,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
   const [apiToken, setApiToken] = useState('')
   const [accountId, setAccountId] = useState('')
   const [apiUrl, setApiUrl] = useState('')
+  const [shareWithUsers, setShareWithUsers] = useState(false)
 
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -132,6 +133,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       setApiToken('')
       setAccountId('')
       setApiUrl('')
+      setShareWithUsers(false)
       setErrors({})
       setAdvancedOpen(false)
     }
@@ -152,6 +154,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     }
     setApiToken('')
     setAccountId('')
+    setShareWithUsers(false)
     setApiUrl(sel.provider === 'ollama' ? 'http://localhost:11434' : '')
   }
 
@@ -170,14 +173,18 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
     const isOllama = selection?.provider === 'ollama'
     const isOpenAiCompatible = selection?.provider === 'openai-compatible'
     const isCloudflare = selection?.provider === 'cloudflare'
-    const showCredentials = !gatewayMode
+    const showCredentials = !gatewayMode || isCloudflare
 
     if (showCredentials && selection && !isOllama && !isOpenAiCompatible && !apiToken.trim()) {
       newErrors.apiToken = t('addDialog.errors.apiToken')
     }
 
-    if (showCredentials && isCloudflare && !accountId.trim()) {
-      newErrors.accountId = t('addDialog.errors.accountId')
+    if (showCredentials && isCloudflare) {
+      if (!accountId.trim()) {
+        newErrors.accountId = t('addDialog.errors.accountId')
+      } else if (!/^[0-9a-f]{32}$/i.test(accountId.trim())) {
+        newErrors.accountId = t('addDialog.errors.accountIdFormat')
+      }
     }
 
     if (((showCredentials && isOllama) || isOpenAiCompatible) && !apiUrl.trim()) {
@@ -210,8 +217,13 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       const config: AiModelConfig = {
         provider: selection!.provider,
         model: finalModelId,
-        apiToken: gatewayMode ? '' : apiToken.trim(),
-        ...(!gatewayMode && accountId.trim() && { accountId: accountId.trim() }),
+        apiToken: gatewayMode && selection!.provider !== 'cloudflare' ? '' : apiToken.trim(),
+        ...((!gatewayMode || selection!.provider === 'cloudflare') && accountId.trim() && {
+          accountId: accountId.trim(),
+        }),
+        ...(selection!.provider === 'cloudflare' && shareWithUsers && {
+          shareWithUsers: true,
+        }),
         ...((!gatewayMode || selection!.provider === 'openai-compatible') && apiUrl.trim() && {
           apiUrl: apiUrl.trim(),
         }),
@@ -237,7 +249,8 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
   const isOllama = selection?.provider === 'ollama'
   const isOpenAiCompatible = selection?.provider === 'openai-compatible'
   const isCloudflare = selection?.provider === 'cloudflare'
-  const showCredentials = !gatewayMode
+  const showCredentials = !gatewayMode || isCloudflare
+  const canShare = isCloudflare && selection?.type === 'suggested'
 
   // Group options by provider for rendering with visual separators.
   const groupedOptions: { provider: string; items: typeof options }[] = []
@@ -345,6 +358,24 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
               error={errors.apiToken}
               variant={errors.apiToken ? 'error' : 'default'}
             />
+          )}
+
+          {canShare && (
+            <div className="flex items-start gap-4 rounded-xl border border-kumo-line bg-kumo-tint px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-kumo-default">
+                  {t('addDialog.shareTitle')}
+                </p>
+                <p className="mt-0.5 text-[12px] leading-4 text-kumo-subtle">
+                  {t('addDialog.shareDescription')}
+                </p>
+              </div>
+              <Switch
+                checked={shareWithUsers}
+                onCheckedChange={setShareWithUsers}
+                aria-label={t('addDialog.shareTitle')}
+              />
+            </div>
           )}
 
           {/* Direct endpoint URL, or the deployment Gateway's Custom Provider route. */}

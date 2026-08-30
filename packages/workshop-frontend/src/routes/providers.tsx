@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useCallback, useState, useEffect, useRef } from 'react'
+import { useCallback, useState, useEffect, useMemo, useRef } from 'react'
 import { DropdownMenu, useKumoToastManager } from '@cloudflare/kumo'
 import { useAuthenticatedApi } from '../AuthContext'
 import {
@@ -7,6 +7,7 @@ import {
   AiGatewayInfo,
   AiModelProvider,
   SUGGESTED_MODELS,
+  WorkersAiModelAccessInfo,
 } from '@gadgets/workshop-shared/api'
 import {
   Plus,
@@ -37,14 +38,18 @@ function ModelRow({
   model,
   isQuick,
   isBuiltIn,
+  workersAiAccess,
   onDelete,
   onSetQuick,
+  onToggleShare,
 }: {
   model: AiChatAuthorInfo
   isQuick: boolean
   isBuiltIn: boolean
+  workersAiAccess?: WorkersAiModelAccessInfo
   onDelete: () => void
   onSetQuick: () => void
+  onToggleShare?: () => void
 }) {
   const { t } = useTranslation('providers')
   return (
@@ -83,6 +88,11 @@ function ModelRow({
               {t('row.quick')}
             </span>
           )}
+          {workersAiAccess && (
+            <span className="shrink-0 rounded-full bg-kumo-tint px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.4px] text-kumo-subtle">
+              {t(`row.access.${workersAiAccess.access}`)}
+            </span>
+          )}
         </div>
         <span className="mt-0.5 block truncate font-mono text-[12px] tracking-[-0.1px] text-kumo-inactive">
           {model.id}
@@ -107,11 +117,20 @@ function ModelRow({
               <Lightning size={13} className="mr-2" weight={isQuick ? 'fill' : 'regular'} />
               {isQuick ? t('row.clearQuick') : t('row.setQuick')}
             </DropdownMenu.Item>
-            {!isBuiltIn && (
-              <DropdownMenu.Item variant="danger" onClick={onDelete} className={MENU_ITEM_DANGER}>
-                <Trash size={13} className="mr-2" />
-                {t('row.delete')}
-              </DropdownMenu.Item>
+            {!isBuiltIn && workersAiAccess?.access !== 'shared-pool' && (
+              <>
+                {onToggleShare && (
+                  <DropdownMenu.Item onClick={onToggleShare} className={MENU_ITEM}>
+                    {workersAiAccess?.access === 'shared-by-you'
+                      ? t('row.makePrivate')
+                      : t('row.share')}
+                  </DropdownMenu.Item>
+                )}
+                <DropdownMenu.Item variant="danger" onClick={onDelete} className={MENU_ITEM_DANGER}>
+                  <Trash size={13} className="mr-2" />
+                  {t('row.delete')}
+                </DropdownMenu.Item>
+              </>
             )}
           </DropdownMenu.Content>
         </DropdownMenu>
@@ -141,23 +160,27 @@ function ProvidersPage() {
   const [models, setModels] = useState<AiChatAuthorInfo[]>([])
   const [quickModel, setQuickModel] = useState<string | null>(null)
   const [aiConfig, setAiConfig] = useState<AiGatewayInfo | null>(null)
+  const [workersAiAccess, setWorkersAiAccess] = useState<WorkersAiModelAccessInfo[]>([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [sharingId, setSharingId] = useState<string | null>(null)
 
   const fetchAll = useCallback(async () => {
     setLoadError(false)
     try {
-      const [modelList, qm, cfg] = await Promise.all([
+      const [modelList, qm, cfg, access] = await Promise.all([
         authenticatedApi.listModels(),
         authenticatedApi.getQuickModel(),
         authenticatedApi.getAiConfig(),
+        authenticatedApi.listWorkersAiModelAccess(),
       ])
       setModels(modelList)
       setQuickModel(qm)
       setAiConfig(cfg)
+      setWorkersAiAccess(access)
     } catch (err) {
       console.error('Failed to load providers:', err)
       setLoadError(true)
@@ -173,7 +196,30 @@ function ProvidersPage() {
   const isBuiltIn = (modelId: string): boolean => {
     if (!aiConfig?.enabled) return false
     const enabled = new Set((aiConfig as Extract<AiGatewayInfo, { enabled: true }>).enabledProviders)
-    return PROVIDER_ORDER.some((p) => enabled.has(p) && modelId in SUGGESTED_MODELS[p])
+    return PROVIDER_ORDER.some((p) =>
+      p !== 'cloudflare' && enabled.has(p) && modelId in SUGGESTED_MODELS[p])
+  }
+
+  const handleToggleShare = async (
+    model: AiChatAuthorInfo,
+    access: WorkersAiModelAccessInfo,
+  ) => {
+    const nextShared = access.access !== 'shared-by-you'
+    if (nextShared && !confirm(t('messages.shareConfirm', { name: model.name }))) return
+    setSharingId(model.id)
+    try {
+      await authenticatedApi.setWorkersAiModelShared(model.id, nextShared)
+      await fetchAll()
+      toasts.add({
+        title: nextShared ? t('messages.shared') : t('messages.private'),
+        variant: 'success',
+      })
+    } catch (err) {
+      console.error('Failed to update Workers AI sharing:', err)
+      toasts.add({ title: t('messages.shareFailed'), variant: 'error' })
+    } finally {
+      setSharingId(null)
+    }
   }
 
   const handleDelete = async (model: AiChatAuthorInfo) => {
@@ -214,6 +260,10 @@ function ProvidersPage() {
     const q = search.toLowerCase()
     return m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
   })
+  const workersAiAccessByModel = useMemo(
+    () => new Map(workersAiAccess.map((entry) => [entry.modelId, entry])),
+    [workersAiAccess],
+  )
 
   return (
     <div className="mx-auto flex h-full w-full max-w-4xl flex-col px-3 sm:px-10">
@@ -272,6 +322,13 @@ function ProvidersPage() {
                 </span>
               </Notice>
             )}
+
+            {workersAiAccess.some((entry) => entry.poolSize > 0) && (
+              <Notice>
+                <Lightning size={15} className="mt-px shrink-0 text-kumo-brand" />
+                <span>{t('notices.poolDescription')}</span>
+              </Notice>
+            )}
           </div>
         )}
 
@@ -308,20 +365,29 @@ function ProvidersPage() {
         ) : filtered.length === 0 ? (
           <div className="py-12 text-center text-sm text-kumo-inactive">{t('empty.noResults')}</div>
         ) : (
-          filtered.map((model) => (
-            <div
-              key={model.id}
-              className={deletingId === model.id ? 'pointer-events-none opacity-50' : ''}
-            >
-              <ModelRow
-                model={model}
-                isQuick={quickModel === model.id}
-                isBuiltIn={isBuiltIn(model.id)}
-                onDelete={() => handleDelete(model)}
-                onSetQuick={() => handleSetQuick(model.id)}
-              />
-            </div>
-          ))
+          filtered.map((model) => {
+            const access = workersAiAccessByModel.get(model.id)
+            return (
+              <div
+                key={model.id}
+                className={deletingId === model.id || sharingId === model.id
+                  ? 'pointer-events-none opacity-50'
+                  : ''}
+              >
+                <ModelRow
+                  model={model}
+                  isQuick={quickModel === model.id}
+                  isBuiltIn={isBuiltIn(model.id)}
+                  workersAiAccess={access}
+                  onDelete={() => handleDelete(model)}
+                  onSetQuick={() => handleSetQuick(model.id)}
+                  onToggleShare={access && access.access !== 'shared-pool'
+                    ? () => handleToggleShare(model, access)
+                    : undefined}
+                />
+              </div>
+            )
+          })
         )}
       </div>
 

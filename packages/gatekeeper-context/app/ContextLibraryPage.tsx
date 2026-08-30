@@ -73,6 +73,12 @@ import { useContextApi, usePresentWhileOpen, useResolvedThemeMode } from "./brid
 import { extractDescription } from "../src/description-extractors";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  contextCount,
+  contextMessage,
+  getContextLocale,
+  useContextLocale,
+} from "./i18n";
 
 function baseName(path: string): string {
   const i = path.lastIndexOf("/");
@@ -111,6 +117,7 @@ function stripFrontmatter(source: string): string {
 }
 
 function pluralize(count: number, noun: string): string {
+  if (noun === "document" || noun === "file") return contextCount(count, noun);
   return `${count} ${noun}${count !== 1 ? "s" : ""}`;
 }
 
@@ -172,6 +179,7 @@ function IconPickerButton({
   // shared input pill.
   variant?: "boxed" | "inline";
 }) {
+  const locale = useContextLocale();
   const themeMode = useResolvedThemeMode();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -234,6 +242,7 @@ function IconPickerButton({
     const host = pickerHostRef.current;
     const picker = new (EmojiMartPicker as any)({
       data: emojiData,
+      locale: locale === "en" ? "en" : "zh",
       theme: themeMode,
       previewPosition: "none",
       skinTonePosition: "none",
@@ -248,7 +257,7 @@ function IconPickerButton({
     return () => {
       host.replaceChildren();
     };
-  }, [open, onChange, themeMode]);
+  }, [locale, open, onChange, themeMode]);
 
   const inline = variant === "inline";
   return (
@@ -257,7 +266,7 @@ function IconPickerButton({
         ref={btnRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        title="Choose an icon"
+        title={contextMessage("Choose an icon")}
         className={
           inline
             ? "grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-kumo-tint text-[18px] leading-none text-kumo-subtle transition-colors hover:bg-kumo-fill"
@@ -310,12 +319,12 @@ function CollectionProvenance({ source }: { source: EnabledCollectionInfo["sourc
       className="flex w-52 items-center gap-1 whitespace-nowrap"
       title={
         isPublic
-          ? "Provided by your organization for everyone"
-          : "A collection you created"
+          ? contextMessage("Provided by your organization for everyone")
+          : contextMessage("A collection you created")
       }
     >
       {isPublic ? <Buildings size={11} /> : <User size={11} />}
-      {isPublic ? "Required by your organization" : "Created by you"}
+      {contextMessage(isPublic ? "Required by your organization" : "Created by you")}
     </span>
   );
 }
@@ -347,12 +356,13 @@ function CollectionIconTile({
 function formatRelativeTime(date: Date): string {
   const diff = Date.now() - date.getTime();
   const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
+  const formatter = new Intl.RelativeTimeFormat(getContextLocale(), { numeric: "auto" });
+  if (minutes < 1) return formatter.format(0, "minute");
+  if (minutes < 60) return formatter.format(-minutes, "minute");
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return formatter.format(-hours, "hour");
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return formatter.format(-days, "day");
 }
 
 function handleCardKeyDown(e: React.KeyboardEvent, onClick: () => void) {
@@ -389,7 +399,7 @@ function CollectionRow({
             hasDescription ? "text-kumo-subtle" : "italic text-kumo-inactive"
           }`}
         >
-          {hasDescription ? collection.description : "No description"}
+          {hasDescription ? collection.description : contextMessage("No description")}
         </p>
       </div>
       {/* Fixed-width meta columns so rows line up like a table. */}
@@ -509,7 +519,7 @@ function FieldLabel({
   return (
     <label className="mb-1.5 flex items-center gap-1.5 text-[12px] leading-4 font-medium tracking-[-0.2px] text-kumo-subtle">
       <span>{children}</span>
-      {optional ? <span className="font-normal text-kumo-inactive">Optional</span> : null}
+      {optional ? <span className="font-normal text-kumo-inactive">{contextMessage("Optional")}</span> : null}
     </label>
   );
 }
@@ -570,7 +580,7 @@ function CollectionNameField({
 }) {
   return (
     <>
-      <FieldLabel>Name</FieldLabel>
+      <FieldLabel>{contextMessage("Name")}</FieldLabel>
       {/* Icon tile + name share one focus-within pill so the emoji reads as part of the input. */}
       <div className="flex items-center gap-2 rounded-xl border-2 border-kumo-line bg-kumo-base p-1.5 transition-[border-color,box-shadow] duration-150 ease-out focus-within:border-kumo-ring focus-within:ring-1 focus-within:ring-kumo-ring/15">
         <IconPickerButton value={icon} onChange={onIconChange} variant="inline" />
@@ -580,7 +590,7 @@ function CollectionNameField({
           onKeyDown={(e) => {
             if (e.key === "Enter") onEnter?.();
           }}
-          placeholder="A short name, e.g., Brand guidelines"
+          placeholder={contextMessage("A short name, e.g., Brand guidelines")}
           autoFocus={autoFocus}
           className="h-9 min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 pr-2 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive"
         />
@@ -598,12 +608,12 @@ function CollectionDescriptionField({
 }) {
   return (
     <>
-      <FieldLabel optional>Description</FieldLabel>
+      <FieldLabel optional>{contextMessage("Description")}</FieldLabel>
       {/* `ring-0` drops Kumo InputArea's base ring so it matches the name pill's single border. */}
       <WorkshopInputArea
         value={value}
         onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value)}
-        placeholder="What it contains and when to use it, e.g., voice and tone rules for customer-facing writing"
+        placeholder={contextMessage("What it contains and when to use it, e.g., voice and tone rules for customer-facing writing")}
         rows={4}
         className="w-full border-2 ring-0 !rounded-xl transition-[border-color,box-shadow] duration-150 ease-out"
       />
@@ -632,7 +642,7 @@ function ModalHeader({
       </div>
       <Dialog.Close
         render={(props) => (
-          <WorkshopIconButton {...props} aria-label="Close">
+          <WorkshopIconButton {...props} aria-label={contextMessage("Close")}>
             <X size={18} />
           </WorkshopIconButton>
         )}
@@ -652,16 +662,16 @@ function DeletePermanentlyDescription({
 }) {
   return (
     <>
-      This permanently deletes{" "}
+      {contextMessage("This permanently deletes")}{" "}
       <span className="font-medium text-kumo-default">{name}</span>
       {documents !== undefined ? (
         <>
-          {" "}and all{" "}
+          {" "}{contextMessage("and all")}{" "}
           <span className="font-medium text-kumo-danger">{pluralize(documents, "document")}</span>{" "}
-          inside it
+          {contextMessage("inside it")}
         </>
       ) : null}
-      . This cannot be undone.
+      {contextMessage(". This cannot be undone.")}
     </>
   );
 }
@@ -750,10 +760,10 @@ function CreateCollectionView({
         icon,
         source,
       );
-      toasts.add({ title: "Collection created", variant: "success" });
+      toasts.add({ title: contextMessage("Collection created"), variant: "success" });
       onCreated(metadata.id);
     } catch {
-      toasts.add({ title: "Failed to create collection", variant: "error" });
+      toasts.add({ title: contextMessage("Failed to create collection"), variant: "error" });
       setCreating(false);
     }
   };
@@ -767,13 +777,13 @@ function CreateCollectionView({
           className="press mb-3 -ml-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[13px] font-medium tracking-[-0.25px] text-kumo-subtle transition-colors hover:text-kumo-default"
         >
           <CaretLeft size={14} />
-          Context &amp; Skills
+          {contextMessage("Context & Skills")}
         </button>
         <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">
-          New collection
+          {contextMessage("New collection")}
         </h1>
         <p className="mt-1 max-w-2xl text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-          A collection of documents, skills, and other files your agents can use.
+          {contextMessage("A collection of documents, skills, and other files your agents can use.")}
         </p>
       </header>
 
@@ -795,8 +805,8 @@ function CreateCollectionView({
             </div>
             {supportsGitCollections && (
               <div className="ctx-rise" style={{ animationDelay: "160ms" }}>
-                <FieldLabel>Type</FieldLabel>
-                <div role="radiogroup" aria-label="Collection type" className="grid gap-2">
+                <FieldLabel>{contextMessage("Type")}</FieldLabel>
+                <div role="radiogroup" aria-label={contextMessage("Collection type")} className="grid gap-2">
                   {CONTENT_SOURCE_OPTIONS.map(({
                     value,
                     Icon,
@@ -824,10 +834,10 @@ function CreateCollectionView({
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                            {optionTitle}
+                            {contextMessage(optionTitle)}
                           </span>
                           <span className="mt-0.5 block text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle">
-                            {optionDescription}
+                            {contextMessage(optionDescription)}
                           </span>
                         </span>
                         <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
@@ -843,8 +853,8 @@ function CreateCollectionView({
             )}
             {isAdmin && (
               <div className="ctx-rise" style={{ animationDelay: "200ms" }}>
-                <FieldLabel>Visibility</FieldLabel>
-                <div role="radiogroup" aria-label="Visibility" className="grid gap-2">
+                <FieldLabel>{contextMessage("Visibility")}</FieldLabel>
+                <div role="radiogroup" aria-label={contextMessage("Visibility")} className="grid gap-2">
                   {VISIBILITY_OPTIONS.map(({
                     value,
                     Icon,
@@ -872,10 +882,10 @@ function CreateCollectionView({
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                            {optionTitle}
+                            {contextMessage(optionTitle)}
                           </span>
                           <span className="mt-0.5 block text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle">
-                            {optionDescription}
+                            {contextMessage(optionDescription)}
                           </span>
                         </span>
                         <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
@@ -902,7 +912,7 @@ function CreateCollectionView({
               disabled={creating}
               className="!h-9"
             >
-              Cancel
+              {contextMessage("Cancel")}
             </WorkshopButton>
             {/* Orange brand "create" button (page CTA, not a modal primary). The disabled overrides
                 keep the inactive state grey rather than faded orange. */}
@@ -913,7 +923,7 @@ function CreateCollectionView({
               disabled={!title.trim()}
               className="press !bg-kumo-brand text-white enabled:hover:!bg-kumo-brand-hover disabled:!bg-kumo-fill disabled:!text-kumo-inactive disabled:!opacity-100"
             >
-              Create collection
+              {contextMessage("Create collection")}
             </WorkshopButton>
           </div>
         </div>
@@ -927,6 +937,7 @@ function CreateCollectionView({
 // ---------------------------------------------------------------------------
 
 export default function ContextLibraryPage() {
+  useContextLocale();
   const context = useContextApi();
 
   // Iframe-local selection state (no router/URL).
@@ -1016,10 +1027,10 @@ export default function ContextLibraryPage() {
       <header className="flex items-end justify-between gap-4 px-3 pb-3 pt-10">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">
-            Context &amp; Skills
+            {contextMessage("Context & Skills")}
           </h1>
           <p className="mt-1 max-w-2xl text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-            Collections of documents, skills, and other files your agents can use.
+            {contextMessage("Collections of documents, skills, and other files your agents can use.")}
           </p>
         </div>
         {enabled.length > 0 && (
@@ -1029,7 +1040,7 @@ export default function ContextLibraryPage() {
             className="press inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-kumo-brand px-3.5 text-[13px] font-medium tracking-[-0.25px] text-white transition-colors hover:bg-kumo-brand-hover"
           >
             <Plus size={14} weight="bold" />
-            New collection
+            {contextMessage("New collection")}
           </button>
         )}
       </header>
@@ -1045,7 +1056,7 @@ export default function ContextLibraryPage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search collections…"
+              placeholder={contextMessage("Search collections…")}
               className="h-9 w-full rounded-lg border border-kumo-line bg-kumo-base pl-9 pr-4 text-[13px] tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] duration-150 ease-out focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15"
             />
           </div>
@@ -1062,12 +1073,12 @@ export default function ContextLibraryPage() {
             </div>
             <div>
               <p className="text-sm font-medium text-kumo-default">
-                {search ? "No collections match" : "No collections yet"}
+                {contextMessage(search ? "No collections match" : "No collections yet")}
               </p>
               <p className="mx-auto mt-1 max-w-sm text-[13px] leading-[18px] text-kumo-subtle">
                 {search
-                  ? "Try a different search term."
-                  : "Create a collection to give your agents context to work with."}
+                  ? contextMessage("Try a different search term.")
+                  : contextMessage("Create a collection to give your agents context to work with.")}
               </p>
             </div>
             {!search && (
@@ -1077,7 +1088,7 @@ export default function ContextLibraryPage() {
                 className="press mt-1 inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-kumo-brand px-3.5 text-[13px] font-medium tracking-[-0.25px] text-white transition-colors hover:bg-kumo-brand-hover"
               >
                 <Plus size={14} weight="bold" />
-                New collection
+                {contextMessage("New collection")}
               </button>
             )}
           </div>
@@ -1157,7 +1168,7 @@ function CollectionOverview({
                   {metadata.title}
                 </h1>
                 <p className="mt-1 text-[13px] leading-[18px] tracking-[-0.2px] text-kumo-subtle">
-                  Context collection
+                  {contextMessage("Context collection")}
                 </p>
               </div>
             </div>
@@ -1170,7 +1181,7 @@ function CollectionOverview({
                     onClick={onRefreshSource}
                     loading={refreshingSource}
                   >
-                    Refresh
+                    {contextMessage("Refresh")}
                   </WorkshopButton>
                 )}
                 <CollectionOptionsMenu
@@ -1185,17 +1196,17 @@ function CollectionOverview({
           </div>
 
           <div className="mt-9 grid grid-cols-2 gap-x-8 gap-y-5 @xl:grid-cols-4">
-            <MetaField label="Source">
+            <MetaField label={contextMessage("Source")}>
               <span className="inline-flex items-center gap-1.5">
                 {isPublic ? <Buildings size={12} className="shrink-0" /> : <User size={12} className="shrink-0" />}
-                {isPublic ? "Your organization" : "You"}
+                {contextMessage(isPublic ? "Your organization" : "You")}
               </span>
             </MetaField>
-            <MetaField label="Access">
-              {isPublic ? "Everyone (required)" : "Private to you"}
+            <MetaField label={contextMessage("Access")}>
+              {contextMessage(isPublic ? "Everyone (required)" : "Private to you")}
             </MetaField>
-            <MetaField label="Documents">{metadata.documentCount}</MetaField>
-            <MetaField label={isSynced ? "Refreshed" : "Updated"} align="right">
+            <MetaField label={contextMessage("Documents")}>{metadata.documentCount}</MetaField>
+            <MetaField label={contextMessage(isSynced ? "Refreshed" : "Updated")} align="right">
               {metadata.content.source === "git"
                 ? formatRelativeTime(metadata.content.lastRefreshedAt)
                 : formatRelativeTime(metadata.lastUpdated)}
@@ -1206,17 +1217,17 @@ function CollectionOverview({
         {isSynced && !supportsGitCollections && (
           <section className="mt-8 rounded-xl border border-kumo-line bg-kumo-elevated/60 px-5 py-4">
             <p className="text-[13px] font-medium tracking-[-0.2px] text-kumo-default">
-              Git synchronization unavailable
+              {contextMessage("Git synchronization unavailable")}
             </p>
             <p className="mt-1 text-[13px] leading-5 tracking-[-0.2px] text-kumo-subtle">
-              Git content is read-only and shows its most recently cached version.
+              {contextMessage("Git content is read-only and shows its most recently cached version.")}
             </p>
           </section>
         )}
 
         <section className="mt-9 border-t border-kumo-line pt-8">
           <p className="mb-3 text-[13px] font-medium leading-none tracking-[-0.2px] text-kumo-subtle">
-            Description
+            {contextMessage("Description")}
           </p>
           {metadata.description ? (
             <p className="max-w-3xl text-[15px] leading-7 tracking-[-0.2px] text-kumo-default">
@@ -1224,7 +1235,7 @@ function CollectionOverview({
             </p>
           ) : (
             <p className="text-[13px] italic leading-5 text-kumo-inactive">
-              No description yet.
+              {contextMessage("No description yet.")}
             </p>
           )}
         </section>
@@ -1237,16 +1248,16 @@ function CollectionOverview({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[13px] font-medium tracking-[-0.2px] text-kumo-default">
-                  No files in this collection
+                  {contextMessage("No files in this collection")}
                 </p>
                 <p className="mt-1 max-w-xl text-[13px] leading-5 tracking-[-0.2px] text-kumo-subtle">
                   {isSynced
                     ? supportsGitCollections
-                      ? "This git mirror is empty. Mirror content from git, then refresh."
-                      : "No Git content was cached before synchronization became unavailable."
+                      ? contextMessage("This git mirror is empty. Mirror content from git, then refresh.")
+                      : contextMessage("No Git content was cached before synchronization became unavailable.")
                     : canWrite
-                    ? "Use the + in the Files panel to create or upload skills or files. Agents use the names and descriptions to decide what to read."
-                    : "This collection is empty."}
+                    ? contextMessage("Use the + in the Files panel to create or upload skills or files. Agents use the names and descriptions to decide what to read.")
+                    : contextMessage("This collection is empty.")}
                 </p>
               </div>
             </div>
@@ -1274,8 +1285,8 @@ function CollectionOptionsMenu({
     <KebabMenu
       trigger={
         <WorkshopIconButton
-          aria-label="Collection options"
-          title="Options"
+          aria-label={contextMessage("Collection options")}
+          title={contextMessage("Options")}
           className="!h-9 !w-9 data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-default"
         >
           <DotsThree size={18} weight="bold" />
@@ -1287,7 +1298,7 @@ function CollectionOptionsMenu({
         onClick={onEditDetails}
         className={MENU_ITEM}
       >
-        Edit details
+        {contextMessage("Edit details")}
       </DropdownMenu.Item>
       {isSynced && supportsGitCollections && (
         <DropdownMenu.Item
@@ -1295,7 +1306,7 @@ function CollectionOptionsMenu({
           onClick={onManageGitTokens}
           className={MENU_ITEM}
         >
-          Manage git tokens
+          {contextMessage("Manage git tokens")}
         </DropdownMenu.Item>
       )}
       <DropdownMenu.Separator />
@@ -1304,7 +1315,7 @@ function CollectionOptionsMenu({
         onClick={onDelete}
         className={`${MENU_ITEM_DANGER} text-kumo-danger`}
       >
-        Delete collection
+        {contextMessage("Delete collection")}
       </DropdownMenu.Item>
     </KebabMenu>
   );
@@ -1391,17 +1402,17 @@ function CollectionSettingsModal({
       return;
     }
     if (!title.trim()) {
-      toasts.add({ title: "Name can't be empty", variant: "error" });
+      toasts.add({ title: contextMessage("Name can't be empty"), variant: "error" });
       return;
     }
     setSaving(true);
     try {
       await context.updateContextCollection(collectionId, updates);
-      toasts.add({ title: "Collection updated", variant: "success" });
+      toasts.add({ title: contextMessage("Collection updated"), variant: "success" });
       onUpdated();
       onClose();
     } catch {
-      toasts.add({ title: "Failed to update collection", variant: "error" });
+      toasts.add({ title: contextMessage("Failed to update collection"), variant: "error" });
       setSaving(false);
     }
   };
@@ -1410,10 +1421,10 @@ function CollectionSettingsModal({
     setDeleting(true);
     try {
       await context.deleteContextCollection(collectionId);
-      toasts.add({ title: "Collection deleted", variant: "success" });
+      toasts.add({ title: contextMessage("Collection deleted"), variant: "success" });
       onDeleted();
     } catch {
-      toasts.add({ title: "Failed to delete collection", variant: "error" });
+      toasts.add({ title: contextMessage("Failed to delete collection"), variant: "error" });
       setDeleting(false);
     }
   };
@@ -1434,7 +1445,7 @@ function CollectionSettingsModal({
       >
         {mode === "edit" ? (
           <>
-            <ModalHeader title="Edit collection" />
+            <ModalHeader title={contextMessage("Edit collection")} />
 
             <div className="space-y-5 px-4 py-5 sm:px-6">
               <div>
@@ -1452,7 +1463,7 @@ function CollectionSettingsModal({
               </div>
               {metadata.content.source === "git" && supportsGitCollections && (
                 <div>
-                  <FieldLabel>Git branch</FieldLabel>
+                  <FieldLabel>{contextMessage("Git branch")}</FieldLabel>
                   <WorkshopInput
                     value={branch}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBranch(e.target.value)}
@@ -1463,7 +1474,7 @@ function CollectionSettingsModal({
                     className="w-full"
                   />
                   <p className="mt-1 text-[12px] leading-4 text-kumo-subtle">
-                    This branch to pull from when refreshing the collection.
+                    {contextMessage("This branch to pull from when refreshing the collection.")}
                   </p>
                 </div>
               )}
@@ -1471,7 +1482,7 @@ function CollectionSettingsModal({
 
             <div className="flex items-center justify-end gap-2 border-t border-kumo-line px-4 py-3 sm:px-6">
               <WorkshopButton tone="secondary" className="!h-9" disabled={saving} onClick={onClose}>
-                Cancel
+                {contextMessage("Cancel")}
               </WorkshopButton>
               <WorkshopButton
                 tone="primary"
@@ -1479,14 +1490,14 @@ function CollectionSettingsModal({
                 loading={saving}
                 disabled={!hasChanges || !title.trim()}
               >
-                Save
+                {contextMessage("Save")}
               </WorkshopButton>
             </div>
           </>
         ) : (
           <>
             <ModalHeader
-              title="Delete collection"
+              title={contextMessage("Delete collection")}
               description={
                 <DeletePermanentlyDescription
                   name={metadata.title}
@@ -1497,11 +1508,11 @@ function CollectionSettingsModal({
 
             <div className="px-4 py-5 sm:px-6">
               <FieldLabel>
-                Type{" "}
+                {contextMessage("Type")}{" "}
                 <span className="font-mono text-kumo-default">
                   {metadata.title}
                 </span>{" "}
-                to confirm
+                {contextMessage("to confirm")}
               </FieldLabel>
               <WorkshopInput
                 value={confirmText}
@@ -1523,7 +1534,7 @@ function CollectionSettingsModal({
                 disabled={!canDelete}
                 loading={deleting}
               >
-                Delete collection
+                {contextMessage("Delete collection")}
               </WorkshopButton>
             </div>
           </>
@@ -1574,7 +1585,10 @@ function GitTokenManagementModal({
       const result = await context.listContextCollectionGitTokens(collectionId);
       setGitTokens(result.tokens);
     } catch (err) {
-      toastsRef.current.add({ title: `Failed to load Git tokens: ${(err as Error).message}`, variant: "error" });
+      toastsRef.current.add({
+        title: contextMessage("Failed to load Git tokens: {{error}}", { error: (err as Error).message }),
+        variant: "error",
+      });
     } finally {
       setLoadingTokens(false);
     }
@@ -1590,9 +1604,12 @@ function GitTokenManagementModal({
       const token = await context.createContextCollectionGitToken(collectionId);
       setNewGitToken(token);
       await loadGitTokens();
-      toasts.add({ title: "Git token created", variant: "success" });
+      toasts.add({ title: contextMessage("Git token created"), variant: "success" });
     } catch (err) {
-      toasts.add({ title: `Failed to create Git token: ${(err as Error).message}`, variant: "error" });
+      toasts.add({
+        title: contextMessage("Failed to create Git token: {{error}}", { error: (err as Error).message }),
+        variant: "error",
+      });
     } finally {
       setCreatingToken(false);
     }
@@ -1603,9 +1620,12 @@ function GitTokenManagementModal({
     try {
       await context.revokeContextCollectionGitToken(collectionId, tokenId);
       await loadGitTokens();
-      toasts.add({ title: "Git token revoked", variant: "success" });
+      toasts.add({ title: contextMessage("Git token revoked"), variant: "success" });
     } catch (err) {
-      toasts.add({ title: `Failed to revoke Git token: ${(err as Error).message}`, variant: "error" });
+      toasts.add({
+        title: contextMessage("Failed to revoke Git token: {{error}}", { error: (err as Error).message }),
+        variant: "error",
+      });
     } finally {
       setRevokingToken(null);
     }
@@ -1632,13 +1652,13 @@ function GitTokenManagementModal({
         size="sm"
       >
         <ModalHeader
-          title="Manage git tokens"
+          title={contextMessage("Manage git tokens")}
         />
 
         <div className="space-y-3 px-4 py-5 sm:px-6">
           <div className="flex items-center justify-between gap-3">
             <p className="max-w-sm text-[12px] leading-4 text-kumo-subtle">
-              Create a token to mirror content from an external git repository.
+              {contextMessage("Create a token to mirror content from an external git repository.")}
             </p>
             <WorkshopButton
               tone="secondary"
@@ -1647,21 +1667,21 @@ function GitTokenManagementModal({
               loading={creatingToken}
               disabled={busy}
             >
-              Create token
+              {contextMessage("Create token")}
             </WorkshopButton>
           </div>
 
           {newGitToken && (
             <div className="space-y-3 rounded-lg border border-green-500/30 bg-green-500/5 px-3 py-3 text-[12px] leading-5 text-kumo-subtle">
               <div>
-                <div className="font-medium text-kumo-default">Token created</div>
+                <div className="font-medium text-kumo-default">{contextMessage("Token created")}</div>
                 <p className="mt-0.5">
-                  Use these credentials to push content to your collection. The password is only shown once.
+                  {contextMessage("Use these credentials to push content to your collection. The password is only shown once.")}
                 </p>
               </div>
               <div className="space-y-2">
                 <div>
-                  <FieldLabel>Remote URL</FieldLabel>
+                  <FieldLabel>{contextMessage("Remote URL")}</FieldLabel>
                   <div className="mt-1 flex gap-2">
                     <input
                       readOnly
@@ -1671,14 +1691,18 @@ function GitTokenManagementModal({
                     <WorkshopButton
                       tone="secondary"
                       className="h-8!"
-                      onClick={() => copyToClipboard(newGitToken.remote, "Remote URL copied", "Failed to copy remote URL")}
+                      onClick={() => copyToClipboard(
+                        newGitToken.remote,
+                        contextMessage("Remote URL copied"),
+                        contextMessage("Failed to copy remote URL"),
+                      )}
                     >
-                      Copy
+                      {contextMessage("Copy")}
                     </WorkshopButton>
                   </div>
                 </div>
                 <div>
-                  <FieldLabel>Password</FieldLabel>
+                  <FieldLabel>{contextMessage("Password")}</FieldLabel>
                   <div className="mt-1 flex gap-2">
                     <input
                       readOnly
@@ -1689,29 +1713,33 @@ function GitTokenManagementModal({
                     <WorkshopButton
                       tone="secondary"
                       className="h-8!"
-                      onClick={() => copyToClipboard(newGitToken.plaintext, "Password copied", "Failed to copy password")}
+                      onClick={() => copyToClipboard(
+                        newGitToken.plaintext,
+                        contextMessage("Password copied"),
+                        contextMessage("Failed to copy password"),
+                      )}
                     >
-                      Copy
+                      {contextMessage("Copy")}
                     </WorkshopButton>
                   </div>
                 </div>
               </div>
               <div className="border-t border-green-500/20 pt-3">
-                <div className="font-medium text-kumo-default">Configure GitLab mirroring</div>
+                <div className="font-medium text-kumo-default">{contextMessage("Configure GitLab mirroring")}</div>
                 <p className="mt-0.5">
-                  These steps are specific to GitLab. Other git providers may use different setup flows.
+                  {contextMessage("These steps are specific to GitLab. Other git providers may use different setup flows.")}
                 </p>
                 <ol className="mt-2 list-decimal space-y-1.5 pl-4">
-                  <li>Open your GitLab project and go to Settings &gt; Repository &gt; Mirroring repositories</li>
-                  <li>Click "Add new" button to open setup flow</li>
-                  <li>Set Git repository URL to the remote URL above</li>
-                  <li>Set Mirror direction to Push</li>
-                  <li>Set Authentication method to Username and Password</li>
-                  <li>Set Username to "gitlab"</li>
-                  <li>Set Password to the password above</li>
-                  <li>Select Mirror specific branches and type in "{branch}"</li>
-                  <li>Click "Mirror repository" button to finish</li>
-                  <li>Click "Update now" button to trigger an initial push</li>
+                  <li>{contextMessage("Open your GitLab project and go to Settings > Repository > Mirroring repositories")}</li>
+                  <li>{contextMessage("Click \"Add new\" button to open setup flow")}</li>
+                  <li>{contextMessage("Set Git repository URL to the remote URL above")}</li>
+                  <li>{contextMessage("Set Mirror direction to Push")}</li>
+                  <li>{contextMessage("Set Authentication method to Username and Password")}</li>
+                  <li>{contextMessage("Set Username to \"gitlab\"")}</li>
+                  <li>{contextMessage("Set Password to the password above")}</li>
+                  <li>{contextMessage("Select Mirror specific branches and type in \"{{branch}}\"", { branch })}</li>
+                  <li>{contextMessage("Click \"Mirror repository\" button to finish")}</li>
+                  <li>{contextMessage("Click \"Update now\" button to trigger an initial push")}</li>
                 </ol>
               </div>
             </div>
@@ -1719,9 +1747,9 @@ function GitTokenManagementModal({
 
           <div className="rounded-lg border border-kumo-line bg-kumo-base">
             {loadingTokens ? (
-              <div className="px-3 py-2 text-[12px] text-kumo-subtle">Loading tokens...</div>
+              <div className="px-3 py-2 text-[12px] text-kumo-subtle">{contextMessage("Loading tokens…")}</div>
             ) : gitTokens.length === 0 ? (
-              <div className="px-3 py-2 text-[12px] text-kumo-subtle">No Git tokens yet.</div>
+              <div className="px-3 py-2 text-[12px] text-kumo-subtle">{contextMessage("No Git tokens yet.")}</div>
             ) : (
               <div className="divide-y divide-kumo-line">
                 {gitTokens.map((token) => (
@@ -1732,7 +1760,9 @@ function GitTokenManagementModal({
                     <div className="min-w-0">
                       <div className="truncate font-mono text-[11px] text-kumo-default">{token.id}</div>
                       <div className="text-kumo-subtle">
-                        expires {new Date(token.expiresAt).toLocaleDateString()}
+                        {contextMessage("expires {{date}}", {
+                          date: new Date(token.expiresAt).toLocaleDateString(getContextLocale()),
+                        })}
                       </div>
                     </div>
                     <WorkshopButton
@@ -1742,7 +1772,7 @@ function GitTokenManagementModal({
                       loading={revokingToken === token.id}
                       disabled={revokingToken !== null}
                     >
-                      Revoke
+                      {contextMessage("Revoke")}
                     </WorkshopButton>
                   </div>
                 ))}
@@ -1753,7 +1783,7 @@ function GitTokenManagementModal({
 
         <div className="flex items-center justify-end gap-2 border-t border-kumo-line px-4 py-3 sm:px-6">
           <WorkshopButton tone="secondary" className="h-9!" disabled={busy} onClick={onClose}>
-            Close
+            {contextMessage("Close")}
           </WorkshopButton>
         </div>
       </Dialog>
@@ -1999,10 +2029,10 @@ function FolderView({
                 </span>
                 {isSkill && (
                   <span
-                    title="Contains a valid Agent Skill"
+                    title={contextMessage("Contains a valid Agent Skill")}
                     className="shrink-0 text-[10px] font-medium uppercase leading-none tracking-[0.4px] text-kumo-inactive"
                   >
-                    skill
+                    {contextMessage("skill")}
                   </span>
                 )}
               </>
@@ -2013,7 +2043,7 @@ function FolderView({
               stopPropagation
               trigger={
                 <WorkshopIconButton
-                  aria-label={`Actions for ${folder.name}`}
+                  aria-label={contextMessage("Actions for {{name}}", { name: folder.name })}
                   onClick={(e: React.MouseEvent) => e.stopPropagation()}
                   className={TREE_ROW_TRIGGER}
                 >
@@ -2026,21 +2056,21 @@ function FolderView({
                 onClick={() => ctx.startCreate(folder.path, "file")}
                 className={MENU_ITEM}
               >
-                New file
+                {contextMessage("New file")}
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 icon={<FolderPlus size={12} className="mr-2" />}
                 onClick={() => ctx.startCreate(folder.path, "folder")}
                 className={MENU_ITEM}
               >
-                New folder
+                {contextMessage("New folder")}
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 icon={<PencilSimple size={12} className="mr-2" />}
                 onClick={() => ctx.startRename(folder.path)}
                 className={MENU_ITEM}
               >
-                Rename
+                {contextMessage("Rename")}
               </DropdownMenu.Item>
               <DropdownMenu.Separator />
               <DropdownMenu.Item
@@ -2049,7 +2079,7 @@ function FolderView({
                 onClick={() => ctx.deletePath(folder.path, true)}
                 className={MENU_ITEM_DANGER}
               >
-                Delete
+                {contextMessage("Delete")}
               </DropdownMenu.Item>
             </KebabMenu>
           )}
@@ -2139,7 +2169,7 @@ function FileView({
           stopPropagation
           trigger={
             <WorkshopIconButton
-              aria-label={`Actions for ${baseName(doc.path)}`}
+              aria-label={contextMessage("Actions for {{name}}", { name: baseName(doc.path) })}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
               className={TREE_ROW_TRIGGER}
             >
@@ -2152,7 +2182,7 @@ function FileView({
             onClick={() => ctx.startRename(doc.path)}
             className={MENU_ITEM}
           >
-            Rename
+            {contextMessage("Rename")}
           </DropdownMenu.Item>
           <DropdownMenu.Item
             icon={<Trash size={12} className="mr-2" />}
@@ -2160,7 +2190,7 @@ function FileView({
             onClick={() => ctx.deletePath(doc.path, false)}
             className={MENU_ITEM_DANGER}
           >
-            Delete
+            {contextMessage("Delete")}
           </DropdownMenu.Item>
         </KebabMenu>
       )}
@@ -2279,9 +2309,12 @@ function CollectionEditor({
     try {
       await context.syncContextCollectionArtifactSource(collectionId);
       await loadDocs();
-      toasts.add({ title: "Collection refreshed", variant: "success" });
+      toasts.add({ title: contextMessage("Collection refreshed"), variant: "success" });
     } catch (err) {
-      toasts.add({ title: `Failed to refresh: ${(err as Error).message}`, variant: "error" });
+      toasts.add({
+        title: contextMessage("Failed to refresh: {{error}}", { error: (err as Error).message }),
+        variant: "error",
+      });
     } finally {
       setRefreshingSource(false);
     }
@@ -2347,7 +2380,7 @@ function CollectionEditor({
       setEditOnOpenPath(filePath);
       setSelectedPath(filePath);
     } catch {
-      toasts.add({ title: "Failed to create file", variant: "error" });
+      toasts.add({ title: contextMessage("Failed to create file"), variant: "error" });
     }
   };
 
@@ -2391,7 +2424,7 @@ function CollectionEditor({
       await relocate(renaming, dest);
     } catch (err) {
       toasts.add({
-        title: `Failed to rename: ${(err as Error).message}`,
+        title: contextMessage("Failed to rename: {{error}}", { error: (err as Error).message }),
         variant: "error",
       });
     } finally {
@@ -2408,7 +2441,7 @@ function CollectionEditor({
       await relocate(from, dest);
     } catch (err) {
       toasts.add({
-        title: `Failed to move: ${(err as Error).message}`,
+        title: contextMessage("Failed to move: {{error}}", { error: (err as Error).message }),
         variant: "error",
       });
     }
@@ -2459,7 +2492,7 @@ function CollectionEditor({
       setPendingDelete(null);
     } catch {
       toasts.add({
-        title: isDir ? "Failed to delete folder" : "Failed to delete document",
+        title: contextMessage(isDir ? "Failed to delete folder" : "Failed to delete document"),
         variant: "error",
       });
     } finally {
@@ -2491,7 +2524,10 @@ function CollectionEditor({
       }
     });
     toasts.add({
-      title: `Uploaded ${pluralize(ok, "file")}${failed ? `, ${failed} failed` : ""}`,
+      title: contextMessage("Uploaded {{files}}{{failed}}", {
+        files: pluralize(ok, "file"),
+        failed: failed ? contextMessage(", {{count}} failed", { count: failed }) : "",
+      }),
       variant: failed ? "error" : "success",
     });
     await loadDocs();
@@ -2542,15 +2578,15 @@ function CollectionEditor({
             className="press -ml-1 mb-4 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[13px] font-medium tracking-[-0.25px] text-kumo-subtle transition-colors hover:text-kumo-default"
           >
             <CaretLeft size={14} />
-            Context &amp; Skills
+            {contextMessage("Context & Skills")}
           </button>
           <div className="rounded-xl border border-kumo-line bg-kumo-base px-5 py-10 text-center shadow-[0_1px_2px_rgba(20,17,16,0.03)]">
             <BookOpen size={32} className="mx-auto mb-3 text-kumo-subtle" />
             <p className="m-0 text-[15px] leading-5 font-medium tracking-[-0.25px] text-kumo-default">
-              This collection is no longer available
+              {contextMessage("This collection is no longer available")}
             </p>
             <p className="mt-1 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-              It may have been deleted.
+              {contextMessage("It may have been deleted.")}
             </p>
           </div>
         </div>
@@ -2601,7 +2637,7 @@ function CollectionEditor({
           size="sm"
         >
           <ModalHeader
-            title={pendingDelete?.isDir ? "Delete folder" : "Delete document"}
+            title={contextMessage(pendingDelete?.isDir ? "Delete folder" : "Delete document")}
             description={
               <DeletePermanentlyDescription
                 name={pendingDelete ? baseName(pendingDelete.path) : ""}
@@ -2620,7 +2656,7 @@ function CollectionEditor({
               disabled={deletingPath}
               onClick={() => setPendingDelete(null)}
             >
-              Cancel
+              {contextMessage("Cancel")}
             </WorkshopButton>
             <WorkshopButton
               tone="danger"
@@ -2628,7 +2664,7 @@ function CollectionEditor({
               onClick={performDeletePath}
               loading={deletingPath}
             >
-              {pendingDelete?.isDir ? "Delete folder" : "Delete document"}
+              {contextMessage(pendingDelete?.isDir ? "Delete folder" : "Delete document")}
             </WorkshopButton>
           </div>
         </Dialog>
@@ -2648,7 +2684,7 @@ function CollectionEditor({
             className="press -ml-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[13px] font-medium tracking-[-0.25px] text-kumo-subtle transition-colors hover:text-kumo-default"
           >
             <CaretLeft size={14} />
-            Context &amp; Skills
+            {contextMessage("Context & Skills")}
           </button>
         </div>
           {metadata && (
@@ -2660,7 +2696,7 @@ function CollectionEditor({
               >
                 <button
                   onClick={() => setSelectedPath(null)}
-                  title="Collection overview"
+                  title={contextMessage("Collection overview")}
                   aria-current={selectedPath ? undefined : "page"}
                   className="flex min-w-0 flex-1 transform-none items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring/30 active:scale-100"
                 >
@@ -2686,15 +2722,15 @@ function CollectionEditor({
 
           <div className="flex h-8 shrink-0 items-center justify-between gap-2 px-5">
             <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
-              Files
+              {contextMessage("Files")}
             </span>
             {canEditDocuments && (
               <>
             <KebabMenu
               trigger={
                 <WorkshopIconButton
-                  aria-label="Add"
-                  title="Add file or folder"
+                  aria-label={contextMessage("Add")}
+                  title={contextMessage("Add file or folder")}
                   className="!h-6 !w-6 text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-default"
                 >
                   <Plus size={14} weight="bold" />
@@ -2706,14 +2742,14 @@ function CollectionEditor({
                 onClick={() => startCreate("", "file")}
                 className={MENU_ITEM}
               >
-                New file
+                {contextMessage("New file")}
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 icon={<FolderPlus size={13} className="mr-2" />}
                 onClick={() => startCreate("", "folder")}
                 className={MENU_ITEM}
               >
-                New folder
+                {contextMessage("New folder")}
               </DropdownMenu.Item>
               <DropdownMenu.Separator />
               <DropdownMenu.Item
@@ -2721,14 +2757,14 @@ function CollectionEditor({
                 onClick={() => fileInputRef.current?.click()}
                 className={MENU_ITEM}
               >
-                Upload files
+                {contextMessage("Upload files")}
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 icon={<Folder size={13} className="mr-2" />}
                 onClick={() => dirInputRef.current?.click()}
                 className={MENU_ITEM}
               >
-                Upload folder
+                {contextMessage("Upload folder")}
               </DropdownMenu.Item>
             </KebabMenu>
             <input
@@ -2758,14 +2794,16 @@ function CollectionEditor({
           </div>
           <div className="ctx-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3.5 pb-6 pt-0.5">
             {loading ? (
-              <p className="px-2 py-2 text-[13px] text-kumo-subtle">Loading…</p>
+              <p className="px-2 py-2 text-[13px] text-kumo-subtle">{contextMessage("Loading…")}</p>
             ) : docs.length === 0 && pendingFolders.size === 0 && !creating ? (
               <p className="px-2 py-2 text-[12px] leading-5 text-kumo-inactive">
                 {metadata?.content.source === "git"
                   ? supportsGitCollections
-                    ? "No files yet. Mirror content from git, then refresh."
-                    : "No Git content was cached before synchronization became unavailable."
-                  : canWrite ? "No files yet. Use + to create or upload skills or files." : "No files yet."}
+                    ? contextMessage("No files yet. Mirror content from git, then refresh.")
+                    : contextMessage("No Git content was cached before synchronization became unavailable.")
+                  : canWrite
+                    ? contextMessage("No files yet. Use + to create or upload skills or files.")
+                    : contextMessage("No files yet.")}
               </p>
             ) : (
               <FolderView folder={tree} depth={0} ctx={ctx} />
@@ -2783,7 +2821,7 @@ function CollectionEditor({
                 className="flex sm:hidden flex-shrink-0 items-center gap-1 border-b border-kumo-line px-4 py-2.5 text-[13px] text-kumo-subtle transition-colors hover:text-kumo-default"
               >
                 <CaretLeft size={14} />
-                Files
+                {contextMessage("Files")}
               </button>
               <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
                 <DocumentEditor
@@ -2907,7 +2945,7 @@ function MarkdownPreview({
               {content}
             </ReactMarkdown>
           ) : (
-            <p className="italic text-kumo-inactive">This document is empty.</p>
+            <p className="italic text-kumo-inactive">{contextMessage("This document is empty.")}</p>
           )}
         </div>
       </div>
@@ -2957,8 +2995,10 @@ function renderDocumentBody({
   if (!isText) {
     return (
       <div className="p-4 text-[13px] text-kumo-subtle">
-        Binary document ({contentType}, {Math.round((body.length * 3) / 4 / 1024)} KB). Use Replace to
-        update it.
+        {contextMessage("Binary document ({{type}}, {{size}} KB). Use Replace to update it.", {
+          type: contentType,
+          size: Math.round((body.length * 3) / 4 / 1024),
+        })}
       </div>
     );
   }
@@ -3065,7 +3105,7 @@ function DocumentEditor({
       if (cancelled) return;
       setLoading(false);
       toasts.add({
-        title: `Failed to load document: ${(err as Error).message}`,
+        title: contextMessage("Failed to load document: {{error}}", { error: (err as Error).message }),
         variant: "error",
       });
     });
@@ -3101,10 +3141,10 @@ function DocumentEditor({
       };
       setSkillName(saved?.skillName ?? null);
       setDirty(false);
-      toasts.add({ title: "Saved", variant: "success" });
+      toasts.add({ title: contextMessage("Saved"), variant: "success" });
       onChanged();
     } catch {
-      toasts.add({ title: "Failed to save", variant: "error" });
+      toasts.add({ title: contextMessage("Failed to save"), variant: "error" });
     } finally {
       setSaving(false);
     }
@@ -3118,7 +3158,7 @@ function DocumentEditor({
       return;
     }
     if (trimmed.includes("/")) {
-      toasts.add({ title: "File name can't contain '/'", variant: "error" });
+      toasts.add({ title: contextMessage("File name can't contain '/'"), variant: "error" });
       setFilename(baseName(path));
       return;
     }
@@ -3129,7 +3169,10 @@ function DocumentEditor({
       await context.moveContextDocument(collectionId, path, newPath);
       onRenamed(newPath);
     } catch (err) {
-      toasts.add({ title: `Rename failed: ${(err as Error).message}`, variant: "error" });
+      toasts.add({
+        title: contextMessage("Rename failed: {{error}}", { error: (err as Error).message }),
+        variant: "error",
+      });
       setFilename(baseName(path));
     } finally {
       setRenaming(false);
@@ -3146,7 +3189,7 @@ function DocumentEditor({
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-kumo-subtle">
-        Loading…
+        {contextMessage("Loading…")}
       </div>
     );
   }
@@ -3171,7 +3214,7 @@ function DocumentEditor({
             }}
             className="w-full bg-transparent text-[18px] font-semibold leading-6 tracking-[-0.4px] text-kumo-default focus:outline-none"
             placeholder="file-name.md"
-            title="File name — edit to rename (the extension sets the type)"
+            title={contextMessage("File name — edit to rename (the extension sets the type)")}
           />
 
         </div>
@@ -3186,12 +3229,12 @@ function DocumentEditor({
             loading={saving}
             disabled={!dirty}
           >
-            Save
+            {contextMessage("Save")}
           </WorkshopButton>
         )}
         {!readOnly && !isText && mode === "edit" && (
           <label className="press flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-kumo-line px-2.5 text-[12px] font-medium text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default">
-            <UploadSimple size={14} /> Replace
+            <UploadSimple size={14} /> {contextMessage("Replace")}
             <input
               type="file"
               className="hidden"
@@ -3206,8 +3249,8 @@ function DocumentEditor({
         {showModeToggle && (
           <div className="inline-flex h-8 shrink-0 items-center rounded-lg border border-kumo-line bg-kumo-fill p-0.5">
             {[
-              { m: "read" as const, Icon: Eye, label: "View" },
-              { m: "edit" as const, Icon: readOnly ? Code : PencilSimple, label: readOnly ? "Source" : "Edit" },
+              { m: "read" as const, Icon: Eye, label: contextMessage("View") },
+              { m: "edit" as const, Icon: readOnly ? Code : PencilSimple, label: contextMessage(readOnly ? "Source code" : "Edit") },
             ].map(({ m, Icon, label }) => (
               <button
                 key={m}
@@ -3233,7 +3276,7 @@ function DocumentEditor({
           <span className="mx-0.5 h-5 w-px shrink-0 bg-kumo-line" aria-hidden="true" />
           <button
             onClick={onRequestDelete}
-            title="Delete document"
+            title={contextMessage("Delete document")}
             className="press flex h-8 w-8 items-center justify-center rounded-md text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-danger"
           >
             <Trash size={16} />
@@ -3246,23 +3289,23 @@ function DocumentEditor({
           declare their own description show it read-only; otherwise the author writes it. */}
       <div className="border-b border-kumo-line px-6 py-3.5 sm:px-10">
         <label className="mb-1.5 block text-[12px] font-medium tracking-[-0.15px] text-kumo-subtle">
-          When to use this
+          {contextMessage("When to use this")}
           {skillName && (
             <span className="ml-1 font-mono text-kumo-brand">· /{skillName}</span>
           )}
           {extractedDescription !== null && (
             <span
               className="ml-1 text-kumo-inactive"
-              title="Defined in this file; edit it in the document below."
+              title={contextMessage("Defined in this file; edit it in the document below.")}
             >
-              · from file
+              · {contextMessage("from file")}
             </span>
           )}
         </label>
         {extractedDescription !== null ? (
           <p className="max-w-3xl text-[14px] leading-5 tracking-[-0.2px] text-kumo-default">
             {effectiveDescription || (
-              <span className="italic text-kumo-inactive">No description in this file yet.</span>
+              <span className="italic text-kumo-inactive">{contextMessage("No description in this file yet.")}</span>
             )}
           </p>
         ) : descriptionIsEditable ? (
@@ -3273,13 +3316,13 @@ function DocumentEditor({
               setDescription(nextDescription);
               setDirty(documentIsDirty(nextDescription, body));
             }}
-            placeholder="Describe what this document contains and when an agent should use it…"
+            placeholder={contextMessage("Describe what this document contains and when an agent should use it…")}
             className="w-full bg-transparent text-[14px] leading-5 tracking-[-0.2px] text-kumo-default placeholder:text-kumo-inactive focus:outline-none"
           />
         ) : (
           <p className="max-w-3xl text-[14px] leading-5 tracking-[-0.2px] text-kumo-default">
             {description || (
-              <span className="italic text-kumo-inactive">No description yet.</span>
+              <span className="italic text-kumo-inactive">{contextMessage("No description yet.")}</span>
             )}
           </p>
         )}

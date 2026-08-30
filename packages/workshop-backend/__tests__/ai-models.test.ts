@@ -29,7 +29,8 @@ const ANTHROPIC_CONFIG: AiModelConfig = {
 const WORKERS_AI_CONFIG: AiModelConfig = {
   provider: "cloudflare",
   model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-  apiToken: "ignored-in-gateway-mode",
+  accountId: "cccccccccccccccccccccccccccccccc",
+  apiToken: "workers-ai-user-token",
 };
 
 function env(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
@@ -124,28 +125,25 @@ describe("getModel AI Gateway routing", () => {
     });
   });
 
-  it("routes Workers AI through its dedicated gateway override", () => {
+  it("never routes Workers AI through the deployment gateway", () => {
     const handle = getModel(env({
       CF_AI_GATEWAY_WAI: "workers-ai-gateway",
     }), WORKERS_AI_CONFIG, INITIATOR);
 
     expect(handle.model.baseUrl).toBe(
-        "https://gateway.ai.cloudflare.com/v1/gateway-account-id/workers-ai-gateway/" +
-        "workers-ai/v1");
-    expect(handle.aiGatewayLogRoute).toEqual({
-      gateway: "workers-ai-gateway",
-      accountId: "gateway-account-id",
-      apiToken: "gateway-token",
-    });
+        "https://api.cloudflare.com/client/v4/accounts/" +
+        "cccccccccccccccccccccccccccccccc/ai/v1");
+    expect(handle.aiGatewayLogRoute).toBeUndefined();
   });
 
-  it("can bypass AI Gateway for deployment-owned Workers AI", () => {
+  it("never uses the deployment Workers AI binding for inference", () => {
     const handle = getModel(env({
       CF_AI_GATEWAY_WAI_DIRECT: "true",
       WORKERS_AI: {} as Ai,
     }), WORKERS_AI_CONFIG, INITIATOR);
 
-    expect(handle.model.baseUrl).toBe("https://workers-ai-binding.invalid/v1");
+    expect(handle.model.baseUrl).toContain(
+        "/accounts/cccccccccccccccccccccccccccccccc/ai/v1");
     expect(handle.aiGatewayLogRoute).toBeUndefined();
   });
 
@@ -231,36 +229,26 @@ describe("getModel AI Gateway routing", () => {
         INITIATOR)).toThrow("AI Gateway mode needs a transport");
   });
 
-  it("prioritizes a connected user's Gateway over platform routing", async () => {
+  it("requires the model's explicit Workers AI credentials even with a connected Gateway", async () => {
     const handle = getModel(env(), WORKERS_AI_CONFIG, INITIATOR, {
       userGateway: { accountId: "user-account-id", apiKey: "user-token" },
       metadata: { source: "chat", gadgetId: "gadget-789", chatId: 9 },
     });
 
-    // BYOK rides the user's default gateway's provider-native routes (unified *billing* has no
-    // API requirements), regardless of the platform gateway configuration. For Workers AI that
-    // is its own OpenAI-compatible endpoint under workers-ai/v1.
     expect(handle.model.api).toBe("openai-completions");
     expect(handle.model.id).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
     expect(handle.model.baseUrl).toBe(
-        "https://gateway.ai.cloudflare.com/v1/user-account-id/default/workers-ai/v1");
-    expect(handle.aiGatewayLogRoute).toEqual({
-      gateway: "default",
-      accountId: "user-account-id",
-      apiToken: "user-token",
-    });
+        "https://api.cloudflare.com/client/v4/accounts/" +
+        "cccccccccccccccccccccccccccccccc/ai/v1");
+    expect(handle.aiGatewayLogRoute).toBeUndefined();
 
     const request = await captureRequest(handle);
     expect(request.url).toBe(
-        "https://gateway.ai.cloudflare.com/v1/user-account-id/default/workers-ai/v1/" +
-        "chat/completions");
-    expect(request.headers.get("cf-aig-authorization")).toBe("Bearer user-token");
-    expect(JSON.parse(request.headers.get("cf-aig-metadata")!)).toEqual({
-      user: "user-123",
-      source: "chat",
-      gadgetId: "gadget-789",
-      chatId: 9,
-    });
+        "https://api.cloudflare.com/client/v4/accounts/" +
+        "cccccccccccccccccccccccccccccccc/ai/v1/chat/completions");
+    expect(request.headers.get("authorization")).toBe("Bearer workers-ai-user-token");
+    expect(request.headers.get("cf-aig-authorization")).toBeNull();
+    expect(request.headers.get("cf-aig-metadata")).toBeNull();
   }, 15000);
 
   it("speaks the provider's native API on a connected user's Gateway", async () => {
@@ -285,25 +273,22 @@ describe("getModel AI Gateway routing", () => {
     expect(request.headers.get("authorization")).toBeNull();
   }, 15000);
 
-  it("routes Workers AI through the platform gateway like every other provider", async () => {
+  it("keeps Workers AI user-funded when a platform gateway is configured", async () => {
     const handle = getModel(env(), WORKERS_AI_CONFIG, INITIATOR,
         { sessionAffinity: "session-a" });
 
     expect(handle.model.api).toBe("openai-completions");
     expect(handle.model.id).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
     expect(handle.model.baseUrl).toBe(
-        "https://gateway.ai.cloudflare.com/v1/gateway-account-id/platform-gateway/workers-ai/v1");
-    expect(handle.aiGatewayLogRoute).toEqual({
-      gateway: "platform-gateway",
-      accountId: "gateway-account-id",
-      apiToken: "gateway-token",
-    });
+        "https://api.cloudflare.com/client/v4/accounts/" +
+        "cccccccccccccccccccccccccccccccc/ai/v1");
+    expect(handle.aiGatewayLogRoute).toBeUndefined();
 
     const request = await captureRequest(handle);
     expect(request.url).toBe(
-        "https://gateway.ai.cloudflare.com/v1/gateway-account-id/platform-gateway/workers-ai/" +
-        "v1/chat/completions");
-    expect(request.headers.get("cf-aig-authorization")).toBe("Bearer gateway-token");
+        "https://api.cloudflare.com/client/v4/accounts/" +
+        "cccccccccccccccccccccccccccccccc/ai/v1/chat/completions");
+    expect(request.headers.get("authorization")).toBe("Bearer workers-ai-user-token");
     // Session affinity flows through (Workers AI models opt in to the affinity headers).
     expect(request.headers.get("x-session-affinity")).toBe("session-a");
   }, 15000);
@@ -399,25 +384,17 @@ describe("getModel AI Gateway binding transport", () => {
     expect((JSON.parse(entry.body) as { model: string }).model).toBe("claude-sonnet-4-5");
   }, 15000);
 
-  it("drives Workers AI through the binding via its gateway route", async () => {
+  it("does not use the gateway binding for Workers AI", async () => {
     const handle = getModel(bindingEnv(), WORKERS_AI_CONFIG, INITIATOR);
 
     expect(handle.model.baseUrl).toBe(
-        "https://workers-binding.ai/ai-gateway/gateways/platform-gateway/workers-ai/v1");
-    expect(handle.aiGatewayLogRoute).toEqual({ gateway: "platform-gateway" });
+        "https://api.cloudflare.com/client/v4/accounts/" +
+        "cccccccccccccccccccccccccccccccc/ai/v1");
+    expect(handle.aiGatewayLogRoute).toBeUndefined();
 
-    const entry = await captureEntry(handle);
-    expect(entry.url).toBe(
-        "https://workers-binding.ai/ai-gateway/gateways/platform-gateway/workers-ai/" +
-        "v1/chat/completions");
-    expect((JSON.parse(entry.body) as { model: string }).model)
-        .toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
-    // openai-completions adapters inject `Authorization: Bearer unused` under header-owned
-    // auth; the gatewayAuthHeaders nulls must delete it before dispatch, else the gateway
-    // would treat it as a request-supplied provider key overriding stored keys.
-    const headerNames = Object.keys(entry.headers).map((name) => name.toLowerCase());
-    expect(headerNames).not.toContain("authorization");
-    expect(headerNames).not.toContain("x-api-key");
+    const request = await captureRequest(handle);
+    expect(request.headers.get("authorization")).toBe("Bearer workers-ai-user-token");
+    expect(capturedEntries).toHaveLength(0);
   }, 15000);
 
   it("lets a per-call fetch override the binding transport", async () => {
@@ -483,6 +460,13 @@ describe("getModel direct routing (no gateway)", () => {
     capturedRequests.length = 0;
   });
 
+  it("requires the pool namespace for an explicitly shared Workers AI model", () => {
+    expect(() => getModel(env({ CF_AI_GATEWAY: undefined }), {
+      ...WORKERS_AI_CONFIG,
+      shareWithUsers: true,
+    }, INITIATOR)).toThrow("shared Workers AI credential pool is unavailable");
+  });
+
   it("uses the provider defaults and the config's own credentials", async () => {
     const handle = getModel(env({ CF_AI_GATEWAY: undefined }), {
       provider: "anthropic",
@@ -500,40 +484,16 @@ describe("getModel direct routing (no gateway)", () => {
     expect(request.headers.get("cf-aig-metadata")).toBeNull();
   }, 15000);
 
-  it("streams deployment-owned Workers AI through the in-process binding", async () => {
-    const run = async (_model: string, input: Record<string, unknown>) => {
-      const body = [
-        'data: {"id":"binding-test","model":"@cf/zai-org/glm-5.2",' +
-          '"choices":[{"index":0,"delta":{"content":"Binding works"},' +
-          '"finish_reason":null}]}\n\n',
-        'data: {"id":"binding-test","model":"@cf/zai-org/glm-5.2",' +
-          '"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
-        'data: [DONE]\n\n',
-      ].join("");
-      expect(input.model).toBeUndefined();
-      expect(input.stream).toBe(true);
-      return new Response(body, { headers: { "content-type": "text/event-stream" } });
-    };
-    const workersAi = Object.create(null) as Ai;
-    workersAi.run = run;
-
-    const handle = getModel(env({
+  it("rejects deployment-owned Workers AI credentials", () => {
+    expect(() => getModel(env({
       CF_AI_GATEWAY: undefined,
-      WORKERS_AI: workersAi,
+      WORKERS_AI: {} as Ai,
     }), {
       provider: "cloudflare",
       model: "@cf/zai-org/glm-5.2",
       apiToken: "",
-    }, INITIATOR);
-
-    expect(handle.model.baseUrl).toBe("https://workers-ai-binding.invalid/v1");
-    const stream = handle.stream(handle.model, {
-      messages: [{ role: "user", content: "hello", timestamp: 0 }],
-    }, { maxRetries: 0 });
-    const message = await stream.result();
-    expect(message.stopReason).toBe("stop");
-    expect(message.content).toContainEqual({ type: "text", text: "Binding works" });
-  }, 15000);
+    }, INITIATOR)).toThrow("This Workers AI model has no Cloudflare credentials.");
+  });
 
   it("uses the config's own account and token for direct Workers AI", async () => {
     // Outside gateway mode, Workers AI is BYOK like any other provider: credentials come from

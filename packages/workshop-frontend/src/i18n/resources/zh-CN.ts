@@ -24,6 +24,7 @@ const zhCN: TranslationCatalog = {
       primary: '主导航', home: '首页', workspaces: '工作区', blueprints: '蓝图', outputs: '输出',
       explore: '模板中心', gatekeepers: '连接与权限', providers: 'AI 模型', profile: '个人资料', admin: '管理后台',
     },
+    gatekeeperApps: { context: '上下文与技能', scheduler: '定时任务' },
     sidebar: {
       search: '搜索', searchWithShortcut: '搜索（⌘K）', collapse: '收起侧栏', expand: '展开侧栏',
       openMenu: '打开菜单', closeMenu: '关闭菜单',
@@ -229,12 +230,14 @@ const zhCN: TranslationCatalog = {
     pageTitle: 'AI 模型提供商', title: 'AI 模型提供商', subtitle: '配置工作区可使用的 AI 模型。', add: '添加提供商', search: '搜索提供商…',
     row: {
       quickTitle: '当前为快捷模型，点击取消', setQuickTitle: '点击设为快捷模型', builtIn: '内置', quick: '快捷',
-      actions: '提供商操作', clearQuick: '取消快捷模型', setQuick: '设为快捷模型', delete: '删除提供商',
+      actions: '提供商操作', clearQuick: '取消快捷模型', setQuick: '设为快捷模型', share: '共享凭据', makePrivate: '停止共享', delete: '删除提供商',
+      access: { private: '私有', 'shared-by-you': '由你共享', 'shared-pool': '共享池' },
     },
     notices: {
       gatewayLabel: 'AI Gateway 模式：',
       gatewayDescription: '内置模型和凭据由当前部署管理。你可以为已启用的提供商添加自定义模型 ID；这些请求仍通过部署的 Gateway。',
       quickLabel: '快捷模型：', noneSet: '未设置。', quickDescription: '用于生成对话标题等快速任务。点击模型即可设置。',
+      poolDescription: 'Workers AI 只使用用户提供的凭据。系统会自动轮换共享凭据，并暂时跳过发生上游错误的凭据。',
     },
     empty: {
       loadError: '加载模型提供商时出现问题。', retry: '重试', none: '还没有 AI 模型提供商',
@@ -242,6 +245,8 @@ const zhCN: TranslationCatalog = {
     },
     messages: {
       deleteConfirm: '删除“{{name}}”？此操作无法撤销。', deleteFailed: '删除提供商失败', quickFailed: '更新默认模型失败',
+      shareConfirm: '共享“{{name}}”的 Cloudflare 凭据？其他用户将可以在你的账户中产生需要计费的 Workers AI 用量。',
+      shared: '凭据已加入共享池', private: '凭据已恢复为私有', shareFailed: '更新凭据共享失败',
     },
     addDialog: {
       title: '添加 AI 模型', selectProvider: '选择提供商', selectModel: '选择模型', chooseProvider: '选择提供商…',
@@ -251,6 +256,8 @@ const zhCN: TranslationCatalog = {
       accountIdDescription: '用于 Workers AI 用量计费的 Cloudflare 账户', apiToken: 'API Token',
       apiTokenOllama: '本地访问 Ollama 时可选', apiTokenCompatible: '此端点的可选 Bearer Token',
       apiTokenCloudflare: '具有 Workers AI 读取和编辑权限的 API Token（控制台路径：Workers AI > Use REST API > Create a Workers AI API Token）',
+      shareTitle: '与其他 CinaSeek 用户共享',
+      shareDescription: '可选。Token 只保存在服务端，但通过它路由的请求会计入你的 Cloudflare 账户。共享池会在可用凭据之间自动分配请求。',
       apiTokenProvider: '用于 {{provider}} 计费的 API Token', gatewayProviderPath: 'Gateway 提供商路径', apiUrl: 'API URL',
       ollamaUrlDescription: 'Ollama 服务器的 URL',
       gatewayPathDescription: 'Cloudflare 自定义提供商及其 API 版本的路径；CinaSeek 会添加 /chat/completions',
@@ -259,7 +266,7 @@ const zhCN: TranslationCatalog = {
       added: 'AI 模型添加成功', addFailed: '添加模型失败',
       errors: {
         selectProvider: '请选择提供商', selectModel: '请选择模型', modelId: '请输入模型 ID', displayName: '请输入显示名称',
-        apiToken: '请输入 API Token', accountId: '请输入 Cloudflare 账户 ID', ollamaUrl: '请输入 Ollama API URL',
+        apiToken: '请输入 API Token', accountId: '请输入 Cloudflare 账户 ID', accountIdFormat: 'Cloudflare 账户 ID 必须是 32 位十六进制字符', ollamaUrl: '请输入 Ollama API URL',
         gatewayPath: '请输入 AI Gateway 自定义提供商路径', compatibleUrl: '请输入兼容 OpenAI 的 API URL',
       },
     },

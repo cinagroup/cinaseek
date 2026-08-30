@@ -2,39 +2,19 @@ import { AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS } from "@gadgets/work
 import type { AiModelProvider } from "@gadgets/workshop-shared/api";
 import type { UserAiModelRecord } from "./user.js";
 
-/**
- * The model used for quick tasks like title generation when AI Gateway mode is active. This 70B
- * model is fast and cheap enough that there is little reason to use a smaller title model.
- */
-export const QUICK_MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-
-/** Models supplied by the deployment's in-process Workers AI binding when Gateway mode is off. */
-export function getWorkersAiBindingModelList(): AiChatAuthorInfo[] {
-  return Object.entries(SUGGESTED_MODELS.cloudflare).map(([id, model]) => ({
-    type: "agent",
-    id,
-    name: model.name,
-  }));
+/** Whether a Workers AI model may be contributed to and discovered through the shared pool. */
+export function isShareableWorkersAiModelId(modelId: string): boolean {
+  return modelId in SUGGESTED_MODELS.cloudflare;
 }
 
-/** Resolve a model ID offered by the in-process Workers AI binding. */
-export function resolveWorkersAiBindingModel(modelId: string): UserAiModelRecord | undefined {
+/** Resolve a curated Workers AI model that will obtain credentials from its shared pool. */
+export function resolveSharedWorkersAiModel(modelId: string): UserAiModelRecord | undefined {
   const model = SUGGESTED_MODELS.cloudflare[modelId];
   if (!model) return undefined;
   return {
     profile: { type: "agent", id: modelId, name: model.name },
-    config: { provider: "cloudflare", model: modelId, apiToken: "" },
+    config: { provider: "cloudflare", model: modelId, apiToken: "", shareWithUsers: true },
   };
-}
-
-/** Return the deployment-owned Workers AI model used for lightweight background tasks. */
-export function getWorkersAiBindingQuickModel(): AiModelConfig {
-  return { provider: "cloudflare", model: QUICK_MODEL_ID, apiToken: "" };
-}
-
-/** Whether a model ID is safe to route through the deployment's Workers AI binding. */
-export function isWorkersAiBindingModelId(modelId: string): boolean {
-  return modelId === QUICK_MODEL_ID || modelId in SUGGESTED_MODELS.cloudflare;
 }
 
 /**
@@ -62,10 +42,6 @@ const SUPPORTED_GATEWAY_PROVIDERS = new Set<AiModelProvider>([
 
 export class AiGatewayConfig {
   readonly gateway: string;
-  /** Optional gateway override used only for Workers AI traffic. */
-  readonly workersAiGateway?: string;
-  /** Route Workers AI through the binding directly instead of through AI Gateway. */
-  readonly workersAiDirect: boolean;
   /**
    * The gateway name for Workers-AI-binding calls (webFetch's toMarkdown): binding calls only
    * reach gateways in the Worker's own account, so this is the platform gateway whenever the
@@ -97,14 +73,6 @@ export class AiGatewayConfig {
     }
     this.accountId = env.CF_AI_GATEWAY_ACCOUNT_ID;
     this.apiToken = env.CF_AI_GATEWAY_API_TOKEN || undefined;
-    if (env.CF_AI_GATEWAY_WAI_DIRECT === "true" && env.CF_AI_GATEWAY_WAI) {
-      throw new Error(
-          "CF_AI_GATEWAY_WAI and CF_AI_GATEWAY_WAI_DIRECT cannot be configured together.");
-    }
-    this.workersAiDirect = env.CF_AI_GATEWAY_WAI_DIRECT === "true";
-    this.workersAiGateway = this.workersAiDirect
-      ? undefined
-      : env.CF_AI_GATEWAY_WAI || this.gateway;
     // Normalized once, so a stray " False " opts out rather than reading as unset and silently
     // picking the other transport.
     const useBinding = env.CF_AI_GATEWAY_USE_BINDING?.trim().toLowerCase();
@@ -155,7 +123,9 @@ export class AiGatewayConfig {
   getModelList(): AiChatAuthorInfo[] {
     let result: AiChatAuthorInfo[] = [];
     for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
-      if (this.providers.has(provider as AiModelProvider)) {
+      // Workers AI is never deployment-funded. It is offered only when the user supplies private
+      // credentials or another user explicitly contributes credentials to the shared pool.
+      if (provider !== "cloudflare" && this.providers.has(provider as AiModelProvider)) {
         for (let [id, model] of Object.entries(models)) {
           result.push({ type: "agent", id, name: model.name });
         }
@@ -170,7 +140,8 @@ export class AiGatewayConfig {
    */
   resolveModel(modelId: string): UserAiModelRecord | undefined {
     for (let [provider, models] of Object.entries(SUGGESTED_MODELS)) {
-      if (this.providers.has(provider as AiModelProvider) && modelId in models) {
+      if (provider !== "cloudflare" && this.providers.has(provider as AiModelProvider) &&
+          modelId in models) {
         return {
           profile: { type: "agent", id: modelId, name: models[modelId].name },
           config: {
@@ -187,12 +158,6 @@ export class AiGatewayConfig {
     return undefined;
   }
 
-  /**
-   * Get the AiModelConfig for the quick model (used for title generation).
-   */
-  getQuickModelConfig(): AiModelConfig | undefined {
-    return getWorkersAiBindingQuickModel();
-  }
 }
 
 /**

@@ -37,6 +37,7 @@ const en = {
       profile: 'Profile',
       admin: 'Admin',
     },
+    gatekeeperApps: { context: 'Context & Skills', scheduler: 'Scheduled' },
     sidebar: {
       search: 'Search',
       searchWithShortcut: 'Search (⌘K)',
@@ -480,7 +481,14 @@ const en = {
       actions: 'Provider actions',
       clearQuick: 'Clear quick model',
       setQuick: 'Set as quick model',
+      share: 'Share credentials',
+      makePrivate: 'Stop sharing',
       delete: 'Delete provider',
+      access: {
+        private: 'private',
+        'shared-by-you': 'shared by you',
+        'shared-pool': 'shared pool',
+      },
     },
     notices: {
       gatewayLabel: 'AI Gateway mode:',
@@ -488,6 +496,7 @@ const en = {
       quickLabel: 'Quick model:',
       noneSet: 'none set.',
       quickDescription: 'Used for fast tasks like generating chat titles. Click a model to set it.',
+      poolDescription: 'Workers AI uses user-supplied credentials only. Shared credentials are automatically rotated, and credentials with upstream failures are temporarily skipped.',
     },
     empty: {
       loadError: 'Something went wrong loading your providers.',
@@ -501,6 +510,10 @@ const en = {
       deleteConfirm: 'Delete “{{name}}”? This cannot be undone.',
       deleteFailed: 'Failed to delete provider',
       quickFailed: 'Failed to update default model',
+      shareConfirm: 'Share the Cloudflare credentials for “{{name}}”? Other users will be able to create billable Workers AI usage on your account.',
+      shared: 'Credentials added to the shared pool',
+      private: 'Credentials are private again',
+      shareFailed: 'Failed to update credential sharing',
     },
     addDialog: {
       title: 'Add AI Model',
@@ -519,6 +532,8 @@ const en = {
       apiTokenOllama: 'Optional for local Ollama access',
       apiTokenCompatible: 'Optional bearer token for this endpoint',
       apiTokenCloudflare: 'An API token with Workers AI Read + Edit permissions (in the dashboard: Workers AI > Use REST API > Create a Workers AI API Token)',
+      shareTitle: 'Share with other CinaSeek users',
+      shareDescription: 'Optional. Your token stays server-side, but requests routed through it are billed to your Cloudflare account. The pool automatically distributes requests across available shared credentials.',
       apiTokenProvider: 'Your {{provider}} API token for billing',
       gatewayProviderPath: 'Gateway Provider Path',
       apiUrl: 'API URL',
@@ -538,6 +553,7 @@ const en = {
         displayName: 'Please enter a display name',
         apiToken: 'Please enter your API token',
         accountId: 'Please enter your Cloudflare account ID',
+        accountIdFormat: 'Cloudflare account IDs contain exactly 32 hexadecimal characters',
         ollamaUrl: 'Please enter the Ollama API URL',
         gatewayPath: 'Please enter the AI Gateway Custom Provider path',
         compatibleUrl: 'Please enter the OpenAI-compatible API URL',

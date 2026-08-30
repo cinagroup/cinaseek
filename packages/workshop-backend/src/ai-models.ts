@@ -20,15 +20,12 @@ import { AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, WORKERS_AI_OUTPUT_LI
 import {
   AiGatewayConfig,
   getAiGatewayConfig,
-  isWorkersAiBindingModelId,
+  isShareableWorkersAiModelId,
   type AiGatewayLogRoute,
 } from "./ai-gateway.js";
 import { completeText } from "./ai-invoke.js";
 import { bridgePdfAttachments } from "./chat-attachment-pdf.js";
-import {
-  createWorkersAiBindingFetch,
-  WORKERS_AI_BINDING_BASE_URL,
-} from "./workers-ai-binding.js";
+import { WorkersAiCredentialPool } from "./workers-ai-credential-pool.js";
 
  /**
   * Routing to bill a user's own Cloudflare account for inference (BYOK path once the free tier is
@@ -61,6 +58,7 @@ type GatewayMetadataContext = {
 type ModelRoutingOptions = {
   sessionAffinity?: string;
   userGateway?: UserGatewayRouting;
+  workersAiPools?: DurableObjectNamespace<WorkersAiCredentialPool>;
   metadata?: GatewayMetadataContext;
 };
 
@@ -307,7 +305,7 @@ type HandleArgs = {
   gatewayMetadata?: GatewayMetadata;
   sessionAffinity?: string;
   aiGatewayLogRoute?: AiGatewayLogRoute;
-  // Optional in-process transport used by the deployment-owned Workers AI binding.
+  // Optional transport used by the AI Gateway binding or the shared Workers AI pool.
   fetch?: typeof fetch;
 };
 
@@ -383,17 +381,33 @@ function makeHandle(args: HandleArgs): ModelHandle {
 }
 
 /**
- * Resolve an AiModelConfig to a ModelHandle, choosing among three routing modes: the user's own
- * AI Gateway (BYOK unified billing), the platform's AI Gateway (free tier), or direct provider
- * access with the config's own credentials. The handle carries the matching AI Gateway log route
- * for cost accounting, when there is one.
+ * Resolve an AiModelConfig to a ModelHandle. Workers AI uses either the model owner's explicit
+ * credentials or the shared credential pool; other providers may use the user's AI Gateway,
+ * the platform AI Gateway, or direct provider credentials. The handle carries the matching
+ * AI Gateway log route for cost accounting, when there is one.
  */
 export function getModel(env: Cloudflare.Env, config: AiModelConfig,
                          initiator: AiChatAuthorInfo,
                          options: ModelRoutingOptions = {}): ModelHandle {
-  // BYOK: a connected user's own Cloudflare account pays for everything (all providers, including
-  // Workers AI), routed through the user's own AI Gateway with unified billing. Honored regardless
-  // of whether a platform AI Gateway is configured, so connected users are always billed correctly.
+  // Workers AI never uses the deployment account or the optional connected-account billing flow.
+  // A private model goes directly to the credentials the user entered; an explicitly shared model
+  // delegates authentication and least-recently-used routing to the model-sharded pool.
+  if (config.provider === "cloudflare") {
+    if (config.shareWithUsers) {
+      if (!isShareableWorkersAiModelId(config.model)) {
+        throw new Error("Only curated Workers AI models can use the shared credential pool.");
+      }
+      if (!options.workersAiPools) {
+        throw new Error("The shared Workers AI credential pool is unavailable in this context.");
+      }
+      return getModelViaWorkersAiPool(
+          options.workersAiPools, config, options.sessionAffinity);
+    }
+    return getModelDirect(config, options.sessionAffinity);
+  }
+
+  // BYOK: a connected user's own Cloudflare account pays for supported non-Workers providers,
+  // routed through the user's own AI Gateway with unified billing.
   if (options.userGateway) {
     return getModelViaUserGateway(
         config, buildMetadata(initiator, options.metadata), options.userGateway,
@@ -407,16 +421,11 @@ export function getModel(env: Cloudflare.Env, config: AiModelConfig,
     return getModelViaGateway(env, gwConfig, config, initiator, options);
   }
 
-  if (config.provider === "cloudflare" && config.apiToken === "" && !config.accountId &&
-      isWorkersAiBindingModelId(config.model)) {
-    return getModelViaWorkersAiBinding(env, config, options.sessionAffinity);
-  }
-
   return getModelDirect(config, options.sessionAffinity);
 }
 
-function getModelViaWorkersAiBinding(
-  env: Cloudflare.Env,
+function getModelViaWorkersAiPool(
+  pools: DurableObjectNamespace<WorkersAiCredentialPool>,
   config: AiModelConfig,
   sessionAffinity?: string,
 ): ModelHandle {
@@ -427,22 +436,24 @@ function getModelViaWorkersAiBinding(
       name: catalog?.name ?? config.model,
       api: "openai-completions",
       provider: "cloudflare-workers-ai",
-      baseUrl: WORKERS_AI_BINDING_BASE_URL,
+      baseUrl: "https://workers-ai-shared-pool.invalid/v1",
       reasoning: catalog?.reasoning ?? false,
       input: catalog?.input ?? ["text"],
       cost: catalog?.cost ?? ZERO_COST,
       ...modelTokenWindow(config, catalog),
       compat: workersAiCompat(catalog),
     },
-    apiKey: "workers-ai-binding",
-    fetch: createWorkersAiBindingFetch(env.WORKERS_AI, config.model),
+    apiKey: "workers-ai-shared-pool",
+    fetch: async (input, init) => {
+      const pool = pools.getByName(config.model);
+      return await pool.run(new Request(input, init));
+    },
     sessionAffinity,
   });
 }
 
-// Route inference through the user's own account (unified billing) via their account's default AI
-// Gateway. Supports every provider AI Gateway serves, including Workers AI. Billed to the
-// user's Cloudflare credits; no provider API key required.
+// Route non-Workers inference through the user's own account (unified billing) via their account's
+// default AI Gateway. Billed to the user's Cloudflare credits; no provider API key required.
 function getModelViaUserGateway(
   config: AiModelConfig,
   metadata: GatewayMetadata,
@@ -511,8 +522,8 @@ function getModelViaGateway(
   initiator: AiChatAuthorInfo,
   options: ModelRoutingOptions,
 ): ModelHandle {
-  if (config.provider === "cloudflare" && gwConfig.workersAiDirect) {
-    return getModelViaWorkersAiBinding(env, config, options.sessionAffinity);
+  if (config.provider === "cloudflare") {
+    throw new Error("Workers AI cannot use deployment-funded AI Gateway routing.");
   }
   const metadata = buildMetadata(initiator, options.metadata);
   const binding = gwConfig.bindingFor(config.provider);
@@ -522,11 +533,7 @@ function getModelViaGateway(
     throw new Error(`Provider "${config.provider}" cannot use the Workers AI binding transport, ` +
         "and no CF_AI_GATEWAY_API_TOKEN is configured for the HTTPS one.");
   }
-  // Workers AI is always available to Gateway mode for the deployment-owned quick model, even
-  // when it is omitted from the user-facing provider picker. Check transport feasibility first so
-  // a stale Google model reports the missing HTTPS credential rather than a misleading picker
-  // configuration error.
-  if (config.provider !== "cloudflare" && !gwConfig.providers.has(config.provider)) {
+  if (!gwConfig.providers.has(config.provider)) {
     throw new Error(
         `Provider "${config.provider}" is not enabled for this AI Gateway deployment. ` +
         `Configured providers: ${[...gwConfig.providers].join(", ")}`);
@@ -549,13 +556,9 @@ function getModelViaGateway(
       ? { gateway }
       : { gateway, accountId: gwConfig.accountId, apiToken: gwConfig.apiToken! };
 
-  // Every provider -- Workers AI included -- rides the same gateway, with the same log route
-  // and attribution metadata. Binding-routed providers address it on the binding's host, which
-  // takes no account id (the binding channel carries identity); the paths are otherwise the
-  // same, so the model descriptors are built identically from either root.
-  const gateway = config.provider === "cloudflare"
-      ? gwConfig.workersAiGateway!
-      : gwConfig.gateway;
+  // Binding-routed providers address the gateway on the binding's host, which takes no account id
+  // (the binding channel carries identity); HTTPS uses the account-scoped gateway root.
+  const gateway = gwConfig.gateway;
   const gatewayUrl = binding
       ? `https://workers-binding.ai/ai-gateway/gateways/${gateway}`
       : `${gatewayBase}/${gateway}`;
@@ -802,6 +805,7 @@ export class LanguageModelGatekeeper
   async startSession(approvalQueue: RpcStub<ApprovalQueue>)
       : Promise<LanguageModelBinding> {
     let model = getModel(this.env, this.ctx.props.config, this.ctx.props.initiator, {
+      workersAiPools: this.ctx.exports.WorkersAiCredentialPool,
       metadata: this.ctx.props.metadata,
     });
     return new LanguageModelBindingImpl(model);

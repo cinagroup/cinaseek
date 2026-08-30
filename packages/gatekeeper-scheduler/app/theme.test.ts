@@ -8,14 +8,14 @@ describe("applyAppTheme", () => {
   });
 
   it("applies the host mode and accent and can restore the base accent", () => {
-    applyAppTheme({ mode: "dark", accentColor: "#3b82f6" });
+    applyAppTheme({ mode: "dark", accentColor: "#3b82f6", locale: "en" });
 
     expect(document.documentElement.dataset.mode).toBe("dark");
     expect(document.documentElement.style.colorScheme).toBe("dark");
     expect(document.documentElement.style.getPropertyValue("--color-kumo-brand"))
       .toContain("#3b82f6");
 
-    applyAppTheme({ mode: "light", accentColor: null });
+    applyAppTheme({ mode: "light", accentColor: null, locale: "en" });
 
     expect(document.documentElement.dataset.mode).toBe("light");
     expect(document.documentElement.style.colorScheme).toBe("light");

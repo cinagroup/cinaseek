@@ -10,11 +10,11 @@ Each user gets a free allowance of LLM calls per UTC day (default 100), counted 
 `UserDurableObject` (`consumeDailyLlmCall` / `checkDailyLlmCount`). Before each user-initiated agent
 turn, the overseer calls `checkUsageAndBalance`:
 
-- **Connected, balance ≥ `$2`** → allowed, routed through the user's own account so usage bills
-  their Cloudflare credits — even while free-tier allowance remains. The platform is never charged
-  for funded users, and their daily free-tier counter is left untouched.
+- **Connected, balance ≥ `$2`** → non-Workers providers are routed through the user's own account so
+  usage bills their Cloudflare credits — even while free-tier allowance remains. The platform is
+  never charged for funded users, and their daily free-tier counter is left untouched.
 - **Otherwise, within the free tier** → allowed, served via the platform's configured AI Gateway
-  (all providers, Workers AI included). This includes connected users whose balance is below `$2`
+  for configured non-Workers providers. This includes connected users whose balance is below `$2`
   (incl. $0).
 - **Free tier exhausted, no Cloudflare account connected** → blocked, with a prompt to connect.
 - **Free tier exhausted, connected but balance below `$2`** → blocked, with a prompt to add credits.
@@ -23,6 +23,11 @@ The balance shown to users is read live from their Cloudflare AI Gateway billing
 (`/ai-gateway-billing/credit_balance`), cached for 5 minutes. Topping up means adding credits in the
 [Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/ai/ai-gateway) — the platform never
 holds money.
+
+Workers AI is deliberately outside this allowance/top-up path. It is available only through a
+user-added Account ID and API Token, privately or through the explicitly contributed shared pool;
+these calls neither consume the platform daily allowance nor require the caller to connect a
+billing Gateway. See [User-funded Workers AI](./workers-ai-credential-pool.md).
 
 ## Connecting Cloudflare
 
@@ -70,7 +75,8 @@ runtime — a deployment whose Gateway is in a different account must set
 than an unbinding because `WORKERS_AI` also backs the webFetch tool's document-to-Markdown
 conversion (and is hardcoded for every released backend), so removing it would break that instead
 of just moving gateway traffic. The token stays required for the `google` provider even when the
-binding transport applies. Every provider, Workers AI included, routes through the same Gateway.
+binding transport applies. Workers AI model inference never routes through this deployment Gateway
+or binding.
 
 The optional `openai-compatible` provider routes a model through a provider-specific Gateway path,
 for example `custom-internal/v1`, and appends `/chat/completions`. Configure the corresponding

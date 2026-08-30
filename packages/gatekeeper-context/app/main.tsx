@@ -13,6 +13,7 @@ import type {
 import ContextLibraryPage from './ContextLibraryPage'
 import { ContextApiProvider, PresentationProvider, type PresentAck } from './bridge'
 import { applyAppTheme } from './theme'
+import { setContextLocale } from './i18n'
 import './styles.css'
 import ErrorBoundary from './ErrorBoundary'
 import { installErrorReporting, reportIssue } from './error-reporting'
@@ -23,6 +24,7 @@ installErrorReporting()
 class AppIframe extends RpcTarget implements GatekeeperAppThemeReceiver {
   setTheme(theme: GatekeeperAppTheme): void {
     applyAppTheme(theme)
+    setContextLocale(theme.locale)
   }
 }
 
@@ -45,7 +47,7 @@ function main() {
   const iframe = new AppIframe()
   const host = newMessagePortRpcSession<HostCapability>(port1, iframe)
   // The initial theme comes back from the call; later changes arrive via iframe.setTheme().
-  host.subscribeTheme(iframe).then(applyAppTheme).catch(() => {})
+  host.subscribeTheme(iframe).then((theme) => iframe.setTheme(theme)).catch(() => {})
 
   createRoot(root, {
     onUncaughtError: (error) => reportIssue('context.react-root', error, {

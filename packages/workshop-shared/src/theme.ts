@@ -1,11 +1,16 @@
 import type { RpcTarget } from "capnweb";
 
-/** The complete appearance state sent from Workshop to a sandboxed gatekeeper app. */
+/** A locale that a Workshop-hosted gatekeeper management app can render. */
+export type GatekeeperAppLocale = "en" | "zh-CN" | "zh-TW";
+
+/** The complete presentation state sent from Workshop to a sandboxed gatekeeper app. */
 export interface GatekeeperAppTheme {
   /** The concrete light or dark mode resolved by Workshop. */
   mode: "light" | "dark";
   /** The deployment accent seed, or null to use the app's base palette. */
   accentColor: string | null;
+  /** The Workshop interface locale the app should render. */
+  locale: GatekeeperAppLocale;
 }
 
 /** A sandboxed gatekeeper app capability that receives complete appearance updates. */

@@ -60,8 +60,9 @@ the gateway transport. Without the binding transport, set
 execute models and report their costs (over HTTPS the Gateway may live in the Worker's own
 account or a different one). The token stays required for the `google` provider regardless of the
 binding (the model SDK adapter refuses the binding's fetch — note the platform config above enables
-it, so the platform server itself still needs the token). Every provider, Workers AI included,
-routes through the same Gateway.
+it, so the platform server itself still needs the token). Workers AI model inference is excluded:
+users must add their own Account ID and API Token or use an explicitly contributed shared-pool
+credential; see [User-funded Workers AI](workers-ai-credential-pool.md).
 
 `openai-compatible` uses a provider-specific Gateway path instead of the deprecated `/compat` API.
 Configure a model with a Custom Provider path such as `custom-internal/v1` and the upstream's real

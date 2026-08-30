@@ -395,6 +395,15 @@ export interface AuthenticatedApi extends RpcTarget {
   deleteModel(id: string): Promise<void>;
 
   /**
+   * Changes whether one owned Workers AI model contributes its Cloudflare credentials to the
+   * shared routing pool. Sharing is supported only for the curated Workers AI catalog.
+   */
+  setWorkersAiModelShared(id: string, shared: boolean): Promise<void>;
+
+  /** Returns credential ownership and shared-pool availability for Workers AI models. */
+  listWorkersAiModelAccess(): Promise<WorkersAiModelAccessInfo[]>;
+
+  /**
    * Set the model to use for simple quick tasks, like generating chat titles. Set null to
    * disable quick model use (e.g. chats will be titled "New Chat").
    */
@@ -1153,6 +1162,24 @@ export type AiGatewayInfo = {
   enabled: false;
 };
 
+/** How a Workers AI model in the authenticated user's model list obtains credentials. */
+export type WorkersAiModelAccessKind = "private" | "shared-by-you" | "shared-pool";
+
+/** Credential-source metadata for one available Workers AI model; never contains credentials. */
+export type WorkersAiModelAccessInfo = {
+  /** Workers AI model identifier. */
+  modelId: string;
+
+  /** Whether access comes from private credentials, the user's contribution, or another user. */
+  access: WorkersAiModelAccessKind;
+
+  /** Total credentials registered in this model's shared pool. */
+  poolSize: number;
+
+  /** Credentials not currently cooling down after an upstream failure. */
+  availableCredentials: number;
+};
+
 /** Configuration specifying how to connect to an AI model provider. */
 export type AiModelConfig = {
   /** Which AI provider hosts the model? */
@@ -1163,6 +1190,12 @@ export type AiModelConfig = {
 
   /** Secret API token for the respective provider, for billing purposes. */
   apiToken: string;
+
+  /**
+   * Whether a user-owned Workers AI credential is contributed to the shared routing pool. The
+   * server ignores/rejects this flag for other providers and never returns the token to clients.
+   */
+  shareWithUsers?: boolean;
 
   /**
    * Cloudflare account ID owning the Workers AI deployment the token authorizes. Required for
