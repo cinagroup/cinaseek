@@ -22,12 +22,17 @@ const CORE_PACKAGES = [
   "gatekeeper-workers-ai",
   "gatekeeper-homeassistant",
   "gatekeeper-mcp",
+  "gatekeeper-github",
   "workshop-backend",
   "router",
 ];
 
 const AI_GATEWAY_SECRET_NAME = "CF_AI_GATEWAY_API_TOKEN";
 const AI_GATEWAY_TOKEN_INPUT_ENV = "CINASEEK_AI_GATEWAY_API_TOKEN";
+const GITHUB_SECRET_INPUTS = [
+  ["CLIENT_ID", "CINASEEK_GITHUB_CLIENT_ID"],
+  ["CLIENT_SECRET", "CINASEEK_GITHUB_CLIENT_SECRET"],
+];
 const ACCESS_PREFLIGHT_TIMEOUT_MS = 15_000;
 const AI_GATEWAY_PROVIDERS = new Set([
   "anthropic",
@@ -317,6 +322,7 @@ export function createInstanceConfigs({
     workersAi: `${slug}-workers-ai`,
     homeassistant: `${slug}-homeassistant`,
     mcp: `${slug}-mcp`,
+    github: `${slug}-github`,
     backend: `${slug}-backend`,
     router: `${slug}-router`,
   };
@@ -370,6 +376,17 @@ export function createInstanceConfigs({
     BASE_URL: `${publicBaseUrl}/gatekeeper/mcp`,
   };
 
+  const github = baseProductionConfig(
+      root,
+      "gatekeeper-github",
+      names.github,
+      previousConfig(configPaths["gatekeeper-github"]),
+  );
+  github.vars = {
+    ...github.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/github`,
+  };
+
   const backend = baseProductionConfig(
       root,
       "workshop-backend",
@@ -418,6 +435,11 @@ export function createInstanceConfigs({
       service: names.mcp,
       entrypoint: "GatekeeperVendor",
     },
+    {
+      binding: "GATEKEEPER_GITHUB",
+      service: names.github,
+      entrypoint: "GatekeeperVendor",
+    },
   ];
 
   const router = baseProductionConfig(
@@ -433,6 +455,7 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_WORKERS_AI", service: names.workersAi },
     { binding: "GATEKEEPER_HOMEASSISTANT", service: names.homeassistant },
     { binding: "GATEKEEPER_MCP", service: names.mcp },
+    { binding: "GATEKEEPER_GITHUB", service: names.github },
   ];
   router.assets = {
     ...router.assets,
@@ -457,6 +480,7 @@ export function createInstanceConfigs({
       "gatekeeper-workers-ai": workersAi,
       "gatekeeper-homeassistant": homeassistant,
       "gatekeeper-mcp": mcp,
+      "gatekeeper-github": github,
       "workshop-backend": backend,
       router,
     },
@@ -513,12 +537,45 @@ export function planAiGatewaySecret(remoteSecrets, tokenProvided) {
   return "reuse";
 }
 
+export function planRequiredWorkerSecrets(remoteSecrets, requiredNames, providedNames) {
+  const provided = requiredNames.filter((name) => providedNames.has(name));
+  if (provided.length > 0 && provided.length !== requiredNames.length) {
+    throw new Error(`Provide all required Worker secrets together: ${requiredNames.join(", ")}.`);
+  }
+  if (provided.length === requiredNames.length) return "provision";
+  if (remoteSecrets === null) {
+    throw new Error(
+        `Unable to verify required Worker secrets: ${requiredNames.join(", ")}. ` +
+        "Provide the deployment inputs before the first deployment.",
+    );
+  }
+  const missing = requiredNames.filter((name) => !remoteSecrets.has(name));
+  if (missing.length > 0) {
+    throw new Error(`Missing required Worker secrets: ${missing.join(", ")}.`);
+  }
+  return "reuse";
+}
+
 function putRemoteSecret(configPath, name, value) {
   console.log(`\n> wrangler secret put ${name} --config ${configPath} (value via stdin)`);
   execFileSync(
       process.execPath,
       [WRANGLER_CLI, "secret", "put", name, "--config", configPath],
       { cwd: ROOT, input: `${value}\n`, stdio: ["pipe", "inherit", "inherit"] },
+  );
+}
+
+function putRemoteSecrets(configPath, secrets) {
+  const names = Object.keys(secrets);
+  console.log(`\n> wrangler secret bulk ${names.join(", ")} --config ${configPath} (values via stdin)`);
+  execFileSync(
+      process.execPath,
+      [WRANGLER_CLI, "secret", "bulk", "--config", configPath],
+      {
+        cwd: ROOT,
+        input: JSON.stringify(secrets),
+        stdio: ["pipe", "inherit", "inherit"],
+      },
   );
 }
 
@@ -574,6 +631,14 @@ async function main() {
   // generated Wrangler config and is passed only to `wrangler secret put` over stdin.
   const aiGatewayToken = process.env[AI_GATEWAY_TOKEN_INPUT_ENV]?.trim();
   delete process.env[AI_GATEWAY_TOKEN_INPUT_ENV];
+  const githubSecrets = Object.fromEntries(GITHUB_SECRET_INPUTS.map(([name, inputEnv]) => {
+    const value = process.env[inputEnv]?.trim();
+    delete process.env[inputEnv];
+    return [name, value];
+  }));
+  const providedGithubSecretNames = new Set(
+      Object.entries(githubSecrets).filter(([, value]) => Boolean(value)).map(([name]) => name),
+  );
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
@@ -606,6 +671,7 @@ async function main() {
   for (const packageName of [
     "@gadgets/homeassistant-gatekeeper",
     "@gadgets/mcp-gatekeeper",
+    "@gadgets/github-gatekeeper",
   ]) {
     run(process.execPath, [
       VITE_PLUS_CLI,
@@ -659,6 +725,15 @@ async function main() {
     throw new Error(`${AI_GATEWAY_TOKEN_INPUT_ENV} was provided without --ai-gateway configuration.`);
   }
 
+  const githubConfigPath = instance.configPaths["gatekeeper-github"];
+  const githubSecretAction = args.dryRun
+    ? "dry-run"
+    : planRequiredWorkerSecrets(
+        readRemoteSecretNames(githubConfigPath),
+        GITHUB_SECRET_INPUTS.map(([name]) => name),
+        providedGithubSecretNames,
+    );
+
   for (const packageName of CORE_PACKAGES) {
     const deployArgs = [
       "deploy",
@@ -668,6 +743,9 @@ async function main() {
     ];
     if (args.dryRun) deployArgs.push("--dry-run");
     runWrangler(deployArgs);
+    if (packageName === "gatekeeper-github" && githubSecretAction === "provision") {
+      putRemoteSecrets(githubConfigPath, githubSecrets);
+    }
   }
 
   console.log(args.dryRun

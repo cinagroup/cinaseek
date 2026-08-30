@@ -11,6 +11,7 @@ import {
   normalizeDomain,
   parseArgs,
   planAiGatewaySecret,
+  planRequiredWorkerSecrets,
   verifyAccessEdge,
 } from "./deploy-cloudflare.mjs";
 
@@ -171,6 +172,26 @@ test("fails closed unless the AI Gateway Worker secret can be verified", () => {
   assert.equal(planAiGatewaySecret(new Set(["CF_AI_GATEWAY_API_TOKEN"]), false), "reuse");
 });
 
+test("requires complete OAuth Worker credentials and reuses remote secrets", () => {
+  const required = ["CLIENT_ID", "CLIENT_SECRET"];
+  assert.equal(
+      planRequiredWorkerSecrets(null, required, new Set(required)),
+      "provision",
+  );
+  assert.equal(
+      planRequiredWorkerSecrets(new Set(required), required, new Set()),
+      "reuse",
+  );
+  assert.throws(
+      () => planRequiredWorkerSecrets(null, required, new Set(["CLIENT_ID"])),
+      /Provide all required Worker secrets together/,
+  );
+  assert.throws(
+      () => planRequiredWorkerSecrets(new Set(["CLIENT_ID"]), required, new Set()),
+      /Missing required Worker secrets: CLIENT_SECRET/,
+  );
+});
+
 test("creates an internal core topology with one public custom domain", () => {
   const instance = createInstanceConfigs({
     root: ROOT,
@@ -184,6 +205,7 @@ test("creates an internal core topology with one public custom domain", () => {
     workersAi: "cinaseek-ai-workers-ai",
     homeassistant: "cinaseek-ai-homeassistant",
     mcp: "cinaseek-ai-mcp",
+    github: "cinaseek-ai-github",
     backend: "cinaseek-ai-backend",
     router: "cinaseek-ai-router",
   });
@@ -201,6 +223,7 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.equal(instance.configs["gatekeeper-workers-ai"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-homeassistant"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-mcp"].routes, undefined);
+  assert.equal(instance.configs["gatekeeper-github"].routes, undefined);
   assert.equal(instance.configs["workshop-backend"].routes, undefined);
   assert.deepEqual(instance.configs.router.routes, [
     { pattern: "cinaseek.ai", custom_domain: true },
@@ -215,6 +238,7 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_WORKERS_AI", "cinaseek-ai-workers-ai"],
         ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
         ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
+        ["GATEKEEPER_GITHUB", "cinaseek-ai-github"],
       ],
   );
   assert.deepEqual(
@@ -228,6 +252,7 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_WORKERS_AI", "cinaseek-ai-workers-ai"],
         ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
         ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
+        ["GATEKEEPER_GITHUB", "cinaseek-ai-github"],
       ],
   );
   assert.equal(
@@ -241,6 +266,10 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.equal(
       instance.configs["gatekeeper-mcp"].vars.BASE_URL,
       "https://cinaseek.ai/gatekeeper/mcp",
+  );
+  assert.equal(
+      instance.configs["gatekeeper-github"].vars.BASE_URL,
+      "https://cinaseek.ai/gatekeeper/github",
   );
   assert.equal(instance.configs["workshop-backend"].vars.ADMINS, undefined);
   assert.equal(instance.configs["workshop-backend"].vars.CF_ACCESS_ISS, "");
