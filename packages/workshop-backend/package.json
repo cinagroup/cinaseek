@@ -8,9 +8,11 @@
     "deploy": "wrangler deploy",
     "build:worker": "node build-browser-runtime.mjs && pnpm exec capnweb-validate build --out .wrangler/validate",
     "clean": "rm -rf dist",
-    "test:integration": "node build-browser-runtime.mjs && node scripts/build-format-blueprints.mjs && vitest run --config vitest.integration.config.ts",
-    "test:run": "node build-browser-runtime.mjs && node scripts/build-format-blueprints.mjs && vitest run && vitest run --config vitest.integration.config.ts",
-    "test:watch": "node build-browser-runtime.mjs && node scripts/build-format-blueprints.mjs && vitest",
+    "test:integration": "node build-browser-runtime.mjs && node scripts/build-connector-blueprints.mjs && node scripts/validate-connector-blueprints.mjs && node scripts/build-format-blueprints.mjs && vitest run --config vitest.integration.config.ts",
+    "test:run": "node build-browser-runtime.mjs && node scripts/build-connector-blueprints.mjs && node scripts/validate-connector-blueprints.mjs && node scripts/build-format-blueprints.mjs && vitest run && vitest run --config vitest.integration.config.ts",
+    "test:watch": "node build-browser-runtime.mjs && node scripts/build-connector-blueprints.mjs && node scripts/validate-connector-blueprints.mjs && node scripts/build-format-blueprints.mjs && vitest",
+    "generate:connector-blueprints": "node scripts/build-connector-blueprints.mjs",
+    "validate:connector-blueprints": "node scripts/validate-connector-blueprints.mjs",
     "import:format-blueprint": "node --experimental-strip-types --no-warnings scripts/import-format-blueprint.mjs"
   },
   "dependencies": {

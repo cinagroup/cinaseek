@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.confluence",
+  "title": "Confluence Knowledge Hub",
+  "description": "Search and browse pages across a connected Confluence site from one focused knowledge workspace.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "notebook"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

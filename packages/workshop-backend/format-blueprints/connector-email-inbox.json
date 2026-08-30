@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.email-inbox",
+  "title": "Email Intake Inbox",
+  "description": "Receive routed email into a durable, searchable inbox suitable for requests, leads, and automated intake.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "listChecks"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

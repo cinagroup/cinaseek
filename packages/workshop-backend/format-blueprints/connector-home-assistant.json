@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.home-assistant",
+  "title": "Home Assistant Control Room",
+  "description": "Monitor entities and safely submit common device controls to a connected Home Assistant instance.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "appWindow"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

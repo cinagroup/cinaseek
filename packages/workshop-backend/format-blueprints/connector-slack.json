@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.slack",
+  "title": "Slack Conversation Finder",
+  "description": "Browse channels and search messages across a connected Slack workspace without exposing unrelated credentials.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "listChecks"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

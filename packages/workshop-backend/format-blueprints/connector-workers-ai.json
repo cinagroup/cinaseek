@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.workers-ai",
+  "title": "Workers AI Model Lab",
+  "description": "Exercise a user-owned Workers AI embedding, image, speech, or classification model from a focused model workspace.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "appWindow"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

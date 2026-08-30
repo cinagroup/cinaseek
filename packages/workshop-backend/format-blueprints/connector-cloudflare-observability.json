@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.cloudflare-observability",
+  "title": "Cloudflare Observability",
+  "description": "Inspect recent Worker logs, exceptions, requests, and traces from a connected Cloudflare account or Worker.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "chartBar"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

@@ -60,6 +60,11 @@ The script also round-trips the bytes it just wrote and checks the metadata and 
 because these are committed as data and a corrupt archive would otherwise first surface when a
 deployment tried to install it.
 
+The `connector-*.gadget` integrations are the one generated family in this directory. Their
+reviewable source, binding manifest, and shared UI live in `../connector-blueprints/`; run
+`pnpm generate:connector-blueprints` after editing them. The build also regenerates and validates
+these archives automatically, so do not import over a generated connector archive by hand.
+
 ## Adding a new format
 
 `--new` writes the sidecar for you, filling in what it can from the export:

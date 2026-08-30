@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.linear",
+  "title": "Linear Workboard",
+  "description": "Search and triage issues across a connected Linear workspace and submit new work for approval.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "kanban"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

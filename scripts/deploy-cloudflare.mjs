@@ -564,6 +564,12 @@ async function main() {
     "build:configurator",
   ]);
   run(process.execPath, [join(backendDir, "build-browser-runtime.mjs")], { cwd: backendDir });
+  run(process.execPath, [join(backendDir, "scripts", "build-connector-blueprints.mjs")], {
+    cwd: backendDir,
+  });
+  run(process.execPath, [join(backendDir, "scripts", "validate-connector-blueprints.mjs")], {
+    cwd: backendDir,
+  });
   run(process.execPath, [join(backendDir, "scripts", "build-format-blueprints.mjs")], {
     cwd: backendDir,
   });

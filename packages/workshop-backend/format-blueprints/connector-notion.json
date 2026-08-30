@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.notion",
+  "title": "Notion Content Hub",
+  "description": "Search pages and databases shared with a connected Notion workspace and open source content in context.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "notebook"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

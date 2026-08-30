@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.mcp",
+  "title": "MCP Tool Console",
+  "description": "Discover the tools exposed by any connected MCP server and run read or approval-gated operations with JSON arguments.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "flowArrow"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

@@ -1,0 +1,268 @@
+[
+  {
+    "name": "connector-cloudflare-observability",
+    "blueprintId": "integration.cloudflare-observability",
+    "connector": "cloudflare",
+    "title": "Cloudflare Observability",
+    "description": "Inspect recent Worker logs, exceptions, requests, and traces from a connected Cloudflare account or Worker.",
+    "resourceName": "Worker telemetry",
+    "searchPlaceholder": "Search logs and events",
+    "accent": "#f48120",
+    "icon": "chartBar",
+    "binding": {
+      "name": "CLOUDFLARE_OBSERVABILITY",
+      "gatekeeperName": "cloudflare",
+      "typeUrlPattern": "https://dash.cloudflare.com/:accountId/workers/services/view/:workerName/production/observability",
+      "title": "Cloudflare Worker",
+      "description": "Choose the Worker whose logs and telemetry this workspace should inspect."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-confluence",
+    "blueprintId": "integration.confluence",
+    "connector": "confluence",
+    "title": "Confluence Knowledge Hub",
+    "description": "Search and browse pages across a connected Confluence site from one focused knowledge workspace.",
+    "resourceName": "Confluence content",
+    "searchPlaceholder": "Search pages and spaces",
+    "accent": "#1868db",
+    "icon": "notebook",
+    "binding": {
+      "name": "CONFLUENCE",
+      "gatekeeperName": "confluence",
+      "typeUrlPattern": "https://*.atlassian.net/wiki",
+      "title": "Confluence site",
+      "description": "Choose the Confluence site whose spaces and pages this workspace should search."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-email-inbox",
+    "blueprintId": "integration.email-inbox",
+    "connector": "email",
+    "title": "Email Intake Inbox",
+    "description": "Receive routed email into a durable, searchable inbox suitable for requests, leads, and automated intake.",
+    "resourceName": "Received messages",
+    "searchPlaceholder": "Search sender, subject, or message",
+    "accent": "#0891b2",
+    "icon": "listChecks",
+    "binding": {
+      "name": "EMAIL",
+      "gatekeeperName": "email",
+      "typeUrlPattern": "https://cinaseek.ai/gatekeeper/email/mailbox/:user",
+      "title": "Email mailbox",
+      "description": "Choose the CinaSeek mailbox that should receive messages for this inbox."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-github",
+    "blueprintId": "integration.github",
+    "connector": "github",
+    "title": "GitHub Delivery Desk",
+    "description": "Review repository issues and pull requests, search work, and submit new issues through approval-aware actions.",
+    "resourceName": "Issues and pull requests",
+    "searchPlaceholder": "Search issues and pull requests",
+    "accent": "#0969da",
+    "icon": "kanban",
+    "binding": {
+      "name": "GITHUB",
+      "gatekeeperName": "github",
+      "typeUrlPattern": "https://github.com/:owner/:repo",
+      "title": "GitHub repository",
+      "description": "Choose the repository whose issues and pull requests this workspace should manage."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-google-drive",
+    "blueprintId": "integration.google-drive",
+    "connector": "google-drive",
+    "title": "Google Drive Navigator",
+    "description": "Browse and search metadata for files and folders visible to a connected Google Drive account.",
+    "resourceName": "Drive files",
+    "searchPlaceholder": "Search names and indexed content",
+    "accent": "#1a73e8",
+    "icon": "fileText",
+    "binding": {
+      "name": "GOOGLE_DRIVE",
+      "gatekeeperName": "google",
+      "typeUrlPattern": "https://drive.google.com/drive/my-drive",
+      "title": "Google Drive account",
+      "description": "Choose the Google account whose accessible Drive metadata this workspace should search."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-home-assistant",
+    "blueprintId": "integration.home-assistant",
+    "connector": "home-assistant",
+    "title": "Home Assistant Control Room",
+    "description": "Monitor entities and safely submit common device controls to a connected Home Assistant instance.",
+    "resourceName": "Home entities",
+    "searchPlaceholder": "Search entities and domains",
+    "accent": "#18bcf2",
+    "icon": "appWindow",
+    "binding": {
+      "name": "HOME_ASSISTANT",
+      "gatekeeperName": "homeassistant",
+      "typeUrlPattern": "https://*",
+      "title": "Home Assistant instance",
+      "description": "Choose the Home Assistant instance whose entities this control room should use."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-linear",
+    "blueprintId": "integration.linear",
+    "connector": "linear",
+    "title": "Linear Workboard",
+    "description": "Search and triage issues across a connected Linear workspace and submit new work for approval.",
+    "resourceName": "Linear issues",
+    "searchPlaceholder": "Search issues",
+    "accent": "#5e6ad2",
+    "icon": "kanban",
+    "binding": {
+      "name": "LINEAR",
+      "gatekeeperName": "linear",
+      "typeUrlPattern": "https://linear.app/:workspace",
+      "title": "Linear workspace",
+      "description": "Choose the Linear workspace whose teams and issues this workboard should manage."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-mcp",
+    "blueprintId": "integration.mcp",
+    "connector": "mcp",
+    "title": "MCP Tool Console",
+    "description": "Discover the tools exposed by any connected MCP server and run read or approval-gated operations with JSON arguments.",
+    "resourceName": "MCP tools",
+    "searchPlaceholder": "Search tool names and descriptions",
+    "accent": "#7c3aed",
+    "icon": "flowArrow",
+    "binding": {
+      "name": "MCP_SERVER",
+      "gatekeeperName": "mcp",
+      "typeUrlPattern": "https://*",
+      "title": "MCP server",
+      "description": "Connect the HTTPS MCP endpoint whose granted tools this console should expose."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-notion",
+    "blueprintId": "integration.notion",
+    "connector": "notion",
+    "title": "Notion Content Hub",
+    "description": "Search pages and databases shared with a connected Notion workspace and open source content in context.",
+    "resourceName": "Notion content",
+    "searchPlaceholder": "Search pages and databases",
+    "accent": "#111827",
+    "icon": "notebook",
+    "binding": {
+      "name": "NOTION",
+      "gatekeeperName": "notion",
+      "typeUrlPattern": "https://*",
+      "title": "Notion workspace",
+      "description": "Choose the Notion workspace whose shared pages and databases this hub should search."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-slack",
+    "blueprintId": "integration.slack",
+    "connector": "slack",
+    "title": "Slack Conversation Finder",
+    "description": "Browse channels and search messages across a connected Slack workspace without exposing unrelated credentials.",
+    "resourceName": "Channels and messages",
+    "searchPlaceholder": "Search messages with Slack syntax",
+    "accent": "#611f69",
+    "icon": "listChecks",
+    "binding": {
+      "name": "SLACK",
+      "gatekeeperName": "slack",
+      "typeUrlPattern": "https://*",
+      "title": "Slack workspace",
+      "description": "Choose the Slack workspace whose channels and messages this finder should read."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-spotify",
+    "blueprintId": "integration.spotify",
+    "connector": "spotify",
+    "title": "Spotify Library Desk",
+    "description": "Search music, browse playlists, and submit playback or playlist actions through a connected Spotify account.",
+    "resourceName": "Playlists and tracks",
+    "searchPlaceholder": "Search tracks, artists, and playlists",
+    "accent": "#1db954",
+    "icon": "listChecks",
+    "binding": {
+      "name": "SPOTIFY",
+      "gatekeeperName": "spotify",
+      "typeUrlPattern": "https://*",
+      "title": "Spotify account",
+      "description": "Choose the Spotify account whose library and playback this desk should use."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-supabase",
+    "blueprintId": "integration.supabase",
+    "connector": "supabase",
+    "title": "Supabase Project Inspector",
+    "description": "Inspect project health, database tables, functions, and storage, with an approval-gated SQL action surface.",
+    "resourceName": "Project resources",
+    "searchPlaceholder": "Filter tables and services",
+    "accent": "#3ecf8e",
+    "icon": "table",
+    "binding": {
+      "name": "SUPABASE",
+      "gatekeeperName": "supabase",
+      "typeUrlPattern": "https://supabase.com/dashboard/project/:ref",
+      "title": "Supabase project",
+      "description": "Choose the Supabase project whose database and services this inspector should access."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-workers-ai",
+    "blueprintId": "integration.workers-ai",
+    "connector": "workers-ai",
+    "title": "Workers AI Model Lab",
+    "description": "Exercise a user-owned Workers AI embedding, image, speech, or classification model from a focused model workspace.",
+    "resourceName": "Model operations",
+    "searchPlaceholder": "Filter recent model runs",
+    "accent": "#f48120",
+    "icon": "appWindow",
+    "binding": {
+      "name": "WORKERS_AI_MODEL",
+      "gatekeeperName": "workers-ai",
+      "typeUrlPattern": "https://cinaseek.ai/gatekeeper/workers-ai/_resource/model/:modelKey",
+      "title": "Workers AI model",
+      "description": "Choose one embeddings, image, speech, TTS, or classification model from your Cloudflare account."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-zoominfo",
+    "blueprintId": "integration.zoominfo",
+    "connector": "zoominfo",
+    "title": "ZoomInfo Account Explorer",
+    "description": "Search company records and review account credit usage before requesting enrichment actions.",
+    "resourceName": "Companies",
+    "searchPlaceholder": "Search company name or website",
+    "accent": "#0f6fff",
+    "icon": "table",
+    "binding": {
+      "name": "ZOOMINFO",
+      "gatekeeperName": "zoominfo",
+      "typeUrlPattern": "https://*",
+      "title": "ZoomInfo account",
+      "description": "Choose the ZoomInfo account this explorer should search."
+    },
+    "revision": 1
+  }
+]

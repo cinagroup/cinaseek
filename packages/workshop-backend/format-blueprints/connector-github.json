@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.github",
+  "title": "GitHub Delivery Desk",
+  "description": "Review repository issues and pull requests, search work, and submit new issues through approval-aware actions.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "kanban"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

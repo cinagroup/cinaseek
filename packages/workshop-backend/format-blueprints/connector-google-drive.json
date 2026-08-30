@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.google-drive",
+  "title": "Google Drive Navigator",
+  "description": "Browse and search metadata for files and folders visible to a connected Google Drive account.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "fileText"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

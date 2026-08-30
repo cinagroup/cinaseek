@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.zoominfo",
+  "title": "ZoomInfo Account Explorer",
+  "description": "Search company records and review account credit usage before requesting enrichment actions.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "table"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

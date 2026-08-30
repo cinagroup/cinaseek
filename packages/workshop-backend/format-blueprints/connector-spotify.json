@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.spotify",
+  "title": "Spotify Library Desk",
+  "description": "Search music, browse playlists, and submit playback or playlist actions through a connected Spotify account.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "listChecks"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

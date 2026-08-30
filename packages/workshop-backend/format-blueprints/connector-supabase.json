@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.supabase",
+  "title": "Supabase Project Inspector",
+  "description": "Inspect project health, database tables, functions, and storage, with an approval-gated SQL action surface.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "table"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}
