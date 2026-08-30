@@ -42,7 +42,7 @@ describe("Workers AI REST adapter", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       expect(url.pathname).toContain(`/accounts/${CREDENTIALS.accountId}/ai/models/search`);
-      expect(url.searchParams.get("task")).toBe("text-generation");
+      expect(url.searchParams.has("task")).toBe(false);
       expect(url.searchParams.get("per_page")).toBe("50");
       expect(url.searchParams.has("include_deprecated")).toBe(false);
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${CREDENTIALS.apiToken}`);
@@ -55,6 +55,7 @@ describe("Workers AI REST adapter", () => {
           { id: "@cf/meta/beta", name: "Beta", task: "text-generation", beta: true },
           { id: "@cf/meta/taskless", name: "Taskless" },
           { id: "not-a-model", name: "Invalid", task: "text-generation" },
+          { id: "internal-id", name: "@cf/meta/name-as-id", task: "text-generation" },
         ],
         result_info: { total_pages: 1 },
       });
@@ -62,18 +63,46 @@ describe("Workers AI REST adapter", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(new WorkersAiApi(CREDENTIALS).listModels("text-generation")).resolves.toEqual([
-      { id: "@cf/meta/beta", name: "Beta", task: "text-generation", experimental: true },
-      { id: "@cf/meta/chat", name: "Chat", task: "text-generation" },
-      { id: "@cf/meta/old", name: "Old", task: "text-generation", deprecated: true },
-      { id: "@cf/meta/taskless", name: "Taskless", task: "text-generation" },
+      {
+        id: "@cf/meta/name-as-id",
+        name: "@cf/meta/name-as-id",
+        task: "text-generation",
+        description: undefined,
+        deprecated: undefined,
+        experimental: undefined,
+      },
+      {
+        id: "@cf/meta/beta",
+        name: "Beta",
+        task: "text-generation",
+        description: undefined,
+        deprecated: undefined,
+        experimental: true,
+      },
+      {
+        id: "@cf/meta/chat",
+        name: "Chat",
+        task: "text-generation",
+        description: undefined,
+        deprecated: undefined,
+        experimental: undefined,
+      },
+      {
+        id: "@cf/meta/old",
+        name: "Old",
+        task: "text-generation",
+        description: undefined,
+        deprecated: true,
+        experimental: undefined,
+      },
     ]);
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("falls back to the provider task display name when its task id returns no models", async () => {
-    const queries: string[] = [];
+    const queries: (string | null)[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const task = new URL(String(input)).searchParams.get("task")!;
+      const task = new URL(String(input)).searchParams.get("task");
       queries.push(task);
       return Response.json({
         success: true,
@@ -87,32 +116,35 @@ describe("Workers AI REST adapter", () => {
     await expect(new WorkersAiApi(CREDENTIALS).listModels("text-generation")).resolves.toEqual([
       { id: "@cf/meta/chat", name: "Chat", task: "text-generation" },
     ]);
-    expect(queries).toEqual(["text-generation", "Text Generation"]);
+    expect(queries).toEqual([null, "text-generation", "Text Generation"]);
   });
 
-  it("queries every supported task when building the complete catalog", async () => {
-    const tasks: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      const task = url.searchParams.get("task")!;
-      tasks.push(task);
+  it("builds the complete catalog from an unfiltered provider response", async () => {
+    const taskEntries = [
+      ["automatic-speech-recognition", "Automatic Speech Recognition"],
+      ["text-classification", "Text Classification"],
+      ["text-embeddings", "Text Embeddings"],
+      ["text-generation", "Text Generation"],
+      ["text-to-image", "Text-to-Image"],
+      ["text-to-speech", "Text-to-Speech"],
+    ] as const;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      expect(new URL(String(input)).searchParams.has("task")).toBe(false);
       return Response.json({
         success: true,
-        result: [{ id: `@cf/test/${task.toLowerCase().replaceAll(/[^a-z]+/g, "-")}`, name: task }],
+        result: taskEntries.map(([id, name]) => ({
+          id: `@cf/test/${id}`,
+          name,
+          task: { id, name },
+        })),
         result_info: { total_pages: 1 },
       });
-    }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     const models = await new WorkersAiApi(CREDENTIALS).listModels();
     expect(models).toHaveLength(6);
-    expect(tasks.toSorted()).toEqual([
-      "automatic-speech-recognition",
-      "embeddings",
-      "text-classification",
-      "text-generation",
-      "text-to-image",
-      "text-to-speech",
-    ]);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("reads model input property names and encodes inference model paths", async () => {
