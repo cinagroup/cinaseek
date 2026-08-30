@@ -182,6 +182,8 @@ test("creates an internal core topology with one public custom domain", () => {
     context: "cinaseek-ai-context",
     scheduler: "cinaseek-ai-scheduler",
     workersAi: "cinaseek-ai-workers-ai",
+    homeassistant: "cinaseek-ai-homeassistant",
+    mcp: "cinaseek-ai-mcp",
     backend: "cinaseek-ai-backend",
     router: "cinaseek-ai-router",
   });
@@ -197,6 +199,8 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.equal(instance.configs["gatekeeper-context"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-scheduler"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-workers-ai"].routes, undefined);
+  assert.equal(instance.configs["gatekeeper-homeassistant"].routes, undefined);
+  assert.equal(instance.configs["gatekeeper-mcp"].routes, undefined);
   assert.equal(instance.configs["workshop-backend"].routes, undefined);
   assert.deepEqual(instance.configs.router.routes, [
     { pattern: "cinaseek.ai", custom_domain: true },
@@ -209,6 +213,8 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_CONTEXT", "cinaseek-ai-context"],
         ["GATEKEEPER_SCHEDULER", "cinaseek-ai-scheduler"],
         ["GATEKEEPER_WORKERS_AI", "cinaseek-ai-workers-ai"],
+        ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
+        ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
       ],
   );
   assert.deepEqual(
@@ -220,11 +226,21 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_CONTEXT", "cinaseek-ai-context"],
         ["GATEKEEPER_SCHEDULER", "cinaseek-ai-scheduler"],
         ["GATEKEEPER_WORKERS_AI", "cinaseek-ai-workers-ai"],
+        ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
+        ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
       ],
   );
   assert.equal(
       instance.configs["gatekeeper-workers-ai"].vars.BASE_URL,
       "https://cinaseek.ai/gatekeeper/workers-ai",
+  );
+  assert.equal(
+      instance.configs["gatekeeper-homeassistant"].vars.BASE_URL,
+      "https://cinaseek.ai/gatekeeper/homeassistant",
+  );
+  assert.equal(
+      instance.configs["gatekeeper-mcp"].vars.BASE_URL,
+      "https://cinaseek.ai/gatekeeper/mcp",
   );
   assert.equal(instance.configs["workshop-backend"].vars.ADMINS, undefined);
   assert.equal(instance.configs["workshop-backend"].vars.CF_ACCESS_ISS, "");

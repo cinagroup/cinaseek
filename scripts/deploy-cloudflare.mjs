@@ -20,6 +20,8 @@ const CORE_PACKAGES = [
   "gatekeeper-context",
   "gatekeeper-scheduler",
   "gatekeeper-workers-ai",
+  "gatekeeper-homeassistant",
+  "gatekeeper-mcp",
   "workshop-backend",
   "router",
 ];
@@ -313,6 +315,8 @@ export function createInstanceConfigs({
     context: `${slug}-context`,
     scheduler: `${slug}-scheduler`,
     workersAi: `${slug}-workers-ai`,
+    homeassistant: `${slug}-homeassistant`,
+    mcp: `${slug}-mcp`,
     backend: `${slug}-backend`,
     router: `${slug}-router`,
   };
@@ -342,6 +346,28 @@ export function createInstanceConfigs({
   workersAi.vars = {
     ...workersAi.vars,
     BASE_URL: `${publicBaseUrl}/gatekeeper/workers-ai`,
+  };
+
+  const homeassistant = baseProductionConfig(
+      root,
+      "gatekeeper-homeassistant",
+      names.homeassistant,
+      previousConfig(configPaths["gatekeeper-homeassistant"]),
+  );
+  homeassistant.vars = {
+    ...homeassistant.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/homeassistant`,
+  };
+
+  const mcp = baseProductionConfig(
+      root,
+      "gatekeeper-mcp",
+      names.mcp,
+      previousConfig(configPaths["gatekeeper-mcp"]),
+  );
+  mcp.vars = {
+    ...mcp.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/mcp`,
   };
 
   const backend = baseProductionConfig(
@@ -382,6 +408,16 @@ export function createInstanceConfigs({
       service: names.workersAi,
       entrypoint: "GatekeeperVendor",
     },
+    {
+      binding: "GATEKEEPER_HOMEASSISTANT",
+      service: names.homeassistant,
+      entrypoint: "GatekeeperVendor",
+    },
+    {
+      binding: "GATEKEEPER_MCP",
+      service: names.mcp,
+      entrypoint: "GatekeeperVendor",
+    },
   ];
 
   const router = baseProductionConfig(
@@ -395,6 +431,8 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_CONTEXT", service: names.context },
     { binding: "GATEKEEPER_SCHEDULER", service: names.scheduler },
     { binding: "GATEKEEPER_WORKERS_AI", service: names.workersAi },
+    { binding: "GATEKEEPER_HOMEASSISTANT", service: names.homeassistant },
+    { binding: "GATEKEEPER_MCP", service: names.mcp },
   ];
   router.assets = {
     ...router.assets,
@@ -417,6 +455,8 @@ export function createInstanceConfigs({
       "gatekeeper-context": context,
       "gatekeeper-scheduler": scheduler,
       "gatekeeper-workers-ai": workersAi,
+      "gatekeeper-homeassistant": homeassistant,
+      "gatekeeper-mcp": mcp,
       "workshop-backend": backend,
       router,
     },
@@ -563,6 +603,19 @@ async function main() {
     "--no-cache",
     "build:configurator",
   ]);
+  for (const packageName of [
+    "@gadgets/homeassistant-gatekeeper",
+    "@gadgets/mcp-gatekeeper",
+  ]) {
+    run(process.execPath, [
+      VITE_PLUS_CLI,
+      "run",
+      "-F",
+      packageName,
+      "--no-cache",
+      "build:configurator",
+    ]);
+  }
   run(process.execPath, [join(backendDir, "build-browser-runtime.mjs")], { cwd: backendDir });
   run(process.execPath, [join(backendDir, "scripts", "build-connector-blueprints.mjs")], {
     cwd: backendDir,
