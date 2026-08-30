@@ -269,6 +269,8 @@ const zhCN: TranslationCatalog = {
       workersAiConnected: '已连接：{{account}}', workersAiConnectedDescription: '选择此 Cloudflare 账户可用的任意文本生成模型。',
       connectWorkersAi: '连接账户', refreshWorkersAi: '刷新', workersAiModel: 'Workers AI 模型',
       chooseWorkersAiModel: '选择文本生成模型…', loadingWorkersAiModels: '正在加载模型…',
+      noWorkersAiModels: '该账户没有返回文本生成模型。请检查令牌权限后刷新。',
+      workersAiModelsLoadFailed: '无法加载模型目录。请确认令牌具有 Workers AI 读取或编辑权限，然后刷新。',
       workersAiPopupBlocked: '请允许弹出窗口以连接 Workers AI 账户', workersAiConnectFailed: '无法开始 Workers AI 连接',
       errors: {
         selectProvider: '请选择提供商', selectModel: '请选择模型', modelId: '请输入模型 ID', displayName: '请输入显示名称',

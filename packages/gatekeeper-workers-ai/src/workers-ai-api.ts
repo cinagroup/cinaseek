@@ -12,7 +12,18 @@ const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 const MODEL_ID_PATTERN = /^@[a-z0-9._-]+(?:\/[a-z0-9._-]+){2,}$/i;
 const MAX_TOKEN_LENGTH = 2048;
 const MAX_CATALOG_PAGES = 10;
-const CATALOG_PAGE_SIZE = 100;
+const CATALOG_PAGE_SIZE = 50;
+
+const TASK_QUERY_NAMES: Readonly<Record<WorkersAiTask, string>> = {
+  "text-generation": "Text Generation",
+  "text-embeddings": "Text Embeddings",
+  "text-to-image": "Text-to-Image",
+  "automatic-speech-recognition": "Automatic Speech Recognition",
+  "text-to-speech": "Text-to-Speech",
+  "text-classification": "Text Classification",
+};
+
+const SUPPORTED_TASKS = Object.keys(TASK_QUERY_NAMES) as WorkersAiTask[];
 
 const TASK_ALIASES = new Map<string, WorkersAiTask>([
   ["textgeneration", "text-generation"],
@@ -128,7 +139,10 @@ export function normalizeWorkersAiModelId(modelId: string): string {
   return normalized;
 }
 
-function modelFromUnknown(value: unknown): WorkersAiModelInfo | null {
+function modelFromUnknown(
+  value: unknown,
+  requestedTask: WorkersAiTask,
+): WorkersAiModelInfo | null {
   const record = asRecord(value);
   if (!record) return null;
   const id = firstString(record, ["id", "model_id", "model", "name"]);
@@ -139,11 +153,6 @@ function modelFromUnknown(value: unknown): WorkersAiModelInfo | null {
   } catch {
     return null;
   }
-
-  const task = normalizeTaskCandidate(record.task) ??
-    normalizeTaskCandidate(record.task_name) ??
-    normalizeTaskCandidate(record.task_id);
-  if (!task) return null;
 
   const tags = [
     ...tagStrings(record.tags),
@@ -157,7 +166,12 @@ function modelFromUnknown(value: unknown): WorkersAiModelInfo | null {
   return {
     id: normalizedId,
     name: firstString(record, ["display_name", "name", "title"]) ?? normalizedId,
-    task,
+    // Cloudflare's task query is authoritative. Keeping it as the fallback also makes catalog
+    // parsing resilient when the provider omits or reshapes the redundant task metadata.
+    task: normalizeTaskCandidate(record.task) ??
+      normalizeTaskCandidate(record.task_name) ??
+      normalizeTaskCandidate(record.task_id) ??
+      requestedTask,
     description: firstString(record, ["description", "summary"]),
     deprecated: deprecated || undefined,
     experimental: experimental || undefined,
@@ -248,6 +262,17 @@ export class WorkersAiApi {
 
   /** List active supported models visible to this account. */
   async listModels(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
+    const catalogs = await Promise.all(
+      (task ? [task] : SUPPORTED_TASKS).map(candidate => this.#listModelsForTask(candidate)),
+    );
+    const result = new Map<string, WorkersAiModelInfo>();
+    for (const catalog of catalogs) {
+      for (const model of catalog) result.set(model.id, model);
+    }
+    return [...result.values()].toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async #listModelsForTask(task: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
     const result = new Map<string, WorkersAiModelInfo>();
     for (let page = 1; page <= MAX_CATALOG_PAGES; page++) {
       const url = new URL(
@@ -255,8 +280,8 @@ export class WorkersAiApi {
       );
       url.searchParams.set("page", String(page));
       url.searchParams.set("per_page", String(CATALOG_PAGE_SIZE));
+      url.searchParams.set("task", TASK_QUERY_NAMES[task]);
       url.searchParams.set("hide_experimental", "false");
-      url.searchParams.set("include_deprecated", "true");
       const response = await fetch(url, {
         headers: this.#headers({ accept: "application/json" }),
         redirect: CLOUDFLARE_API_REDIRECT,
@@ -264,16 +289,14 @@ export class WorkersAiApi {
       const envelope = await parseEnvelope(response);
       const pageItems = extractCatalogResult(envelope.result);
       for (const item of pageItems) {
-        const model = modelFromUnknown(item);
-        if (!model || model.deprecated || model.experimental || (task && model.task !== task)) {
-          continue;
-        }
+        const model = modelFromUnknown(item, task);
+        if (!model) continue;
         result.set(model.id, model);
       }
       const pages = totalPages(envelope.result_info);
       if (pageItems.length < CATALOG_PAGE_SIZE || (pages !== undefined && page >= pages)) break;
     }
-    return [...result.values()].toSorted((a, b) => a.name.localeCompare(b.name));
+    return [...result.values()];
   }
 
   /** Return the declared input property names for one model. */

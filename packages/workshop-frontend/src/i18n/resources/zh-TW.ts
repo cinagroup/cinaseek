@@ -267,6 +267,8 @@ const zhTW: TranslationCatalog = {
       workersAiConnected: '已連接：{{account}}', workersAiConnectedDescription: '選擇此 Cloudflare 帳戶可用的任意文字生成模型。',
       connectWorkersAi: '連接帳戶', refreshWorkersAi: '重新整理', workersAiModel: 'Workers AI 模型',
       chooseWorkersAiModel: '選擇文字生成模型…', loadingWorkersAiModels: '正在載入模型…',
+      noWorkersAiModels: '此帳戶未傳回文字生成模型。請檢查權杖權限後重新整理。',
+      workersAiModelsLoadFailed: '無法載入模型目錄。請確認權杖具有 Workers AI 讀取或編輯權限，然後重新整理。',
       workersAiPopupBlocked: '請允許彈出視窗以連接 Workers AI 帳戶', workersAiConnectFailed: '無法開始 Workers AI 連接',
       errors: {
         selectProvider: '請選擇供應商', selectModel: '請選擇模型', modelId: '請輸入模型 ID', displayName: '請輸入顯示名稱',

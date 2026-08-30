@@ -124,6 +124,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
   const [workersAiAccountName, setWorkersAiAccountName] = useState('')
   const [workersAiModels, setWorkersAiModels] = useState<WorkersAiModelInfo[]>([])
   const [workersAiLoading, setWorkersAiLoading] = useState(false)
+  const [workersAiLoadFailed, setWorkersAiLoadFailed] = useState(false)
 
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -150,6 +151,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
       setWorkersAiAccountName('')
       setWorkersAiModels([])
       setWorkersAiLoading(false)
+      setWorkersAiLoadFailed(false)
       setErrors({})
       setAdvancedOpen(false)
     }
@@ -157,17 +159,27 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
 
   const loadWorkersAi = useCallback(async () => {
     setWorkersAiLoading(true)
+    setWorkersAiLoadFailed(false)
     try {
       const connection = await authenticatedApi.getWorkersAiConnectionInfo()
       setWorkersAiConnected(connection !== null)
       setWorkersAiAccountName(connection?.displayName ?? '')
-      setWorkersAiModels(connection
-        ? await authenticatedApi.listWorkersAiCatalog('text-generation')
-        : [])
+      if (!connection) {
+        setWorkersAiModels([])
+        return
+      }
+      try {
+        setWorkersAiModels(await authenticatedApi.listWorkersAiCatalog('text-generation'))
+      } catch (error) {
+        console.error('Failed to load Workers AI models:', error)
+        setWorkersAiModels([])
+        setWorkersAiLoadFailed(true)
+      }
     } catch (error) {
       console.error('Failed to load Workers AI connection:', error)
       setWorkersAiConnected(false)
       setWorkersAiModels([])
+      setWorkersAiLoadFailed(true)
     } finally {
       setWorkersAiLoading(false)
     }
@@ -386,23 +398,32 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
               </div>
 
               {workersAiConnected && (
-                <Select
-                  label={t('addDialog.workersAiModel')}
-                  className="w-full text-sm"
-                  placeholder={workersAiLoading
-                    ? t('addDialog.loadingWorkersAiModels')
-                    : t('addDialog.chooseWorkersAiModel')}
-                  value={modelId || undefined}
-                  onValueChange={(value) => handleWorkersAiModelSelect(value as string)}
-                  error={errors.modelId}
-                  renderValue={(value) => workersAiModels.find(model => model.id === value)?.name ?? String(value)}
-                >
-                  {workersAiModels.map(model => (
-                    <Select.Option key={model.id} value={model.id}>
-                      {model.name} · {model.id}
-                    </Select.Option>
-                  ))}
-                </Select>
+                <>
+                  <Select
+                    label={t('addDialog.workersAiModel')}
+                    className="w-full text-sm"
+                    placeholder={workersAiLoading
+                      ? t('addDialog.loadingWorkersAiModels')
+                      : t('addDialog.chooseWorkersAiModel')}
+                    value={modelId || undefined}
+                    onValueChange={(value) => handleWorkersAiModelSelect(value as string)}
+                    error={errors.modelId}
+                    renderValue={(value) => workersAiModels.find(model => model.id === value)?.name ?? String(value)}
+                  >
+                    {workersAiModels.map(model => (
+                      <Select.Option key={model.id} value={model.id}>
+                        {model.name} · {model.id}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                  {!workersAiLoading && workersAiModels.length === 0 && (
+                    <p className={`text-xs ${workersAiLoadFailed ? 'text-kumo-danger' : 'text-kumo-subtle'}`}>
+                      {workersAiLoadFailed
+                        ? t('addDialog.workersAiModelsLoadFailed')
+                        : t('addDialog.noWorkersAiModels')}
+                    </p>
+                  )}
+                </>
               )}
               {errors.workersAi && (
                 <p className="text-xs text-kumo-danger">{errors.workersAi}</p>

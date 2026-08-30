@@ -555,6 +555,8 @@ const en = {
       workersAiModel: 'Workers AI model',
       chooseWorkersAiModel: 'Choose a text-generation model…',
       loadingWorkersAiModels: 'Loading models…',
+      noWorkersAiModels: 'No text-generation models were returned for this account. Check the token permissions, then refresh.',
+      workersAiModelsLoadFailed: 'Could not load the model catalog. Check that the token has Workers AI Read or Edit permission, then refresh.',
       workersAiPopupBlocked: 'Allow pop-ups to connect your Workers AI account',
       workersAiConnectFailed: 'Failed to start the Workers AI connection',
       errors: {

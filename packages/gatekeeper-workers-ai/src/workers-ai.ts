@@ -66,6 +66,7 @@ const logger = createLogger<WorkersAiLogFields>({
 const NONCE_BYTES = 32;
 const NONCE_LIFETIME_MS = 10 * 60 * 1000;
 const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
+const CATALOG_CACHE_VERSION = 2;
 const SCHEMA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CONNECT_PATH = "connect";
 const SUPPORTED_RESOURCE_PATH = "_resource/model";
@@ -221,7 +222,11 @@ const INVALID_LINK_HTML = `<!doctype html><html><body style="font-family:system-
 const SELF_CLOSING_HTML = `<!doctype html><html><body style="font-family:system-ui;text-align:center;padding:3rem"><script>window.close()</script><h2>Workers AI connected</h2><p>You may close this tab and return to CinaSeek.</p></body></html>`;
 
 type StoredNonce = { value: string; expiresAt: number };
-type StoredCatalog = { expiresAt: number; models: WorkersAiModelInfo[] };
+type StoredCatalog = {
+  version?: number;
+  expiresAt: number;
+  models: WorkersAiModelInfo[];
+};
 type StoredSchemaFields = { expiresAt: number; fields: string[] };
 type CompleteConnectionResult = { kind: "ok" } | { kind: "invalid_nonce" } |
   { kind: "error"; message: string };
@@ -370,6 +375,7 @@ export class UserAccount extends DurableObject<Env> {
     this.ctx.storage.kv.delete("nonce");
     this.ctx.storage.kv.put("credentials", credentials);
     this.ctx.storage.kv.put<StoredCatalog>("catalog", {
+      version: CATALOG_CACHE_VERSION,
       models,
       expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
     });
@@ -405,12 +411,13 @@ export class UserAccount extends DurableObject<Env> {
   async listModels(task?: WorkersAiTask): Promise<WorkersAiModelInfo[]> {
     const cached = this.ctx.storage.kv.get<StoredCatalog>("catalog");
     let models: WorkersAiModelInfo[];
-    if (cached && cached.expiresAt > Date.now()) {
+    if (cached?.version === CATALOG_CACHE_VERSION && cached.expiresAt > Date.now()) {
       models = cached.models;
     } else {
       try {
         models = await new WorkersAiApi(this.getCredentials()).listModels();
         this.ctx.storage.kv.put<StoredCatalog>("catalog", {
+          version: CATALOG_CACHE_VERSION,
           models,
           expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
         });
