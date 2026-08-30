@@ -15,6 +15,7 @@ const WRANGLER_CLI = join(ROOT, "node_modules", "wrangler", "bin", "wrangler.js"
 const TYPESCRIPT_CLI = join(ROOT, "node_modules", "typescript", "bin", "tsc");
 const VITE_CLI = join(ROOT, "node_modules", "vite", "bin", "vite.js");
 const VITE_PLUS_CLI = join(ROOT, "node_modules", "vite-plus", "bin", "vp");
+const VALIDATED_WORKER_BUILD = join(ROOT, "scripts", "build-validated-worker.mjs");
 
 const CORE_PACKAGES = [
   "gatekeeper-context",
@@ -23,6 +24,7 @@ const CORE_PACKAGES = [
   "gatekeeper-homeassistant",
   "gatekeeper-mcp",
   "gatekeeper-github",
+  "gatekeeper-google",
   "gatekeeper-email",
   "workshop-backend",
   "router",
@@ -33,6 +35,10 @@ const AI_GATEWAY_TOKEN_INPUT_ENV = "CINASEEK_AI_GATEWAY_API_TOKEN";
 const GITHUB_SECRET_INPUTS = [
   ["CLIENT_ID", "CINASEEK_GITHUB_CLIENT_ID"],
   ["CLIENT_SECRET", "CINASEEK_GITHUB_CLIENT_SECRET"],
+];
+const GOOGLE_SECRET_INPUTS = [
+  ["CLIENT_ID", "CINASEEK_GOOGLE_CLIENT_ID"],
+  ["CLIENT_SECRET", "CINASEEK_GOOGLE_CLIENT_SECRET"],
 ];
 const ACCESS_PREFLIGHT_TIMEOUT_MS = 15_000;
 const AI_GATEWAY_PROVIDERS = new Set([
@@ -269,7 +275,8 @@ function baseProductionConfig(root, packageName, workerName, previous) {
     config.build = {
       ...config.build,
       command: `"${portablePath(process.execPath)}" ` +
-        `"${portablePath(capnwebValidateCli)}" build --out .wrangler/validate`,
+        `"${portablePath(VALIDATED_WORKER_BUILD)}" ` +
+        `"${portablePath(capnwebValidateCli)}"`,
       cwd: portablePath(packageDir),
     };
     delete config.build.watch_dir;
@@ -324,6 +331,7 @@ export function createInstanceConfigs({
     homeassistant: `${slug}-homeassistant`,
     mcp: `${slug}-mcp`,
     github: `${slug}-github`,
+    google: `${slug}-google`,
     email: `${slug}-email`,
     backend: `${slug}-backend`,
     router: `${slug}-router`,
@@ -387,6 +395,17 @@ export function createInstanceConfigs({
   github.vars = {
     ...github.vars,
     BASE_URL: `${publicBaseUrl}/gatekeeper/github`,
+  };
+
+  const google = baseProductionConfig(
+      root,
+      "gatekeeper-google",
+      names.google,
+      previousConfig(configPaths["gatekeeper-google"]),
+  );
+  google.vars = {
+    ...google.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/google`,
   };
 
   const email = baseProductionConfig(
@@ -455,6 +474,11 @@ export function createInstanceConfigs({
       entrypoint: "GatekeeperVendor",
     },
     {
+      binding: "GATEKEEPER_GOOGLE",
+      service: names.google,
+      entrypoint: "GatekeeperVendor",
+    },
+    {
       binding: "GATEKEEPER_EMAIL",
       service: names.email,
       entrypoint: "GatekeeperVendor",
@@ -475,6 +499,7 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_HOMEASSISTANT", service: names.homeassistant },
     { binding: "GATEKEEPER_MCP", service: names.mcp },
     { binding: "GATEKEEPER_GITHUB", service: names.github },
+    { binding: "GATEKEEPER_GOOGLE", service: names.google },
     { binding: "GATEKEEPER_EMAIL", service: names.email },
   ];
   router.assets = {
@@ -501,6 +526,7 @@ export function createInstanceConfigs({
       "gatekeeper-homeassistant": homeassistant,
       "gatekeeper-mcp": mcp,
       "gatekeeper-github": github,
+      "gatekeeper-google": google,
       "gatekeeper-email": email,
       "workshop-backend": backend,
       router,
@@ -660,6 +686,14 @@ async function main() {
   const providedGithubSecretNames = new Set(
       Object.entries(githubSecrets).filter(([, value]) => Boolean(value)).map(([name]) => name),
   );
+  const googleSecrets = Object.fromEntries(GOOGLE_SECRET_INPUTS.map(([name, inputEnv]) => {
+    const value = process.env[inputEnv]?.trim();
+    delete process.env[inputEnv];
+    return [name, value];
+  }));
+  const providedGoogleSecretNames = new Set(
+      Object.entries(googleSecrets).filter(([, value]) => Boolean(value)).map(([name]) => name),
+  );
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
@@ -693,6 +727,7 @@ async function main() {
     "@gadgets/homeassistant-gatekeeper",
     "@gadgets/mcp-gatekeeper",
     "@gadgets/github-gatekeeper",
+    "@gadgets/google-gatekeeper",
     "@gadgets/email-gatekeeper",
   ]) {
     run(process.execPath, [
@@ -755,6 +790,14 @@ async function main() {
         GITHUB_SECRET_INPUTS.map(([name]) => name),
         providedGithubSecretNames,
     );
+  const googleConfigPath = instance.configPaths["gatekeeper-google"];
+  const googleSecretAction = args.dryRun
+    ? "dry-run"
+    : planRequiredWorkerSecrets(
+        readRemoteSecretNames(googleConfigPath),
+        GOOGLE_SECRET_INPUTS.map(([name]) => name),
+        providedGoogleSecretNames,
+    );
 
   for (const packageName of CORE_PACKAGES) {
     const deployArgs = [
@@ -767,6 +810,9 @@ async function main() {
     runWrangler(deployArgs);
     if (packageName === "gatekeeper-github" && githubSecretAction === "provision") {
       putRemoteSecrets(githubConfigPath, githubSecrets);
+    }
+    if (packageName === "gatekeeper-google" && googleSecretAction === "provision") {
+      putRemoteSecrets(googleConfigPath, googleSecrets);
     }
   }
 

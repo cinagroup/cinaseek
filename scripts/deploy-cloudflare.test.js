@@ -206,6 +206,7 @@ test("creates an internal core topology with one public custom domain", () => {
     homeassistant: "cinaseek-ai-homeassistant",
     mcp: "cinaseek-ai-mcp",
     github: "cinaseek-ai-github",
+    google: "cinaseek-ai-google",
     email: "cinaseek-ai-email",
     backend: "cinaseek-ai-backend",
     router: "cinaseek-ai-router",
@@ -225,6 +226,7 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.equal(instance.configs["gatekeeper-homeassistant"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-mcp"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-github"].routes, undefined);
+  assert.equal(instance.configs["gatekeeper-google"].routes, undefined);
   assert.equal(instance.configs["gatekeeper-email"].routes, undefined);
   assert.equal(instance.configs["workshop-backend"].routes, undefined);
   assert.deepEqual(instance.configs.router.routes, [
@@ -241,6 +243,7 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
         ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
         ["GATEKEEPER_GITHUB", "cinaseek-ai-github"],
+        ["GATEKEEPER_GOOGLE", "cinaseek-ai-google"],
         ["GATEKEEPER_EMAIL", "cinaseek-ai-email"],
       ],
   );
@@ -256,6 +259,7 @@ test("creates an internal core topology with one public custom domain", () => {
         ["GATEKEEPER_HOMEASSISTANT", "cinaseek-ai-homeassistant"],
         ["GATEKEEPER_MCP", "cinaseek-ai-mcp"],
         ["GATEKEEPER_GITHUB", "cinaseek-ai-github"],
+        ["GATEKEEPER_GOOGLE", "cinaseek-ai-google"],
         ["GATEKEEPER_EMAIL", "cinaseek-ai-email"],
       ],
   );
@@ -274,6 +278,10 @@ test("creates an internal core topology with one public custom domain", () => {
   assert.equal(
       instance.configs["gatekeeper-github"].vars.BASE_URL,
       "https://cinaseek.ai/gatekeeper/github",
+  );
+  assert.equal(
+      instance.configs["gatekeeper-google"].vars.BASE_URL,
+      "https://cinaseek.ai/gatekeeper/google",
   );
   assert.equal(
       instance.configs["gatekeeper-email"].vars.BASE_URL,
