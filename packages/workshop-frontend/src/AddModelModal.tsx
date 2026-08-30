@@ -106,6 +106,16 @@ function buildOptions(gatewayMode: boolean, enabledProviders: Set<string> | null
   return options
 }
 
+/** Format a Workers AI model option without repeating an ID used as its display name. */
+export function workersAiModelOptionLabel(
+  model: Pick<WorkersAiModelInfo, 'id' | 'name'>,
+): string {
+  const displayName = model.name.trim()
+  return displayName && displayName.toLowerCase() !== model.id.toLowerCase()
+    ? `${displayName} · ${model.id}`
+    : model.id
+}
+
 export default function AddModelModal({ visible, onCancel, onSuccess, authenticatedApi, aiConfig }: AddModelModalProps) {
   const { t } = useTranslation('providers')
   const toasts = useKumoToastManager()
@@ -412,7 +422,7 @@ export default function AddModelModal({ visible, onCancel, onSuccess, authentica
                   >
                     {workersAiModels.map(model => (
                       <Select.Option key={model.id} value={model.id}>
-                        {model.name} · {model.id}
+                        {workersAiModelOptionLabel(model)}
                       </Select.Option>
                     ))}
                   </Select>
