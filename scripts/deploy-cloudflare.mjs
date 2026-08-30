@@ -26,6 +26,7 @@ const CORE_PACKAGES = [
   "gatekeeper-homeassistant",
   "gatekeeper-linear",
   "gatekeeper-notion",
+  "gatekeeper-supabase",
   "gatekeeper-mcp",
   "gatekeeper-github",
   "gatekeeper-google",
@@ -59,6 +60,10 @@ const LINEAR_SECRET_INPUTS = [
 const NOTION_SECRET_INPUTS = [
   ["CLIENT_ID", "CINASEEK_NOTION_CLIENT_ID"],
   ["CLIENT_SECRET", "CINASEEK_NOTION_CLIENT_SECRET"],
+];
+const SUPABASE_SECRET_INPUTS = [
+  ["CLIENT_ID", "CINASEEK_SUPABASE_CLIENT_ID"],
+  ["CLIENT_SECRET", "CINASEEK_SUPABASE_CLIENT_SECRET"],
 ];
 const ACCESS_PREFLIGHT_TIMEOUT_MS = 15_000;
 const AI_GATEWAY_PROVIDERS = new Set([
@@ -353,6 +358,7 @@ export function createInstanceConfigs({
     homeassistant: `${slug}-homeassistant`,
     linear: `${slug}-linear`,
     notion: `${slug}-notion`,
+    supabase: `${slug}-supabase`,
     mcp: `${slug}-mcp`,
     github: `${slug}-github`,
     google: `${slug}-google`,
@@ -441,6 +447,17 @@ export function createInstanceConfigs({
   notion.vars = {
     ...notion.vars,
     BASE_URL: `${publicBaseUrl}/gatekeeper/notion`,
+  };
+
+  const supabase = baseProductionConfig(
+      root,
+      "gatekeeper-supabase",
+      names.supabase,
+      previousConfig(configPaths["gatekeeper-supabase"]),
+  );
+  supabase.vars = {
+    ...supabase.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/supabase`,
   };
 
   const mcp = baseProductionConfig(
@@ -552,6 +569,11 @@ export function createInstanceConfigs({
       entrypoint: "GatekeeperVendor",
     },
     {
+      binding: "GATEKEEPER_SUPABASE",
+      service: names.supabase,
+      entrypoint: "GatekeeperVendor",
+    },
+    {
       binding: "GATEKEEPER_MCP",
       service: names.mcp,
       entrypoint: "GatekeeperVendor",
@@ -589,6 +611,7 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_HOMEASSISTANT", service: names.homeassistant },
     { binding: "GATEKEEPER_LINEAR", service: names.linear },
     { binding: "GATEKEEPER_NOTION", service: names.notion },
+    { binding: "GATEKEEPER_SUPABASE", service: names.supabase },
     { binding: "GATEKEEPER_MCP", service: names.mcp },
     { binding: "GATEKEEPER_GITHUB", service: names.github },
     { binding: "GATEKEEPER_GOOGLE", service: names.google },
@@ -620,6 +643,7 @@ export function createInstanceConfigs({
       "gatekeeper-homeassistant": homeassistant,
       "gatekeeper-linear": linear,
       "gatekeeper-notion": notion,
+      "gatekeeper-supabase": supabase,
       "gatekeeper-mcp": mcp,
       "gatekeeper-github": github,
       "gatekeeper-google": google,
@@ -830,6 +854,16 @@ async function main() {
           .filter(([, value]) => Boolean(value))
           .map(([name]) => name),
   );
+  const supabaseSecrets = Object.fromEntries(SUPABASE_SECRET_INPUTS.map(([name, inputEnv]) => {
+    const value = process.env[inputEnv]?.trim();
+    delete process.env[inputEnv];
+    return [name, value];
+  }));
+  const providedSupabaseSecretNames = new Set(
+      Object.entries(supabaseSecrets)
+          .filter(([, value]) => Boolean(value))
+          .map(([name]) => name),
+  );
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
@@ -865,6 +899,7 @@ async function main() {
     "@gadgets/homeassistant-gatekeeper",
     "@gadgets/linear-gatekeeper",
     "@gadgets/notion-gatekeeper",
+    "@gadgets/supabase-gatekeeper",
     "@gadgets/mcp-gatekeeper",
     "@gadgets/github-gatekeeper",
     "@gadgets/google-gatekeeper",
@@ -970,6 +1005,14 @@ async function main() {
         NOTION_SECRET_INPUTS.map(([name]) => name),
         providedNotionSecretNames,
     );
+  const supabaseConfigPath = instance.configPaths["gatekeeper-supabase"];
+  const supabaseSecretAction = args.dryRun
+    ? "dry-run"
+    : planRequiredWorkerSecrets(
+        readRemoteSecretNames(supabaseConfigPath),
+        SUPABASE_SECRET_INPUTS.map(([name]) => name),
+        providedSupabaseSecretNames,
+    );
 
   for (const packageName of CORE_PACKAGES) {
     const deployArgs = [
@@ -997,6 +1040,9 @@ async function main() {
     }
     if (packageName === "gatekeeper-notion" && notionSecretAction === "provision") {
       putRemoteSecrets(notionConfigPath, notionSecrets);
+    }
+    if (packageName === "gatekeeper-supabase" && supabaseSecretAction === "provision") {
+      putRemoteSecrets(supabaseConfigPath, supabaseSecrets);
     }
   }
 
