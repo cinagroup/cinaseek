@@ -10,6 +10,7 @@
 
 import { AmbientGatekeeperMode, BannerConfig, BlueprintBinding, BlueprintMetadata, BlueprintOutput, DEFAULT_BANNER_COLOR, OutputFormatOffer, isAmbientGatekeeperMode, isBannerColor, isOutputIcon } from "@gadgets/workshop-shared/api";
 import { SupportedResource } from "@gadgets/workshop-shared/gatekeeper";
+import { buildGatekeeperVendorMap } from "./auth/auth-vendors.js";
 import { ADMIN_CONFIG_KEY, BlueprintKvEnv, readBlueprintKvRecord, sanitizeBlueprintOutput } from "./blueprint-archive.js";
 
 export type AdminConfig = {
@@ -253,18 +254,44 @@ export type FormatOffer = OutputFormatOffer & {
 };
 
 /**
- * The formats this deployment offers, in menu order: promoted, enabled, and resolvable to a
- * complete presentation. A promoted blueprint that has since been deleted, or that names nothing
- * to call itself, is silently skipped.
+ * Whether every external resource a blueprint needs is configurable on this deployment. A
+ * gatekeeper binding is usable only when its Worker is actually bound and the deployment admin has
+ * not disabled either the whole vendor or the requested resource type. Model and agent-spawner
+ * bindings are configured through other workshop capabilities and do not affect this check.
  */
-export async function listFormatOffers(env: BlueprintKvEnv, config: AdminConfig)
+export function blueprintBindingsAvailable(
+    bindings: Record<string, BlueprintBinding>, availableVendorIds: ReadonlySet<string>,
+    config: Pick<AdminConfig, "disabledGatekeepers" | "disabledResources">): boolean {
+  let availableVendors = new Set([...availableVendorIds].map(id => id.toLowerCase()));
+  let disabledVendors = new Set(config.disabledGatekeepers.map(id => id.toLowerCase()));
+  let disabledResources = new Map(
+      Object.entries(config.disabledResources).map(([id, patterns]) => [id.toLowerCase(), patterns]));
+
+  return Object.values(bindings).every(binding => {
+    if (binding.type !== "gatekeeper") return true;
+    let vendorId = binding.gatekeeperName.toLowerCase();
+    return availableVendors.has(vendorId)
+        && !disabledVendors.has(vendorId)
+        && !(disabledResources.get(vendorId) ?? []).includes(binding.typeUrlPattern);
+  });
+}
+
+/**
+ * The formats this deployment offers, in menu order: promoted, enabled, and resolvable to a
+ * complete presentation. A promoted blueprint that has since been deleted, that names nothing to
+ * call itself, or that requires a gatekeeper unavailable on this deployment is silently skipped.
+ * Binding a gatekeeper later makes its formats available without changing their curation entries.
+ */
+export async function listFormatOffers(env: Cloudflare.Env, config: AdminConfig)
     : Promise<FormatOffer[]> {
   let enabled = config.formats.filter(entry => entry.enabled);
   if (enabled.length === 0) return [];
 
+  let availableVendorIds = new Set(buildGatekeeperVendorMap(env).keys());
   let offers: FormatOffer[] = [];
   for (let {entry, metadata, output} of await listPromotedFormats(env, enabled)) {
-    if (!metadata || !output) continue;
+    if (!metadata || !output
+        || !blueprintBindingsAvailable(metadata.bindings, availableVendorIds, config)) continue;
     offers.push({
       blueprintId: entry.blueprintId,
       output,

@@ -6,7 +6,7 @@ import { validateRpc } from 'capnweb-validate';
 import { collection, createTypedStorage } from '@gadgets/typed-storage';
 import { createWorkshopLogger } from "./observability";
 import { ADMIN_CONFIG_KEY, FEATURED_BLUEPRINTS_KEY, isReservedBlueprintKey, parseBlueprintKvRecord, readBlueprintKvRecord, sanitizeBlueprintOutput, serializeFeaturedBlueprints } from './blueprint-archive.js';
-import { AdminConfig, DEFAULT_ADMIN_CONFIG, FormatCuration, MAX_AGENT_HINT, defaultOutputFormatId, listPromotedFormats, reorderFormats, sanitizeOutputOverrides, serializeAdminConfig } from './admin-config.js';
+import { AdminConfig, DEFAULT_ADMIN_CONFIG, FormatCuration, MAX_AGENT_HINT, blueprintBindingsAvailable, defaultOutputFormatId, listPromotedFormats, reorderFormats, sanitizeOutputOverrides, serializeAdminConfig } from './admin-config.js';
 import { SITE_LOGO_R2_KEY, siteLogoImage, validateSiteLogo } from './site-logo.js';
 import { ambientGatekeeperMode, DEFAULT_AMBIENT_GATEKEEPER_MODE } from './provisioning-policy.js';
 import { buildGatekeeperVendorMap } from './auth/auth-vendors.js';
@@ -40,6 +40,10 @@ function makeAdminSettingsStorage(storage: DurableObjectStorage) {
       // exactly once per blueprint: an admin who then removes a format keeps it removed, while a
       // deployment that installed before curation existed still gets promoted.
       promotedFormatBlueprints: <string[]>[],
+
+      // Inputs used to decide which bundled blueprints belong in the featured snapshot. Avoids a
+      // KV read per bundled blueprint on every backend isolate's first API request.
+      bundledBlueprintVisibility: "",
     },
   });
 }
@@ -80,8 +84,8 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
    * for this exact manifest. Idempotent and cheap: an up-to-date deployment does one string
    * comparison and returns.
    *
-   * Written straight into the featured mirror rather than through setBlueprintFeatured(), whose
-   * authoritative bit lives in the publishing user's DO -- these have no owning user.
+   * Bundled blueprints are mirrored as featured only when their required gatekeepers are available
+   * on this deployment. They have no owning user, so setBlueprintFeatured() does not apply.
    *
    * Callers are coalesced onto one run, or two isolates racing on a fresh deployment both promote
    * the same blueprints, and a duplicated id makes setFormatOrder() reject every reordering.
@@ -101,13 +105,6 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
     if (this.storage.installedFormatBlueprints.get() !== manifestVersion) {
       let installed = await installFormatBlueprints(this.env);
 
-      if (installed.length > 0) {
-        for (let publicInfo of installed) {
-          this.storage.featuredBlueprints.put(publicInfo);
-        }
-        await this.#writeFeaturedSnapshot();
-      }
-
       // Stamped only once the whole manifest is live, so a crash or a single bad archive retries
       // next time. Recording a partial install as complete would strand the entries that failed
       // until the manifest happened to change again.
@@ -125,6 +122,9 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
     // Promotion is checked on every run, not just after an install, so a deployment that installed
     // before curation existed still ends up offering its bundled formats.
     await this.#promoteBundledFormats();
+    // Do not stamp visibility for a partial install: a later retry may add the missing records
+    // without changing the manifest or deployment configuration that make up the stamp.
+    if (complete) await this.#syncBundledBlueprintVisibility();
     return complete;
   }
 
@@ -159,6 +159,58 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
   async #writeFeaturedSnapshot(): Promise<void> {
     let featured = [...this.storage.featuredBlueprints.list()];
     await this.env.BLUEPRINTS.put(FEATURED_BLUEPRINTS_KEY, serializeFeaturedBlueprints(featured));
+  }
+
+  // Keep deployment-installed entries out of Explore when they cannot be instantiated here. The
+  // archives and their format curation remain installed, so adding the missing service binding (or
+  // re-enabling a resource) restores them on the next reconciliation.
+  async #syncBundledBlueprintVisibility(): Promise<void> {
+    let availableVendorIds = new Set(this.vendors.keys());
+    let config = this.#config();
+    let visibilityVersion = JSON.stringify({
+      manifest: formatBlueprintsManifestVersion(),
+      vendors: [...availableVendorIds].toSorted(),
+      disabledGatekeepers: config.disabledGatekeepers.map(id => id.toLowerCase()).toSorted(),
+      disabledResources: Object.entries(config.disabledResources)
+          .map(([id, patterns]) => [id.toLowerCase(), patterns.toSorted()] as const)
+          .toSorted(([a], [b]) => a.localeCompare(b)),
+    });
+    if (this.storage.bundledBlueprintVisibility.get() === visibilityVersion) return;
+
+    let changed = false;
+    let complete = true;
+    let records = await Promise.all(
+        FORMAT_BLUEPRINTS.map(entry => readBlueprintKvRecord(this.env, entry.blueprintId)));
+
+    for (let [index, entry] of FORMAT_BLUEPRINTS.entries()) {
+      let record = records[index];
+      if (!record) {
+        complete = false;
+        continue;
+      }
+
+      let existing = this.storage.featuredBlueprints.get(entry.blueprintId);
+      let available = blueprintBindingsAvailable(
+          record.metadata.bindings, availableVendorIds, config);
+      if (!available) {
+        if (existing) {
+          this.storage.featuredBlueprints.delete(entry.blueprintId);
+          changed = true;
+        }
+        continue;
+      }
+
+      let publicInfo = {id: entry.blueprintId, metadata: record.metadata};
+      if (!existing
+          || existing.metadata.version !== publicInfo.metadata.version
+          || existing.metadata.lastUpdated.valueOf() !== publicInfo.metadata.lastUpdated.valueOf()) {
+        this.storage.featuredBlueprints.put(publicInfo);
+        changed = true;
+      }
+    }
+
+    if (changed) await this.#writeFeaturedSnapshot();
+    if (complete) this.storage.bundledBlueprintVisibility.put(visibilityVersion);
   }
 
   // Reconcile the mirrored featured list to match the authoritative bit stored in the owner
@@ -431,6 +483,7 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
       if (disabled.size === 0) delete map[vendorId]; else map[vendorId] = [...disabled];
       return { ...config, disabledResources: map };
     });
+    await this.#syncBundledBlueprintVisibility();
   }
 
   async setSiteLogo(data: Uint8Array | null): Promise<boolean> {
@@ -490,6 +543,7 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
         return { ...config, disabledGatekeepers: [...disabled] };
       });
     }
+    await this.#syncBundledBlueprintVisibility();
   }
 
   // Admin view of every bound gatekeeper's resource types, annotated with their enabled state.

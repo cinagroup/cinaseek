@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ADMIN_CONFIG, defaultOutputFormatId, parseAdminConfig, reorderFormats, resolveFormatOutput, sanitizeOutputOverrides, serializeAdminConfig } from "../src/admin-config.js";
+import type { BlueprintBinding } from "@gadgets/workshop-shared/api";
+import { DEFAULT_ADMIN_CONFIG, blueprintBindingsAvailable, defaultOutputFormatId, parseAdminConfig, reorderFormats, resolveFormatOutput, sanitizeOutputOverrides, serializeAdminConfig } from "../src/admin-config.js";
 
 describe("parseAdminConfig", () => {
   it("backfills fields missing from a config persisted before they existed", () => {
@@ -102,6 +103,63 @@ describe("format presentation", () => {
     expect(defaultOutputFormatId(long)).toBe(defaultOutputFormatId(long));
     expect(defaultOutputFormatId(long)).toHaveLength(40);
     expect(defaultOutputFormatId(long)).not.toBe(defaultOutputFormatId(long + "other"));
+  });
+});
+
+describe("blueprint binding availability", () => {
+  let emailPattern = "https://cinaseek.ai/gatekeeper/email/_resource/mailbox/:mailboxId";
+  let emailBinding: BlueprintBinding = {
+    type: "gatekeeper",
+    title: "Email mailbox",
+    description: "Read and send email.",
+    gatekeeperName: "Email",
+    typeUrlPattern: emailPattern,
+  };
+  let config = {
+    disabledGatekeepers: [] as string[],
+    disabledResources: {} as Record<string, string[]>,
+  };
+
+  it("accepts blueprints with no external gatekeeper requirements", () => {
+    expect(blueprintBindingsAvailable({}, new Set(), config)).toBe(true);
+    expect(blueprintBindingsAvailable({model: {
+      type: "aiModel", title: "Model", description: "Choose a model.",
+    }}, new Set(), config)).toBe(true);
+  });
+
+  it("rejects a blueprint whose gatekeeper Worker is not bound", () => {
+    expect(blueprintBindingsAvailable({mailbox: emailBinding}, new Set(), config)).toBe(false);
+  });
+
+  it("accepts a bound gatekeeper regardless of identifier casing", () => {
+    expect(blueprintBindingsAvailable({mailbox: emailBinding}, new Set(["EMAIL"]), config)).toBe(true);
+  });
+
+  it("rejects a disabled vendor or resource type", () => {
+    expect(blueprintBindingsAvailable({mailbox: emailBinding}, new Set(["email"]), {
+      ...config, disabledGatekeepers: ["EMAIL"],
+    })).toBe(false);
+    expect(blueprintBindingsAvailable({mailbox: emailBinding}, new Set(["email"]), {
+      ...config,
+      disabledResources: {EMAIL: [emailPattern]},
+    })).toBe(false);
+    expect(blueprintBindingsAvailable({mailbox: emailBinding}, new Set(["email"]), {
+      ...config,
+      disabledResources: {email: ["https://example.com/another-resource/:id"]},
+    })).toBe(true);
+  });
+
+  it("requires every external gatekeeper in a multi-connector blueprint", () => {
+    let githubBinding: BlueprintBinding = {
+      ...emailBinding,
+      gatekeeperName: "github",
+      typeUrlPattern: "https://cinaseek.ai/gatekeeper/github/_resource/repository/:owner/:repo",
+    };
+    expect(blueprintBindingsAvailable(
+        {mailbox: emailBinding, repository: githubBinding}, new Set(["email"]), config)).toBe(false);
+    expect(blueprintBindingsAvailable(
+        {mailbox: emailBinding, repository: githubBinding}, new Set(["email", "github"]), config))
+        .toBe(true);
   });
 });
 
