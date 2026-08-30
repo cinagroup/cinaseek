@@ -35,7 +35,12 @@ describe("WorkersAiCredentialPool", () => {
   it("routes least-recently-used credentials and skips one after rate limiting", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
-    const captured: { accountId: string; authorization: string | null; headers: Headers }[] = [];
+    const captured: {
+      accountId: string;
+      authorization: string | null;
+      headers: Headers;
+      redirect: string | undefined;
+    }[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const accountId = new URL(request.url).pathname.split("/")[4];
@@ -43,6 +48,7 @@ describe("WorkersAiCredentialPool", () => {
         accountId,
         authorization: request.headers.get("authorization"),
         headers: request.headers,
+        redirect: init?.redirect,
       });
       await request.text();
       return captured.length === 3
@@ -76,6 +82,7 @@ describe("WorkersAiCredentialPool", () => {
     ]);
     expect(captured[0].headers.get("x-session-affinity")).toBe("chat-7");
     expect(captured[0].headers.get("x-not-forwarded")).toBeNull();
+    expect(captured.every(entry => entry.redirect === "manual")).toBe(true);
   });
 
   it("validates credentials and reports only aggregate pool state", async () => {

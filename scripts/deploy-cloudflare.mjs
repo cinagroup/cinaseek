@@ -14,6 +14,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WRANGLER_CLI = join(ROOT, "node_modules", "wrangler", "bin", "wrangler.js");
 const TYPESCRIPT_CLI = join(ROOT, "node_modules", "typescript", "bin", "tsc");
 const VITE_CLI = join(ROOT, "node_modules", "vite", "bin", "vite.js");
+const VITE_PLUS_CLI = join(ROOT, "node_modules", "vite-plus", "bin", "vp");
 
 const CORE_PACKAGES = [
   "gatekeeper-context",
@@ -550,12 +551,18 @@ async function main() {
   // These two Gatekeepers embed single-file UIs generated outside their Wrangler custom builds.
   const contextDir = join(ROOT, "packages", "gatekeeper-context");
   const schedulerDir = join(ROOT, "packages", "gatekeeper-scheduler");
-  const workersAiDir = join(ROOT, "packages", "gatekeeper-workers-ai");
   const frontendDir = join(ROOT, "packages", "workshop-frontend");
   const backendDir = join(ROOT, "packages", "workshop-backend");
   run(process.execPath, [join(contextDir, "build-app.mjs")], { cwd: contextDir });
   run(process.execPath, [join(schedulerDir, "build-app.mjs")], { cwd: schedulerDir });
-  run(process.execPath, [join(ROOT, "scripts", "build-gatekeeper-configurator.ts"), workersAiDir]);
+  run(process.execPath, [
+    VITE_PLUS_CLI,
+    "run",
+    "-F",
+    "@gadgets/workers-ai-gatekeeper",
+    "--no-cache",
+    "build:configurator",
+  ]);
   run(process.execPath, [join(backendDir, "build-browser-runtime.mjs")], { cwd: backendDir });
   run(process.execPath, [join(backendDir, "scripts", "build-format-blueprints.mjs")], {
     cwd: backendDir,

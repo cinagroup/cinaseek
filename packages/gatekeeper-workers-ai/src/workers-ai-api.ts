@@ -5,6 +5,9 @@ import type {
 } from "@gadgets/workshop-shared/workers-ai-gatekeeper";
 
 const CLOUDFLARE_API_ORIGIN = "https://api.cloudflare.com";
+// Workerd does not implement `redirect: "error"`. Manual mode both works at the edge and keeps
+// the account bearer token from being forwarded if the API ever responds with a redirect.
+const CLOUDFLARE_API_REDIRECT = "manual" as const;
 const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 const MODEL_ID_PATTERN = /^@[a-z0-9._-]+(?:\/[a-z0-9._-]+){2,}$/i;
 const MAX_TOKEN_LENGTH = 2048;
@@ -256,7 +259,7 @@ export class WorkersAiApi {
       url.searchParams.set("include_deprecated", "true");
       const response = await fetch(url, {
         headers: this.#headers({ accept: "application/json" }),
-        redirect: "error",
+        redirect: CLOUDFLARE_API_REDIRECT,
       });
       const envelope = await parseEnvelope(response);
       const pageItems = extractCatalogResult(envelope.result);
@@ -281,7 +284,7 @@ export class WorkersAiApi {
     url.searchParams.set("model", normalizeWorkersAiModelId(modelId));
     const response = await fetch(url, {
       headers: this.#headers({ accept: "application/json" }),
-      redirect: "error",
+      redirect: CLOUDFLARE_API_REDIRECT,
     });
     const envelope = await parseEnvelope(response);
     const result = asRecord(envelope.result);
@@ -299,7 +302,7 @@ export class WorkersAiApi {
         method: "POST",
         headers: this.#headers({ "content-type": contentType }),
         body,
-        redirect: "error",
+        redirect: CLOUDFLARE_API_REDIRECT,
       },
     );
     if (response.ok) return response;

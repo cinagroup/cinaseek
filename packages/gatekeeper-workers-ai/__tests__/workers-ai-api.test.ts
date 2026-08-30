@@ -43,6 +43,7 @@ describe("Workers AI REST adapter", () => {
       const url = new URL(String(input));
       expect(url.pathname).toContain(`/accounts/${CREDENTIALS.accountId}/ai/models/search`);
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${CREDENTIALS.apiToken}`);
+      expect(init?.redirect).toBe("manual");
       return Response.json({
         success: true,
         result: [
@@ -68,6 +69,7 @@ describe("Workers AI REST adapter", () => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/ai/models/schema")) {
         expect(url.searchParams.get("model")).toBe("@cf/openai/whisper");
+        expect(init?.redirect).toBe("manual");
         return Response.json({
           success: true,
           result: { input: { type: "object", properties: { audio: {}, language: {} } } },
@@ -75,6 +77,7 @@ describe("Workers AI REST adapter", () => {
       }
       expect(url.pathname.endsWith("/ai/run/%40cf/openai/whisper")).toBe(true);
       expect(init?.method).toBe("POST");
+      expect(init?.redirect).toBe("manual");
       return Response.json({ success: true, result: { text: "hello" } });
     });
     vi.stubGlobal("fetch", fetchMock);

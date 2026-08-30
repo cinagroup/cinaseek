@@ -5,6 +5,9 @@ import { createWorkshopLogger } from "./observability.js";
 const logger = createWorkshopLogger("workshop.workers-ai-credential-pool");
 
 const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
+// Workerd supports manual redirects, which also prevents a shared bearer token from being sent to
+// any redirect target returned by the Cloudflare API.
+const CLOUDFLARE_API_REDIRECT = "manual" as const;
 const MAX_TOKEN_LENGTH = 2048;
 const AUTH_FAILURE_COOLDOWN_MS = 15 * 60_000;
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
@@ -178,7 +181,7 @@ export class WorkersAiCredentialPool extends DurableObject<Cloudflare.Env> {
             method: "POST",
             headers,
             body: request.body,
-            redirect: "error",
+            redirect: CLOUDFLARE_API_REDIRECT,
             signal: request.signal,
           });
     } catch (error) {
