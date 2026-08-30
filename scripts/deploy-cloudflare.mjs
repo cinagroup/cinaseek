@@ -22,6 +22,7 @@ const CORE_PACKAGES = [
   "gatekeeper-scheduler",
   "gatekeeper-workers-ai",
   "gatekeeper-cloudflare",
+  "gatekeeper-confluence",
   "gatekeeper-homeassistant",
   "gatekeeper-mcp",
   "gatekeeper-github",
@@ -44,6 +45,10 @@ const GOOGLE_SECRET_INPUTS = [
 const CLOUDFLARE_SECRET_INPUTS = [
   ["CLIENT_ID", "CINASEEK_CLOUDFLARE_CLIENT_ID"],
   ["CLIENT_SECRET", "CINASEEK_CLOUDFLARE_CLIENT_SECRET"],
+];
+const CONFLUENCE_SECRET_INPUTS = [
+  ["CLIENT_ID", "CINASEEK_CONFLUENCE_CLIENT_ID"],
+  ["CLIENT_SECRET", "CINASEEK_CONFLUENCE_CLIENT_SECRET"],
 ];
 const ACCESS_PREFLIGHT_TIMEOUT_MS = 15_000;
 const AI_GATEWAY_PROVIDERS = new Set([
@@ -334,6 +339,7 @@ export function createInstanceConfigs({
     scheduler: `${slug}-scheduler`,
     workersAi: `${slug}-workers-ai`,
     cloudflare: `${slug}-cloudflare`,
+    confluence: `${slug}-confluence`,
     homeassistant: `${slug}-homeassistant`,
     mcp: `${slug}-mcp`,
     github: `${slug}-github`,
@@ -379,6 +385,17 @@ export function createInstanceConfigs({
   cloudflare.vars = {
     ...cloudflare.vars,
     BASE_URL: `${publicBaseUrl}/gatekeeper/cloudflare`,
+  };
+
+  const confluence = baseProductionConfig(
+      root,
+      "gatekeeper-confluence",
+      names.confluence,
+      previousConfig(configPaths["gatekeeper-confluence"]),
+  );
+  confluence.vars = {
+    ...confluence.vars,
+    BASE_URL: `${publicBaseUrl}/gatekeeper/confluence`,
   };
 
   const homeassistant = baseProductionConfig(
@@ -481,6 +498,11 @@ export function createInstanceConfigs({
       entrypoint: "GatekeeperVendor",
     },
     {
+      binding: "GATEKEEPER_CONFLUENCE",
+      service: names.confluence,
+      entrypoint: "GatekeeperVendor",
+    },
+    {
       binding: "GATEKEEPER_HOMEASSISTANT",
       service: names.homeassistant,
       entrypoint: "GatekeeperVendor",
@@ -519,6 +541,7 @@ export function createInstanceConfigs({
     { binding: "GATEKEEPER_SCHEDULER", service: names.scheduler },
     { binding: "GATEKEEPER_WORKERS_AI", service: names.workersAi },
     { binding: "GATEKEEPER_CLOUDFLARE", service: names.cloudflare },
+    { binding: "GATEKEEPER_CONFLUENCE", service: names.confluence },
     { binding: "GATEKEEPER_HOMEASSISTANT", service: names.homeassistant },
     { binding: "GATEKEEPER_MCP", service: names.mcp },
     { binding: "GATEKEEPER_GITHUB", service: names.github },
@@ -547,6 +570,7 @@ export function createInstanceConfigs({
       "gatekeeper-scheduler": scheduler,
       "gatekeeper-workers-ai": workersAi,
       "gatekeeper-cloudflare": cloudflare,
+      "gatekeeper-confluence": confluence,
       "gatekeeper-homeassistant": homeassistant,
       "gatekeeper-mcp": mcp,
       "gatekeeper-github": github,
@@ -728,6 +752,16 @@ async function main() {
           .filter(([, value]) => Boolean(value))
           .map(([name]) => name),
   );
+  const confluenceSecrets = Object.fromEntries(CONFLUENCE_SECRET_INPUTS.map(([name, inputEnv]) => {
+    const value = process.env[inputEnv]?.trim();
+    delete process.env[inputEnv];
+    return [name, value];
+  }));
+  const providedConfluenceSecretNames = new Set(
+      Object.entries(confluenceSecrets)
+          .filter(([, value]) => Boolean(value))
+          .map(([name]) => name),
+  );
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
@@ -759,6 +793,7 @@ async function main() {
   ]);
   for (const packageName of [
     "@gadgets/cloudflare-gatekeeper",
+    "@gadgets/confluence-gatekeeper",
     "@gadgets/homeassistant-gatekeeper",
     "@gadgets/mcp-gatekeeper",
     "@gadgets/github-gatekeeper",
@@ -841,6 +876,14 @@ async function main() {
         CLOUDFLARE_SECRET_INPUTS.map(([name]) => name),
         providedCloudflareSecretNames,
     );
+  const confluenceConfigPath = instance.configPaths["gatekeeper-confluence"];
+  const confluenceSecretAction = args.dryRun
+    ? "dry-run"
+    : planRequiredWorkerSecrets(
+        readRemoteSecretNames(confluenceConfigPath),
+        CONFLUENCE_SECRET_INPUTS.map(([name]) => name),
+        providedConfluenceSecretNames,
+    );
 
   for (const packageName of CORE_PACKAGES) {
     const deployArgs = [
@@ -859,6 +902,9 @@ async function main() {
     }
     if (packageName === "gatekeeper-cloudflare" && cloudflareSecretAction === "provision") {
       putRemoteSecrets(cloudflareConfigPath, cloudflareSecrets);
+    }
+    if (packageName === "gatekeeper-confluence" && confluenceSecretAction === "provision") {
+      putRemoteSecrets(confluenceConfigPath, confluenceSecrets);
     }
   }
 
