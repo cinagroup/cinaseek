@@ -357,6 +357,7 @@ test("creates an internal core topology with one public custom domain", () => {
   }
   assert.deepEqual(instance.configs["workshop-backend"].r2_buckets, [
     { binding: "BLUEPRINT_CONTENT" },
+    { binding: "WORKSPACE_BLOBS" },
   ]);
 });
 
