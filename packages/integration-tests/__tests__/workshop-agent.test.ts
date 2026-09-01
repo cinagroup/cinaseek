@@ -14,7 +14,7 @@ const MODEL_CONFIG: AiModelConfig = {
   provider: "cloudflare",
   model: MODEL_ID,
   accountId: "0123456789abcdef0123456789abcdef",
-  apiToken: "test-token",
+  apiToken: "test-token-0123456789abcdef",
 };
 
 const CHAT_REQUEST = z.object({
