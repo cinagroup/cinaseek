@@ -32,6 +32,9 @@ in one canary: attribution and rollback become ambiguous.
 - [ ] Verify hidden sessions release after 90 seconds and visible idle sessions after five minutes.
 - [ ] Verify sessions do not release during agent execution, attachment send/upload, or pending OT
   edits, and that the next user activity restores metadata and subscriptions.
+- [ ] Verify an idle client no longer produces repeated browser WebSocket `1006` warnings or
+  `GET /api` events matching `internal error; reference = ...`; the 25-second transport heartbeat
+  must remain cheaper than reconnecting and replaying the workspace session.
 - [ ] Abort if workspace reopen errors exceed 0.5%, p95 reopen latency regresses by more than 20%,
   or reports show lost drafts/attachments.
 - [ ] Roll back by disabling `workspace-idle-suspension`.

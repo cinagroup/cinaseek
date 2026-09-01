@@ -82,6 +82,10 @@ inside that workspace.
   closed normally or because the Durable Object connection was lost.
 - A start without a finish is expected when the containing Worker is terminated. Dashboards must
   use Cloudflare duration as the billing truth and treat incomplete pairs as a reliability signal.
+- The browser sends a lightweight `PublicApi.ping()` every 25 seconds. This keeps Cloudflare's idle
+  WebSocket timeout from turning an otherwise idle tab into an expensive reconnect/replay loop.
+  Workspace stubs are disposed independently by the 90-second hidden and five-minute visible-idle
+  leases, so the transport heartbeat does not keep a suspended Workspace Durable Object active.
 
 ### Agent runs
 

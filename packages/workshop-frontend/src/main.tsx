@@ -15,6 +15,9 @@ import { installWorkshopErrorReporting, reportIssue } from './errorReporting'
 import { applySiteFavicon, cacheBustSiteLogoUrl } from './siteLogoUtils'
 import { probeAccessSession, type AccessSessionStatus } from './accessSession'
 import { initializeI18n } from './i18n'
+import {
+  startRpcHeartbeat,
+} from './connectionHeartbeat'
 
 const CF_ACCESS_MODE = import.meta.env.VITE_CF_ACCESS_MODE === 'true'
 
@@ -68,6 +71,7 @@ const MAX_BACKOFF_MS = 10000;
 const RECONNECT_PROBE_TIMEOUT_MS = 20000;
 const WAKE_PROBE_TIMEOUT_MS = 10000;
 const WAKE_PROBE_MIN_IDLE_MS = 15000;
+const HEARTBEAT_PROBE_TIMEOUT_MS = 10000;
 
 // Callbacks to call whenever `currentStub` or connection state is updated.
 const subscribers = new Set<() => void>();
@@ -167,20 +171,24 @@ function handleBroken(error: unknown) {
   notifySubscribers();
 }
 
-// Passive close detection misses sockets killed during laptop sleep or tab throttling, so on
-// tab-visible / network-online signals probe the connection instead of letting the user's next
-// action hang on a zombie socket.
-async function probeOnWake() {
+// Passive close detection misses sockets killed during laptop sleep or tab throttling. Wake probes
+// catch those zombies, while periodic heartbeats prevent Cloudflare's idle WebSocket timeout from
+// repeatedly tearing down an otherwise healthy visible session.
+async function probeCurrentConnection(reason: 'heartbeat' | 'wake') {
+  const minIdleMs = reason === 'heartbeat' ? 0 : WAKE_PROBE_MIN_IDLE_MS
+  const timeoutMs = reason === 'heartbeat' ? HEARTBEAT_PROBE_TIMEOUT_MS : WAKE_PROBE_TIMEOUT_MS
   if (!currentStub || isConnectionLost || probing ||
-      Date.now() - lastProvenAt < WAKE_PROBE_MIN_IDLE_MS) return;
+      Date.now() - lastProvenAt < minIdleMs) return;
   probing = true;
   const suspect = currentStub;
   try {
-    await withTimeout(suspect.ping(), WAKE_PROBE_TIMEOUT_MS);
+    await withTimeout(suspect.ping(), timeoutMs);
     lastProvenAt = Date.now();
   } catch (error) {
     if (currentStub !== suspect || isConnectionLost) return;  // a real broken event won the race
-    console.warn('Connection unresponsive after wake:', error);
+    console.warn(reason === 'heartbeat'
+      ? 'Connection heartbeat failed:'
+      : 'Connection unresponsive after wake:', error);
     // Disposal fires onRpcBroken → handleBroken recovers. Its skip-first-backoff path retries
     // immediately — right for "the network just came back".
     disposeQuietly(suspect);
@@ -190,14 +198,16 @@ async function probeOnWake() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') void probeOnWake();
+  if (document.visibilityState === 'visible') void probeCurrentConnection('wake');
 });
-window.addEventListener('online', () => void probeOnWake());
+window.addEventListener('online', () => void probeCurrentConnection('wake'));
 
 // Current stub. handleBroken() will replace this on disconnect.
 installWorkshopErrorReporting()
 let accessSessionStatus: AccessSessionStatus = CF_ACCESS_MODE ? 'checking' : 'not-applicable'
 let currentStub: RpcStub<PublicApi> | null = CF_ACCESS_MODE ? null : startConnection();
+
+startRpcHeartbeat(() => probeCurrentConnection('heartbeat'))
 
 const router = createRouter()
 applyStoredThemeMode()
