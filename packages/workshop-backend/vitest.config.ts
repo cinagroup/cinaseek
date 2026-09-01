@@ -20,6 +20,14 @@ export default defineConfig({
           TEST_OVERSEER: { className: 'OverseerDurableObject', useSQLite: true },
           TEST_USER: { className: 'UserDurableObject', useSQLite: true },
           TEST_WORKERS_AI_POOL: { className: 'WorkersAiCredentialPool', useSQLite: true },
+          TEST_REALTIME_PRESENCE: {
+            className: 'RealtimePresenceDurableObject',
+            useSQLite: true,
+          },
+        },
+        bindings: {
+          REALTIME_TICKET_SECRET: 'test-only-realtime-ticket-secret-32-bytes',
+          REALTIME_CONSOLE_ENABLED: 'true',
         },
       },
     }),

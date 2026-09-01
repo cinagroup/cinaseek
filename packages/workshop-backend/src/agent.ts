@@ -236,6 +236,9 @@ export type CompactionContext = {
 
   /** The total tokens reported for the last measured model step, or zero if none are available. */
   measuredTokens: number;
+
+  /** Maximum model/tool turns allowed in this invocation; bounded by the server to at most 30. */
+  maxTurns?: number;
 };
 
 /**
@@ -3109,7 +3112,7 @@ export async function runAgent(
         // barrier just above; don't start another (doomed) model request.
         abortSignal.aborted ||
         // Hard cap on turns, as before.
-        ++turnCount >= 30 ||
+        ++turnCount >= (compaction.maxTurns ?? 30) ||
         // End the turn once the agent has successfully requested a connection: it must wait
         // for the user to respond, not keep reasoning in the meantime. (Accept resumes it on a
         // fresh turn; deny just leaves the turn ended.) A rejected requestConnection (e.g.

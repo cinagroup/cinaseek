@@ -1,6 +1,6 @@
 import { RpcStub, RpcTarget, newHttpBatchRpcResponse, newWebSocketRpcSession, RpcSessionOptions } from "capnweb";
 import { validateRpc } from "capnweb-validate";
-import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, WorkersAiSpeechRequest, WorkersAiSpeechSettings, WorkersAiSpeechSettingsUpdate, SpeechInputTranscription, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, LoginAttempt, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, WorkersAiSpeechRequest, WorkersAiSpeechSettings, WorkersAiSpeechSettingsUpdate, SpeechInputTranscription, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, LoginAttempt, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, REALTIME_PRESENCE_PROTOCOL, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
 import type {
   WorkersAiModelInfo,
   WorkersAiTask,
@@ -40,8 +40,62 @@ import { serveSiteLogo, SITE_LOGO_PATH } from "./site-logo.js";
 import { createWorkshopLogger } from "./observability";
 import { retryOnDoReset, wrapDoStubForTelemetry } from "./do-retry";
 import { WorkersAiCredentialPool } from "./workers-ai-credential-pool.js";
+import { RealtimePresenceDurableObject } from "./realtime-presence.js";
+import { verifyRealtimePresenceTicket } from "./realtime-presence-ticket.js";
 
 const logger = createWorkshopLogger("workshop.server");
+
+function realtimeProtocols(request: Request): string[] {
+  return (request.headers.get("Sec-WebSocket-Protocol") ?? "")
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean);
+}
+
+async function routeRealtimePresence(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+): Promise<Response> {
+  if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+    return new Response("WebSocket upgrade required.", {status: 426});
+  }
+  let url = new URL(request.url);
+  if (request.headers.get("Origin") !== url.origin) {
+    return new Response("Cross-origin realtime access is not allowed.", {status: 403});
+  }
+  let workspaceId = url.searchParams.get("workspace");
+  if (!workspaceId) return new Response("Workspace is required.", {status: 400});
+  try {
+    ctx.exports.OverseerDurableObject.idFromString(workspaceId);
+  } catch {
+    return new Response("Invalid workspace.", {status: 400});
+  }
+
+  let protocols = realtimeProtocols(request);
+  if (protocols[0] !== REALTIME_PRESENCE_PROTOCOL || !protocols[1]) {
+    return new Response("Realtime protocol and ticket required.", {status: 401});
+  }
+  if (!env.REALTIME_TICKET_SECRET) {
+    return new Response("Realtime presence is disabled.", {status: 503});
+  }
+  try {
+    let claims = await verifyRealtimePresenceTicket(env.REALTIME_TICKET_SECRET, protocols[1]);
+    if (!claims || claims.workspaceId !== workspaceId) {
+      return new Response("Invalid or expired realtime ticket.", {status: 401});
+    }
+    if (claims.channel === "console" && env.REALTIME_CONSOLE_ENABLED !== "true") {
+      return new Response("Realtime console delivery is disabled.", {status: 503});
+    }
+  } catch (error) {
+    logger.error("invalid realtime ticket configuration", {
+      event: "realtime.ticket.config.invalid", error,
+    });
+    return new Response("Realtime presence is unavailable.", {status: 503});
+  }
+
+  return ctx.exports.RealtimePresenceDurableObject.getByName(workspaceId).fetch(request);
+}
 
 // Set once we've asked the AdminSettings DO to install the bundled format blueprints (see the
 // fetch handler), so later requests skip the call. The DO holds the real answer.
@@ -66,6 +120,9 @@ export { UserDurableObject, GatekeeperConnectCallbackImpl };
 
 // Re-export the model-sharded shared credential pool.
 export { WorkersAiCredentialPool };
+
+// Re-export the hibernatable per-workspace realtime fan-out.
+export { RealtimePresenceDurableObject };
 
 // Re-export entrypoint types from overseer.ts.
 export { OverseerDurableObject, GatekeeperLoopback, GatekeeperHookLoopback,
@@ -279,11 +336,28 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     //   gadget at a time (since each tab is a separate client), so it's probably fine for now.
     let closed = false;
     let started = false;
+    let sessionFinished = false;
+    let sessionId = crypto.randomUUID();
+    let sessionStartedAt = 0;
+    let recordSessionFinished = (outcome: "closed" | "connection_lost") => {
+      if (sessionFinished) return;
+      sessionFinished = true;
+      recordAnalytics(this.ctx, this.env, {
+        event_name: "workspace_session_finished",
+        user_id: userId,
+        gadget_id: id,
+        session_id: sessionId,
+        duration_ms: Math.max(0, Date.now() - sessionStartedAt),
+        outcome,
+      });
+    };
     let notifyClosed = () => {
       closed = true;
+      if (started) recordSessionFinished("closed");
     };
     (notifyClosed as any)[Symbol.dispose] = () => {
       if (started && !closed) {
+        recordSessionFinished("connection_lost");
         // this.ctx.abort() would be nicer here, but it is still marked experimental in the
         // workers runtime.
         this.abortSession(new Error(`lost connection to workspace DO (gadget ${id})`));
@@ -303,6 +377,14 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
       throw err;
     }
     started = true;
+    sessionStartedAt = Date.now();
+    recordAnalytics(this.ctx, this.env, {
+      event_name: "workspace_session_started",
+      user_id: userId,
+      gadget_id: id,
+      session_id: sessionId,
+      source: shareKey ? "share_key" : "direct",
+    });
     recordAnalytics(this.ctx, this.env, {
       event_name: "gadget_opened",
       user_id: userId,
@@ -865,6 +947,10 @@ export default {
 
     if (url.pathname === "/api/client-errors") {
       return handleClientErrorRequest(req, env, ctx);
+    }
+
+    if (url.pathname === "/api/realtime-presence") {
+      return routeRealtimePresence(req, env, ctx);
     }
 
     if (url.pathname === "/api") {

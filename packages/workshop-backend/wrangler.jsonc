@@ -61,6 +61,11 @@
       // User-contributed Workers AI credentials, sharded by model for automatic routing.
       "tag": "v3",
       "new_sqlite_classes": [ "WorkersAiCredentialPool" ]
+    },
+    {
+      // Per-workspace WebSocket fan-out that can hibernate while connected clients are idle.
+      "tag": "v4",
+      "new_sqlite_classes": [ "RealtimePresenceDurableObject" ]
     }
   ],
 
@@ -80,6 +85,10 @@
     {
       "binding": "BLUEPRINT_CONTENT",
       "bucket_name": "gadgets-blueprint-content"
+    },
+    {
+      "binding": "WORKSPACE_BLOBS",
+      "bucket_name": "gadgets-workspace-blobs"
     }
   ],
   "worker_loaders": [

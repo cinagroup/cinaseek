@@ -18,6 +18,8 @@ export interface DailyQuotaResult {
   limit: number;
   /** Calls used so far in the current window, including this call when `consume` counted it. */
   used: number;
+  /** Calls currently reserved by in-flight agent runs. Included in `used`. */
+  reserved: number;
   /** ISO timestamp when the window resets (next UTC midnight). */
   resetAt: string;
 }

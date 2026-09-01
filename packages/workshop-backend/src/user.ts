@@ -52,6 +52,13 @@ type SpeechDailyUsage = {
   lastRequestAt: number;
 };
 
+type DailyLlmReservationRecord = {
+  id: string;
+  day: string;
+  state: "active" | "consumed" | "released";
+  createdAt: number;
+};
+
 type ConnectedAccountRecord = {
   id: number;
   account: Fetcher<GatekeeperUser>;
@@ -221,6 +228,11 @@ function makeUserStorage(storage: DurableObjectStorage) {
           byWorkspace(record: OutputRecord) { return record.workspaceId; },
         },
       }),
+      // Idempotency records for free-tier call reservations. They are tiny and swept when a new
+      // UTC day begins; the daily singleton below holds the aggregate hot-path counters.
+      dailyLlmReservations: collection<DailyLlmReservationRecord>()({
+        primaryKey: "id",
+      }),
     },
     singletons: {
       // AI Gateway billing state (selected account + cached balance) for the optional top-up flow;
@@ -251,9 +263,10 @@ function makeUserStorage(storage: DurableObjectStorage) {
       pinnedBlueprints: <string[]>[],
 
       // Per-user free-tier daily LLM-call counter (only used when ENABLE_CLOUDFLARE_LIMITS is on).
-      // Stores the current UTC day and the calls made that day; a stale `day` implicitly resets the
-      // count. Folds the former standalone RateLimitDO into the user object.
-      dailyLlmCount: <{ day: string; count: number } | null>null,
+      // Stores the current UTC day, settled calls, and in-flight reservations. A stale `day`
+      // implicitly resets both counters. Folds the former standalone RateLimitDO into the user
+      // object.
+      dailyLlmCount: <{ day: string; count: number; reserved?: number } | null>null,
 
       // `passwordHash` value as passed to `login()`, but with an extra round of SHA-256 applied.
       //
@@ -1201,17 +1214,70 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   // race-free; the window resets at UTC midnight when the stored day no longer matches.
   // ---------------------------------------------------------------------------------------------
 
-  #dailyUsed(day: string): number {
+  #dailyUsage(day: string): {consumed: number, reserved: number} {
     let record = this.storage.dailyLlmCount.get();
-    return record && record.day === day ? record.count : 0;
+    return record && record.day === day
+      ? {consumed: record.count, reserved: record.reserved ?? 0}
+      : {consumed: 0, reserved: 0};
+  }
+
+  #dailyQuotaResult(limit: number, day: string, withinLimits: boolean): DailyQuotaResult {
+    let {consumed, reserved} = this.#dailyUsage(day);
+    let used = consumed + reserved;
+    return {withinLimits, remaining: Math.max(0, limit - used), limit, used, reserved,
+            resetAt: nextUtcMidnightIso()};
   }
 
   /** Read the current daily quota state without counting a call. */
   async checkDailyLlmCount(limit: number): Promise<DailyQuotaResult> {
     let day = utcDayKey();
-    let used = this.#dailyUsed(day);
-    return { withinLimits: used < limit, remaining: Math.max(0, limit - used), limit, used,
-             resetAt: nextUtcMidnightIso() };
+    let {consumed, reserved} = this.#dailyUsage(day);
+    return this.#dailyQuotaResult(limit, day, consumed + reserved < limit);
+  }
+
+  /**
+   * Atomically reserve one daily platform-funded call. A stable reservation ID makes retries
+   * idempotent; concurrent agent starts cannot both spend the final allowance.
+   */
+  async reserveDailyLlmCall(limit: number, reservationId: string): Promise<DailyQuotaResult> {
+    if (!/^[0-9a-f-]{36}$/i.test(reservationId)) throw new Error("Invalid usage reservation ID.");
+    let existing = this.storage.dailyLlmReservations.get(reservationId);
+    let day = utcDayKey();
+    if (existing) {
+      return this.#dailyQuotaResult(limit, day, existing.day === day && existing.state !== "released");
+    }
+
+    let {consumed, reserved} = this.#dailyUsage(day);
+    if (consumed + reserved >= limit) return this.#dailyQuotaResult(limit, day, false);
+    this.storage.dailyLlmCount.put({day, count: consumed, reserved: reserved + 1});
+    this.storage.dailyLlmReservations.put({
+      id: reservationId,
+      day,
+      state: "active",
+      createdAt: Date.now(),
+    });
+    // Yesterday's idempotency rows no longer affect any counter and can be dropped lazily.
+    for (let record of Array.from(this.storage.dailyLlmReservations.list())) {
+      if (record.day !== day) this.storage.dailyLlmReservations.delete(record.id);
+    }
+    return this.#dailyQuotaResult(limit, day, true);
+  }
+
+  /** Settle an active reservation as consumed, or release it when inference never started. */
+  async settleDailyLlmCall(reservationId: string, consumed: boolean): Promise<void> {
+    let reservation = this.storage.dailyLlmReservations.get(reservationId);
+    if (!reservation || reservation.state !== "active") return;
+    let day = utcDayKey();
+    if (reservation.day === day) {
+      let usage = this.#dailyUsage(day);
+      this.storage.dailyLlmCount.put({
+        day,
+        count: usage.consumed + (consumed ? 1 : 0),
+        reserved: Math.max(0, usage.reserved - 1),
+      });
+    }
+    reservation.state = consumed ? "consumed" : "released";
+    this.storage.dailyLlmReservations.put(reservation);
   }
 
   /**
@@ -1220,15 +1286,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
    * so a blocked request never counts.
    */
   async consumeDailyLlmCall(limit: number): Promise<DailyQuotaResult> {
-    let day = utcDayKey();
-    let used = this.#dailyUsed(day);
-    if (used >= limit) {
-      return { withinLimits: false, remaining: 0, limit, used, resetAt: nextUtcMidnightIso() };
-    }
-    let newUsed = used + 1;
-    this.storage.dailyLlmCount.put({ day, count: newUsed });
-    return { withinLimits: true, remaining: Math.max(0, limit - newUsed), limit, used: newUsed,
-             resetAt: nextUtcMidnightIso() };
+    let reservationId = crypto.randomUUID();
+    let result = await this.reserveDailyLlmCall(limit, reservationId);
+    if (!result.withinLimits) return result;
+    await this.settleDailyLlmCall(reservationId, true);
+    return this.#dailyQuotaResult(limit, utcDayKey(), true);
   }
 
   /** DO NOT MAKE PUBLIC -- returns API keys. Pure read: call sites replay it across DO resets

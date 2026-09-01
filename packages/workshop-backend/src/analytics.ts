@@ -13,6 +13,9 @@ export type ProductAnalyticsConnectionType = "gatekeeper" | "ai_model" | "agent_
 // - gadget_interaction: chat, UI connection, and code merge interactions.
 // - connection_created/removed: gatekeeper, AI model, or agent spawner connections changed.
 // - blueprint_created/imported: blueprint lifecycle events.
+// - workspace_session_started/finished: billable workspace RPC-session lifetime proxies.
+// - agent_run_started/finished: durable agent-turn lifetime and outcome.
+// - dynamic_worker_requested: the stable identity passed to the Worker Loader API.
 //
 // Per-event shapes defined in ProductAnalyticsGadgetInput and ProductAnalyticsInput.
 
@@ -86,6 +89,51 @@ export type ProductAnalyticsGadgetInput =
       blueprint_id: string;
     };
 
+/** Operational events used to attribute platform cost to product activity. */
+export type ProductAnalyticsOperationalInput =
+  | {
+      event_name: "workspace_session_started";
+      user_id: string;
+      gadget_id: string;
+      session_id: string;
+      source: "direct" | "share_key";
+    }
+  | {
+      event_name: "workspace_session_finished";
+      user_id: string;
+      gadget_id: string;
+      session_id: string;
+      duration_ms: number;
+      outcome: "closed" | "connection_lost";
+    }
+  | {
+      event_name: "agent_run_started";
+      user_id: string;
+      gadget_id: string;
+      chat_id: number;
+      model_id: string;
+      callback_initiated: boolean;
+    }
+  | {
+      event_name: "agent_run_finished";
+      user_id: string;
+      gadget_id: string;
+      chat_id: number;
+      model_id: string;
+      callback_initiated: boolean;
+      duration_ms: number;
+      outcome: "ok" | "error" | "cancelled" | "timeout" | "usage_limit" | "callbacks_stalled";
+    }
+  | {
+      event_name: "dynamic_worker_requested";
+      gadget_id: string;
+      worker_id: string;
+      workpiece_id: number;
+      execution_version: string;
+      mode: "mainline" | "preview";
+      chat_id?: number;
+    };
+
 export type ProductAnalyticsInput =
   | {
       event_name: "account_created";
@@ -102,7 +150,8 @@ export type ProductAnalyticsInput =
       user_id: string;
       blueprint_id: string;
     }
-  | ProductAnalyticsGadgetInput;
+  | ProductAnalyticsGadgetInput
+  | ProductAnalyticsOperationalInput;
 
 export function recordAnalytics(
     ctx: ExecutionContext | DurableObjectState,

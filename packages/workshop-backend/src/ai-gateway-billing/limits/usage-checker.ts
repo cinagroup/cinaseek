@@ -39,6 +39,8 @@ export interface UsageCheckResult {
    * (reusing the connection lookup) so the caller needn't decrypt the token a second time.
    */
   byokRouting?: ByokGatewayRouting;
+  /** Active platform-funded quota reservation, settled by the agent runner. */
+  reservationId?: string;
 }
 
 // Result used when limits are disabled (self-hosted / unlimited).
@@ -59,7 +61,8 @@ function unlimitedResult(): UsageCheckResult {
  *
  * When limits are disabled, always allows without touching the user object. Otherwise: connected +
  * funded users bill their own gateway and skip the daily counter entirely; everyone else draws on
- * the platform free tier (consuming one call against the user object) until it's exhausted.
+ * the platform free tier (reserving one call on the user object) until it's exhausted. The caller
+ * settles an allowed reservation once it knows whether inference actually started.
  */
 export async function checkUsageAndBalance(
   env: Cloudflare.Env,
@@ -101,9 +104,10 @@ export async function checkUsageAndBalance(
     };
   }
 
-  // Otherwise draw on the platform free tier. consumeDailyLlmCall() only increments while within
-  // the limit (it no-ops once `used >= limit`), so a blocked request never counts.
-  const quota = await userStub.consumeDailyLlmCall(limit);
+  // Otherwise draw on the platform free tier. Reservations are atomic and no-op once exhausted,
+  // so concurrent starts cannot overspend and a blocked request never counts.
+  const reservationId = crypto.randomUUID();
+  const quota = await userStub.reserveDailyLlmCall(limit, reservationId);
 
   const decision = canProceedWithRequest({
     withinLimits: quota.withinLimits,
@@ -122,6 +126,7 @@ export async function checkUsageAndBalance(
     balance,
     hasUserToken,
     byokRouting: decision.shouldUseByok ? byokRouting : undefined,
+    reservationId: quota.withinLimits ? reservationId : undefined,
   };
 }
 
@@ -138,6 +143,7 @@ export async function getUsageInfo(
       cloudflareLimitsEnabled: false,
       unlimited: true,
       dailyUsed: 0,
+      dailyReserved: 0,
       dailyLimit: 0,
       remaining: 0,
       connected: false,
@@ -156,6 +162,7 @@ export async function getUsageInfo(
     cloudflareLimitsEnabled: true,
     unlimited: false,
     dailyUsed: quota.used,
+    dailyReserved: quota.reserved,
     dailyLimit: quota.limit,
     remaining: quota.remaining,
     resetAt: quota.resetAt,

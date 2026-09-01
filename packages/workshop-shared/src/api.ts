@@ -1184,6 +1184,8 @@ export type CloudflareUsageInfo = {
 
   /** Free-tier daily usage. */
   dailyUsed: number;
+  /** Portion of `dailyUsed` currently reserved by in-flight requests. */
+  dailyReserved: number;
   dailyLimit: number;
   remaining: number;
   /** ISO timestamp when the daily window resets. */
@@ -1811,6 +1813,24 @@ export interface Overseer extends RpcTarget {
    * A viewer is present for the lifetime of the openGadget() session.
    */
   subscribeToPresence(subscriber: RpcStub<PresenceSubscriber>): Promise<RpcStub<{}>>;
+
+  /**
+   * Mint a short-lived ticket for the hibernatable presence channel. Deployments without
+   * `REALTIME_TICKET_SECRET` reject this method, allowing callers to retain the RPC fallback.
+   */
+  openPresenceChannel(): Promise<RealtimePresenceConnection>;
+
+  /**
+   * Transfer this session's presence lease to its already-open hibernatable WebSocket. This is
+   * idempotent and should only be called after the browser's WebSocket `open` event.
+   */
+  activatePresenceChannel(): Promise<void>;
+
+  /**
+   * Mint a short-lived ticket for best-effort console log delivery over the hibernatable realtime
+   * channel. Deployments without realtime console fan-out enabled reject this method.
+   */
+  openConsoleChannel(): Promise<RealtimePresenceConnection>;
 
   /** Change the workspace title. */
   setTitle(title: string): Promise<void>;
@@ -4206,6 +4226,36 @@ export type PresenceParticipant = {
   user: AiChatAuthorInfo;
   role: CollaboratorRole;
 };
+
+/** WebSocket subprotocol used by the hibernatable workspace-presence channel. */
+export const REALTIME_PRESENCE_PROTOCOL = "cinaseek-presence-v1";
+
+/** One-time connection material for a hibernatable workspace-presence WebSocket. */
+export type RealtimePresenceConnection = {
+  /** Same-origin path of the hibernatable WebSocket endpoint. */
+  url: string;
+  /** Short-lived signed ticket, sent as a WebSocket subprotocol rather than in the URL. */
+  ticket: string;
+};
+
+/** Server-to-browser message sent by the hibernatable workspace-presence channel. */
+export type RealtimePresenceMessage = {
+  type: "presence";
+  participants: PresenceParticipant[];
+};
+
+/** Best-effort console batch delivered by the hibernatable workspace realtime channel. */
+export type RealtimeConsoleMessage = {
+  /** Realtime envelope discriminator. */
+  type: "console";
+  /** Preview chat that produced the logs, or null for mainline. */
+  chatId: number | null;
+  /** Console events; timestamps are encoded as ISO strings in the JSON WebSocket frame. */
+  events: Array<Omit<ConsoleLogEvent, "timestamp"> & {timestamp: string}>;
+};
+
+/** Messages currently carried by the hibernatable workspace realtime channel. */
+export type RealtimeWorkspaceMessage = RealtimePresenceMessage | RealtimeConsoleMessage;
 
 /**
  * `init` delivers the full roster once on subscribe.

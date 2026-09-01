@@ -30,6 +30,7 @@ declare global {
       // Blueprint storage bindings.
       BLUEPRINTS: KVNamespace;             // Workers KV for blueprint metadata lookup
       BLUEPRINT_CONTENT: R2Bucket;         // R2 bucket for blueprint code snapshots
+      WORKSPACE_BLOBS: R2Bucket;           // R2 tier for immutable workspace attachment bodies
 
       // User avatar storage.
       AVATARS: KVNamespace;                // Workers KV for user avatar images
@@ -86,6 +87,22 @@ declare global {
       // Minimum connected-account balance (USD) to proceed via BYOK. Defaults to
       // MINIMUM_CLOUDFLARE_BALANCE.
       MINIMUM_CLOUDFLARE_BALANCE?: string;
+
+      // HMAC secret for short-lived hibernatable realtime WebSocket tickets. Keep unset to
+      // disable the realtime channel; use at least 32 random bytes in production.
+      REALTIME_TICKET_SECRET?: string;
+      // Explicit server-side gate for realtime console fan-out; use "true" to enable.
+      REALTIME_CONSOLE_ENABLED?: string;
+      // unset/disabled = DO-only, mirror = R2 + DO, r2 = R2 bodies only.
+      WORKSPACE_BLOB_MODE?: "disabled" | "mirror" | "r2";
+      // Per-workspace committed + staged attachment-body ceiling. Defaults to 1 GiB.
+      WORKSPACE_ATTACHMENT_LIMIT_BYTES?: string;
+      // Per-workspace committed + staged attachment-row ceiling. Defaults to 2,000.
+      WORKSPACE_ATTACHMENT_LIMIT_COUNT?: string;
+      // Maximum model/tool iterations in one agent invocation. Defaults to 30; range 1..30.
+      AGENT_MAX_TURNS?: string;
+      // Maximum wall time for one agent run. Defaults to 30 minutes; range 60s..60m.
+      AGENT_MAX_DURATION_MS?: string;
     }
   }
 }

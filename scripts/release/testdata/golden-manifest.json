@@ -1108,6 +1108,11 @@
           "type": "r2_bucket"
         },
         {
+          "bucket_name": "$R2_WORKSPACE_BLOBS_NAME",
+          "name": "WORKSPACE_BLOBS",
+          "type": "r2_bucket"
+        },
+        {
           "name": "BROWSER",
           "type": "browser"
         },
@@ -1163,6 +1168,12 @@
             "WorkersAiCredentialPool"
           ],
           "tag": "v3"
+        },
+        {
+          "new_sqlite_classes": [
+            "RealtimePresenceDurableObject"
+          ],
+          "tag": "v4"
         }
       ],
       "modules": [
