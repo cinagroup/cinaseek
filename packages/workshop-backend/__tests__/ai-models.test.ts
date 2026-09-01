@@ -463,6 +463,7 @@ describe("getModel direct routing (no gateway)", () => {
   it("requires the pool namespace for an explicitly shared Workers AI model", () => {
     expect(() => getModel(env({ CF_AI_GATEWAY: undefined }), {
       ...WORKERS_AI_CONFIG,
+      model: "@cf/zai-org/glm-5.2",
       shareWithUsers: true,
     }, INITIATOR)).toThrow("shared Workers AI credential pool is unavailable");
   });
