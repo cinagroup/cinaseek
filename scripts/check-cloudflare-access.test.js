@@ -9,7 +9,12 @@ const resources = () => ({
   requiredGroups: ["CinaSeek administrators"],
   applications: [{
     id: "app-id",
-    domain: "cinaseek.ai",
+    domain: "cinaseek.ai/auth/login",
+    destinations: [
+      { type: "public", uri: "cinaseek.ai/auth/login" },
+      { type: "public", uri: "cinaseek.ai/api" },
+      { type: "public", uri: "cinaseek.ai/api/*" },
+    ],
     type: "self_hosted",
     aud: "expected-aud",
     http_only_cookie_attribute: true,
@@ -94,4 +99,20 @@ test("does not let an API child wildcard stand in for the exact parent", () => {
   ];
   const failures = evaluateAccessResources(input);
   assert(failures.some((failure) => failure.includes("/api")));
+});
+
+test("rejects Access destinations that intercept Gatekeeper OAuth", () => {
+  const input = resources();
+  input.applications[0].destinations.push(
+      { type: "public", uri: "cinaseek.ai/gatekeeper/*" });
+  const failures = evaluateAccessResources(input);
+  assert(failures.some((failure) => failure.includes("Gatekeeper OAuth routes")));
+});
+
+test("rejects a whole-host Access destination because it also intercepts Gatekeepers", () => {
+  const input = resources();
+  input.applications[0].domain = "cinaseek.ai";
+  delete input.applications[0].destinations;
+  const failures = evaluateAccessResources(input);
+  assert(failures.some((failure) => failure.includes("Gatekeeper OAuth routes")));
 });

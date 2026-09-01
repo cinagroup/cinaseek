@@ -177,6 +177,39 @@ export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
     }
   }
 
+  // Gatekeepers authenticate their own OAuth callbacks with short-lived state and nonces. Putting
+  // Access in front of these paths breaks callbacks opened in a system browser that does not share
+  // the application's Access cookie.
+  const callbackPath = "/gatekeeper/github/oauth";
+  let callback;
+  try {
+    callback = await fetchImpl(`https://${normalizedDomain}${callbackPath}`, {
+      method: "GET",
+      redirect: "manual",
+      headers: { accept: "text/html" },
+      signal: AbortSignal.timeout(ACCESS_PREFLIGHT_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error(
+        `Cloudflare Access preflight could not reach ${normalizedDomain}${callbackPath}`, {
+          cause: error,
+        });
+  }
+  const callbackLocation = callback.headers.get("location");
+  if ([301, 302, 303, 307, 308].includes(callback.status) && callbackLocation) {
+    let callbackRedirect;
+    try {
+      callbackRedirect = new URL(callbackLocation, `https://${normalizedDomain}`);
+    } catch {
+      callbackRedirect = undefined;
+    }
+    if (callbackRedirect?.origin === normalizedIssuer &&
+        callbackRedirect.pathname.startsWith("/cdn-cgi/access/login/")) {
+      throw new Error(
+          `Cloudflare Access must not challenge ${normalizedDomain}${callbackPath}`);
+    }
+  }
+
   let certs;
   try {
     certs = await fetchImpl(`${normalizedIssuer}/cdn-cgi/access/certs`, {

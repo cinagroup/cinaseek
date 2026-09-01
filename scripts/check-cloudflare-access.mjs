@@ -53,6 +53,19 @@ function destinationCoversPath(destination, domain, path) {
   return destinationPath === path;
 }
 
+function destinationProtectsGatekeepers(destination, domain) {
+  let url;
+  try {
+    url = new URL(destination.includes("://") ? destination : `https://${destination}`);
+  } catch {
+    return false;
+  }
+  if (url.hostname.toLowerCase() !== domain) return false;
+  const destinationPath = url.pathname === "/" ? "/" : url.pathname.replace(/\/$/, "");
+  return destinationPath === "/" || destinationPath === "/gatekeeper" ||
+    destinationPath.startsWith("/gatekeeper/");
+}
+
 /** Finds one Access application whose destinations cover all required protected paths. */
 export function findAccessApplication(applications, domain, requiredPaths = ["/auth/login", "/api"]) {
   return applications.find((application) => {
@@ -85,6 +98,12 @@ export function evaluateAccessResources({
   if (app.aud !== audience) failures.push("The Access application AUD does not match deployment.");
   if (app.http_only_cookie_attribute !== true) {
     failures.push("The Access application must use an HttpOnly authorization cookie.");
+  }
+  if (applicationDestinationUris(app).some(
+      (destination) => destinationProtectsGatekeepers(destination, domain))) {
+    failures.push(
+        "The Access application must not protect /gatekeeper/*; Gatekeeper OAuth routes " +
+        "must remain public.");
   }
 
   const allowedIdps = new Set(Array.isArray(app.allowed_idps) ? app.allowed_idps : []);

@@ -43,12 +43,17 @@ log.
 
 ## Access application and policy
 
-Create a self-hosted application for the exact hostname. Select only the CinaAuth Generic OIDC
-identity provider and enable **Apply instant authentication** (`auto_redirect_to_identity=true`).
-This skips the Cloudflare provider picker and sends the browser directly to CinaAuth. Google,
-GitHub, and OTP may remain configured at the account level for other applications, but must not be
-selected by the CinaSeek application. Keep the authorization cookie HttpOnly and do not add Bypass
-or Everyone policies.
+Create a path-scoped self-hosted application. Protect `/auth/login`, `/api`, `/api/*`, and the
+required `/blueprint-screenshot/*` routes; leave the public application shell outside Access. Never
+add the whole hostname or `/gatekeeper/*`: Gatekeeper OAuth initiation and callback routes validate
+their own short-lived state and nonce, and must remain reachable from a system browser that does not
+share the application's Access cookie.
+
+Select only the CinaAuth Generic OIDC identity provider and enable **Apply instant authentication**
+(`auto_redirect_to_identity=true`). This skips the Cloudflare provider picker and sends the browser
+directly to CinaAuth. Google, GitHub, and OTP may remain configured at the account level for other
+applications, but must not be selected by the CinaSeek application. Keep the authorization cookie
+HttpOnly and do not add Bypass or Everyone policies.
 
 Do not protect `auth.cinaseek.ai` or `accounts.cinaseek.ai` with the same Access application or a
 matching wildcard, because the OIDC authorization flow would loop back into Access. If direct IdP
@@ -80,22 +85,25 @@ issuer and audience from the generated backend configuration and the API token o
 
 The audit checks the application type and AUD, HttpOnly cookie, exclusive CinaAuth allow-list,
 instant authentication, Allow policies, absence of Bypass/Everyone, required Access groups, edge
-challenge, issuer, and rotating JWKS. It intentionally does not print application IDs, user emails,
-or policy subjects.
+challenge, public Gatekeeper OAuth callbacks, issuer, and rotating JWKS. It intentionally does not
+print application IDs, user emails, or policy subjects.
 
 ## Release acceptance
 
 Complete all of these checks before calling the authentication chain production-ready:
 
-1. An unauthenticated request to `/` and `/api` reaches the expected Access team, skips its provider
-   picker, and redirects directly to the CinaAuth OIDC authorization endpoint.
+1. An unauthenticated request to `/` loads the public shell, while `/api` reaches the expected Access
+   team, skips its provider picker, and redirects directly to the CinaAuth OIDC authorization
+   endpoint.
 2. Google and GitHub each complete through the CinaAuth broker and return to `cinaseek.ai`.
-3. The authenticated WebSocket/RPC connection reaches `whoami()` before the UI shows an
+3. A connector opened in a system browser can return through `/gatekeeper/<name>/oauth` without an
+   Access challenge.
+4. The authenticated WebSocket/RPC connection reaches `whoami()` before the UI shows an
    authenticated session.
-4. A token with the wrong issuer, audience, algorithm, type, email, or subject is rejected.
-5. A user outside every Allow policy is denied at the edge.
-6. Access logout invalidates the session and a new `/api` connection is challenged again.
-7. The remote audit and the Access-mode frontend/backend build pass from the release revision.
+5. A token with the wrong issuer, audience, algorithm, type, email, or subject is rejected.
+6. A user outside every Allow policy is denied at the edge.
+7. Access logout invalidates the session and a new `/api` connection is challenged again.
+8. The remote audit and the Access-mode frontend/backend build pass from the release revision.
 
 Cloudflare references: [validate an Access JWT](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/),
 [application token claims](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/),

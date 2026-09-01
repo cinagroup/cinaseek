@@ -19,6 +19,13 @@ import {
 
 const ROOT = resolve(import.meta.dirname, "..");
 
+const accessChallenge = () => new Response(null, {
+  status: 302,
+  headers: {
+    location: "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/login/cinaseek.ai",
+  },
+});
+
 test("normalizes and validates deployment domains", () => {
   assert.equal(normalizeDomain("CinaSeek.AI."), "cinaseek.ai");
   assert.equal(instanceSlug("cinaseek.ai"), "cinaseek-ai");
@@ -67,6 +74,7 @@ test("verifies the Access edge challenge and RS256 signing keys", async () => {
         location: "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/login/cinaseek.ai",
       },
     }),
+    new Response("Error: no 'state' provided", { status: 200 }),
     new Response(JSON.stringify({ keys: [{ kty: "RSA", alg: "RS256" }] }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -86,9 +94,10 @@ test("verifies the Access edge challenge and RS256 signing keys", async () => {
   assert.deepEqual(requested, [
     "https://cinaseek.ai/auth/login",
     "https://cinaseek.ai/api",
+    "https://cinaseek.ai/gatekeeper/github/oauth",
     "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/certs",
   ]);
-  assert.equal(new Set(signals).size, 3);
+  assert.equal(new Set(signals).size, 4);
 });
 
 test("fails Access preflight before deploy when protection or keys are wrong", async () => {
@@ -123,6 +132,7 @@ test("fails Access preflight before deploy when protection or keys are wrong", a
         location: "https://cinagroup.cloudflareaccess.com/cdn-cgi/access/login/cinaseek.ai",
       },
     }),
+    new Response("Error: no 'state' provided", { status: 200 }),
     new Response(JSON.stringify({ keys: [{ kty: "EC", alg: "ES256" }] }), { status: 200 }),
   ];
   await assert.rejects(() => verifyAccessEdge({
@@ -138,6 +148,15 @@ test("normalizes and validates Cloudflare Flagship app IDs", () => {
       "ab7716ce-3292-45ec-b654-e739e7815396",
   );
   assert.throws(() => normalizeFlagshipAppId("cinaseek-production"), /Flagship app UUID/);
+});
+
+test("fails Access preflight when Gatekeeper OAuth is challenged", async () => {
+  const responses = [accessChallenge(), accessChallenge(), accessChallenge()];
+  await assert.rejects(() => verifyAccessEdge({
+    domain: "cinaseek.ai",
+    issuer: "https://cinagroup.cloudflareaccess.com",
+    fetchImpl: async () => responses.shift(),
+  }), /must not challenge.*gatekeeper\/github\/oauth/);
 });
 
 test("normalizes and validates AI Gateway settings", () => {
