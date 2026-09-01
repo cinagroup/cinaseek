@@ -21,6 +21,7 @@ import UserMenu from './components/UserMenu'
 import SiteLogo from './components/SiteLogo'
 
 import {
+  REALTIME_PRESENCE_PROTOCOL,
   GadgetClient,
   AiChatAuthorInfo,
   ConsoleLogSubscriber,
@@ -64,6 +65,8 @@ import { reportIssue } from './errorReporting'
 import GadgetExportMenu from './GadgetExportMenu'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from './components/menuStyles'
 import { isImeComposing } from './keyboardEvent'
+import { useUiFeatureFlag } from './FeatureFlagsContext'
+import { parseRealtimeConsoleMessage } from './realtimeConsole'
 
 const NO_GADGETS: ReadonlySet<WorkpieceId> = new Set()
 
@@ -448,6 +451,11 @@ export default function GadgetEditor() {
   // bundle, RPC connection, bindings, blueprints) go through this stub. Null while the workspace
   // has no (visible) gadgets.
   const [gadget, setGadget] = useState<{ id: WorkpieceId; stub: RpcStub<GadgetClient> } | null>(null)
+  const [isAgentActive, setIsAgentActive] = useState(false)
+  const [hasPendingLocalEdits, setHasPendingLocalEdits] = useState(false)
+  const [hasComposerTransientState, setHasComposerTransientState] = useState(false)
+  const { enabled: suspendHiddenWorkspaces } = useUiFeatureFlag('workspace-idle-suspension')
+  const { enabled: realtimeConsole } = useUiFeatureFlag('realtime-presence')
 
   // ── title editing ────────────────────────────────────────────────────────────
   const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -477,6 +485,9 @@ export default function GadgetEditor() {
     onInvalidShareKey: () => {
       toasts.add({ title: 'Invalid or expired share link.', variant: 'error' })
     },
+    suspendWhenHidden: suspendHiddenWorkspaces,
+    suspendWhenIdle: suspendHiddenWorkspaces,
+    canSuspend: !isAgentActive && !hasPendingLocalEdits && !hasComposerTransientState,
   })
   const [userInfo, setUserInfo] = useState<AiChatAuthorInfo | null>(null)
 
@@ -624,7 +635,6 @@ export default function GadgetEditor() {
   const [chatCount, setChatCount] = useState<number | null>(null)
   const [hasChatZero, setHasChatZero] = useState(false)
   const [_hasBindings, setHasBindings] = useState(false)
-  const [isAgentActive, setIsAgentActive] = useState(false)
   const [hasAnyProposedChanges, setHasAnyProposedChanges] = useState(false)
   const [selectedChatHasProposedChanges, setSelectedChatHasProposedChanges] = useState(false)
   const selectedChatId = urlChatId
@@ -1232,16 +1242,77 @@ export default function GadgetEditor() {
   useEffect(() => {
     if (!overseer) return
     let sub: RpcStub<{}> | null = null
+    let socket: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let reconnectDelay = 1_000
     let cancelled = false
-    overseer.stub
-      .subscribeToConsoleLogs(consoleLogSubscriberRef.current)
-      .then(s => {
-        if (cancelled) { s[Symbol.dispose](); return }
-        sub = s
-      })
-      .catch(err => console.error('Failed to subscribe to console logs:', err))
-    return () => { cancelled = true; sub?.[Symbol.dispose]() }
-  }, [overseer])
+
+    const startLegacySubscription = () => {
+      overseer.stub
+        .subscribeToConsoleLogs(consoleLogSubscriberRef.current)
+        .then(s => {
+          if (cancelled) { s[Symbol.dispose](); return }
+          sub = s
+        })
+        .catch(err => console.error('Failed to subscribe to console logs:', err))
+    }
+
+    const scheduleReconnect = () => {
+      if (cancelled || reconnectTimer !== null) return
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        void connectRealtime()
+      }, reconnectDelay)
+      reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
+    }
+
+    const connectRealtime = async () => {
+      try {
+        const connection = await overseer.stub.openConsoleChannel()
+        if (cancelled) return
+        const url = new URL(connection.url, window.location.href)
+        url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+        const nextSocket = new WebSocket(url, [REALTIME_PRESENCE_PROTOCOL, connection.ticket])
+        socket = nextSocket
+        nextSocket.addEventListener('open', () => {
+          if (cancelled || socket !== nextSocket) return
+          reconnectDelay = 1_000
+        })
+        nextSocket.addEventListener('message', event => {
+          if (cancelled || socket !== nextSocket || typeof event.data !== 'string') return
+          try {
+            const message = parseRealtimeConsoleMessage(JSON.parse(event.data))
+            if (!message) return
+            void consoleLogSubscriberRef.current.event(
+              message.chatId,
+              message.events,
+            )
+          } catch {
+            // Console delivery is best-effort; ignore malformed frames and keep the channel open.
+          }
+        })
+        nextSocket.addEventListener('close', () => {
+          if (cancelled || socket !== nextSocket) return
+          socket = null
+          scheduleReconnect()
+        })
+      } catch {
+        // The UI feature can roll out before the server-side console gate. Preserve the existing
+        // RPC subscription until both switches are enabled.
+        if (!cancelled) startLegacySubscription()
+      }
+    }
+
+    if (realtimeConsole) void connectRealtime()
+    else startLegacySubscription()
+
+    return () => {
+      cancelled = true
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+      socket?.close(1000, 'Console subscriber unmounted.')
+      sub?.[Symbol.dispose]()
+    }
+  }, [overseer, realtimeConsole])
 
   // ── reload UI when preview branch/code changes ────────────────────────────────
   useEffect(() => {
@@ -1681,6 +1752,7 @@ export default function GadgetEditor() {
                   constrainChatWidth
                   onChatCountChange={handleChatCountChange}
                   onAgentActiveChange={handleAgentActiveChange}
+                  onComposerTransientStateChange={setHasComposerTransientState}
                   onAutoApproveChange={() => setAutoApproveReloadTrigger(t => t + 1)}
                   onHasAnyCodeChange={setHasAnyProposedChanges}
                   onSelectedChatHasProposedChangesChange={setSelectedChatHasProposedChanges}
@@ -1884,6 +1956,7 @@ export default function GadgetEditor() {
                   isAgentActive={isAgentActive}
                   isVisible={activeTab === 'code'}
                   onHasCodeChange={setHasCode}
+                  onHasPendingLocalEditsChange={setHasPendingLocalEdits}
                 />
               ) : (
                 <NoGadgetPlaceholder height="100%" />

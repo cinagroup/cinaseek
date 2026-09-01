@@ -71,6 +71,7 @@ describe('useWorkspaceOpen', () => {
     act(() => root?.unmount())
     container?.remove()
     document.title = ''
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -140,5 +141,148 @@ describe('useWorkspaceOpen', () => {
     expect(document.title).toBe('CinaSeek')
     expect(firstSubscriptionDispose).toHaveBeenCalledOnce()
     expect(deniedOverseerDispose).toHaveBeenCalledOnce()
+  })
+
+  it('releases a safe hidden workspace after the grace period and reopens it when visible', async () => {
+    vi.useFakeTimers()
+    let visibility: DocumentVisibilityState = 'visible'
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+
+    const firstOverseerDispose = vi.fn<() => void>()
+    const firstSubscriptionDispose = vi.fn<() => void>()
+    const secondOverseerDispose = vi.fn<() => void>()
+    const secondSubscriptionDispose = vi.fn<() => void>()
+    const makeOverseer = (
+      overseerDispose: ReturnType<typeof vi.fn<() => void>>,
+      subscriptionDispose: ReturnType<typeof vi.fn<() => void>>,
+    ) => disposableStub({
+      subscribeToMetadata: vi.fn<
+        (callback: (metadata: GadgetMetadata) => void) => Promise<RpcStub<{}>>
+      >(async callback => {
+          callback(METADATA)
+          return disposableStub({}, subscriptionDispose) as RpcStub<{}>
+        }),
+    }, overseerDispose) as unknown as RpcStub<Overseer>
+    const overseers = [
+      makeOverseer(firstOverseerDispose, firstSubscriptionDispose),
+      makeOverseer(secondOverseerDispose, secondSubscriptionDispose),
+    ]
+    const openGadget = vi.fn<() => RpcStub<Overseer>>(() => overseers.shift()!)
+    const authenticatedApi = { openGadget } as unknown as RpcStub<AuthenticatedApi>
+    let canSuspend = false
+
+    function Probe() {
+      const state = useWorkspaceOpen({
+        id: 'workspace-1',
+        authenticatedApi,
+        onInvalidShareKey: () => {},
+        onMetadata: () => {},
+        onShareKeyConsumed: () => {},
+        suspendWhenHidden: true,
+        canSuspend,
+        hiddenSuspendDelayMs: 0,
+      })
+      return <p>{state.suspended ? 'suspended' : state.metadata?.title}</p>
+    }
+
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    await act(async () => root!.render(<Probe />))
+    expect(openGadget).toHaveBeenCalledOnce()
+
+    visibility = 'hidden'
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.runAllTimersAsync()
+    })
+    expect(firstOverseerDispose).not.toHaveBeenCalled()
+
+    canSuspend = true
+    await act(async () => root!.render(<Probe />))
+    expect(document.visibilityState).toBe('hidden')
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.runAllTimersAsync()
+    })
+    expect(container.textContent).toBe('suspended')
+    expect(firstSubscriptionDispose).toHaveBeenCalledOnce()
+    expect(firstOverseerDispose).toHaveBeenCalledOnce()
+
+    visibility = 'visible'
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await Promise.resolve()
+    })
+    expect(openGadget).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Quarterly planning')
+
+    act(() => root!.unmount())
+    root = undefined
+    expect(secondSubscriptionDispose).toHaveBeenCalledOnce()
+    expect(secondOverseerDispose).toHaveBeenCalledOnce()
+  })
+
+  it('releases a safe visible workspace after an idle lease and reopens it on activity', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+
+    const firstOverseerDispose = vi.fn<() => void>()
+    const firstSubscriptionDispose = vi.fn<() => void>()
+    const secondOverseerDispose = vi.fn<() => void>()
+    const secondSubscriptionDispose = vi.fn<() => void>()
+    const makeOverseer = (
+      overseerDispose: ReturnType<typeof vi.fn<() => void>>,
+      subscriptionDispose: ReturnType<typeof vi.fn<() => void>>,
+    ) => disposableStub({
+      subscribeToMetadata: vi.fn<
+        (callback: (metadata: GadgetMetadata) => void) => Promise<RpcStub<{}>>
+      >(async callback => {
+          callback(METADATA)
+          return disposableStub({}, subscriptionDispose) as RpcStub<{}>
+        }),
+    }, overseerDispose) as unknown as RpcStub<Overseer>
+    const overseers = [
+      makeOverseer(firstOverseerDispose, firstSubscriptionDispose),
+      makeOverseer(secondOverseerDispose, secondSubscriptionDispose),
+    ]
+    const openGadget = vi.fn<() => RpcStub<Overseer>>(() => overseers.shift()!)
+    const authenticatedApi = { openGadget } as unknown as RpcStub<AuthenticatedApi>
+
+    function Probe() {
+      const state = useWorkspaceOpen({
+        id: 'workspace-1',
+        authenticatedApi,
+        onInvalidShareKey: () => {},
+        onMetadata: () => {},
+        onShareKeyConsumed: () => {},
+        suspendWhenIdle: true,
+        canSuspend: true,
+        idleSuspendDelayMs: 1_000,
+      })
+      return <p>{state.suspended ? 'suspended' : state.metadata?.title}</p>
+    }
+
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    await act(async () => root!.render(<Probe />))
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(container.textContent).toBe('suspended')
+    expect(firstSubscriptionDispose).toHaveBeenCalledOnce()
+    expect(firstOverseerDispose).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      window.dispatchEvent(new Event('pointerdown'))
+      await Promise.resolve()
+    })
+    expect(openGadget).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Quarterly planning')
+
+    act(() => root!.unmount())
+    root = undefined
+    expect(secondSubscriptionDispose).toHaveBeenCalledOnce()
+    expect(secondOverseerDispose).toHaveBeenCalledOnce()
   })
 })

@@ -88,6 +88,8 @@ export interface ChatOtClientDelegate {
   onLocalEditsDiscarded(): void
   /** Whether unacknowledged local edits are stuck behind a failing submission. */
   onDirtyState(hasUnsyncedEdits: boolean): void
+  /** Whether any local edit has not yet been confirmed by the server. */
+  onLocalEditsState(hasLocalEdits: boolean): void
   /** Unrecoverable failure (e.g. a base tree fetch failed); the view should show an error. */
   onFatalError(err: unknown): void
 }
@@ -239,6 +241,10 @@ export class ChatOtClient {
   /** Whether unacknowledged local edits exist (in flight or still pending). */
   hasLocalEdits(): boolean {
     return this.#inflight !== null || !isEmptyChange(this.#pending)
+  }
+
+  #notifyLocalEditsState(): void {
+    this.#delegate.onLocalEditsState(this.hasLocalEdits() || this.#localSeeds.size > 0)
   }
 
   /** Update the set of gadgets still pending (chat-created) in this chat. */
@@ -481,6 +487,7 @@ export class ChatOtClient {
       this.#inflight = null
       this.#submitBackoffMs = SUBMIT_RETRY_BASE_MS
       this.#delegate.onDirtyState(false)
+      this.#notifyLocalEditsState()
       this.#scheduleSubmit()
       if (events.length > 0) this.#delegate.onRemoteChange(events)
       return true
@@ -499,6 +506,7 @@ export class ChatOtClient {
       displayChange = a
       this.#pending = b
     }
+    this.#notifyLocalEditsState()
     this.#display = applyCodeChange(this.#display, displayChange)
     for (const [gadgetKey, entries] of Object.entries(displayChange)) {
       for (const [path, change] of entries) {
@@ -543,6 +551,7 @@ export class ChatOtClient {
     this.#inflight = null
     this.#submitBackoffMs = SUBMIT_RETRY_BASE_MS
     this.#delegate.onDirtyState(false)
+    this.#notifyLocalEditsState()
     this.#scheduleSubmit()
     return true
   }
@@ -627,6 +636,7 @@ export class ChatOtClient {
     this.#recomputeDisplay()
     this.#delegate.onRemoteChange([])
     if (droppedPending) this.#delegate.onLocalEditsDiscarded()
+    this.#notifyLocalEditsState()
     this.#scheduleSubmit()
     return "switched"
   }
@@ -680,6 +690,7 @@ export class ChatOtClient {
     this.#ready = true
     this.#recomputeDisplay()
     this.#delegate.onDirtyState(false)
+    this.#notifyLocalEditsState()
     this.#delegate.onRemoteChange([])
     await this.#drainHeldRows()
   }
@@ -728,6 +739,7 @@ export class ChatOtClient {
     if (this.#fatal || this.#disposed || !this.#ready || isEmptyChange(change)) return
     this.#display = applyCodeChange(this.#display, change)
     this.#pending = isEmptyChange(this.#pending) ? change : composeCodeChange(this.#pending, change)
+    this.#notifyLocalEditsState()
     this.#scheduleSubmit()
   }
 

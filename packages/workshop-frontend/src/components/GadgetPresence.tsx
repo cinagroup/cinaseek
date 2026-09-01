@@ -1,14 +1,40 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { Popover, Tooltip } from '@cloudflare/kumo'
 import { RpcStub, RpcTarget } from 'capnweb'
-import { Overseer, AuthenticatedApi, PresenceParticipant, PresenceSubscriber } from '@gadgets/workshop-shared/api'
+import {
+  REALTIME_PRESENCE_PROTOCOL,
+  type AuthenticatedApi,
+  type Overseer,
+  type PresenceParticipant,
+  type PresenceSubscriber,
+  type RealtimePresenceMessage,
+} from '@gadgets/workshop-shared/api'
 import { PersonAvatar } from './PersonAvatar'
+import { useUiFeatureFlag } from '../FeatureFlagsContext'
 
 const MAX_VISIBLE = 3
 
 const ROLE_LABELS: Record<PresenceParticipant['role'], string> = {
   build: 'Workspace',
   use: 'App only',
+}
+
+function parseRealtimePresenceMessage(value: unknown): RealtimePresenceMessage | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (record.type !== 'presence' || !Array.isArray(record.participants)) return null
+  for (const candidate of record.participants) {
+    if (!candidate || typeof candidate !== 'object') return null
+    const participant = candidate as Record<string, unknown>
+    const user = participant.user
+    if (typeof participant.key !== 'string' ||
+        (participant.role !== 'build' && participant.role !== 'use') ||
+        !user || typeof user !== 'object') return null
+    const author = user as Record<string, unknown>
+    if ((author.type !== 'user' && author.type !== 'agent' && author.type !== 'gadget') ||
+        typeof author.id !== 'string' || typeof author.name !== 'string') return null
+  }
+  return value as RealtimePresenceMessage
 }
 
 export function GadgetPresence({
@@ -21,10 +47,14 @@ export function GadgetPresence({
   currentUserId: string | null
 }) {
   const [participants, setParticipants] = useState<PresenceParticipant[]>([])
+  const { enabled: realtimePresence } = useUiFeatureFlag('realtime-presence')
 
   useEffect(() => {
     let cancelled = false
     let sub: RpcStub<{}> | null = null
+    let socket: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let reconnectDelay = 1_000
     const roster = new Map<string, PresenceParticipant>()
     const flush = () => {
       if (!cancelled) setParticipants([...roster.values()])
@@ -46,23 +76,74 @@ export function GadgetPresence({
       }
     }
 
-    const promise = overseer.subscribeToPresence(
-      new PresenceSubscriberImpl() as unknown as RpcStub<PresenceSubscriber>,
-    )
+    const startLegacySubscription = () => {
+      const promise = overseer.subscribeToPresence(
+        new PresenceSubscriberImpl() as unknown as RpcStub<PresenceSubscriber>,
+      )
 
-    promise.then((stub) => {
-      if (cancelled) {
-        stub[Symbol.dispose]()
-      } else {
-        sub = stub
+      promise.then((stub) => {
+        if (cancelled) {
+          stub[Symbol.dispose]()
+        } else {
+          sub = stub
+        }
+      }).catch(() => {})
+    }
+
+    const scheduleReconnect = () => {
+      if (cancelled || reconnectTimer !== null) return
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        void connectRealtime()
+      }, reconnectDelay)
+      reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
+    }
+
+    const connectRealtime = async () => {
+      try {
+        const connection = await overseer.openPresenceChannel()
+        if (cancelled) return
+        const url = new URL(connection.url, window.location.href)
+        url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+        const nextSocket = new WebSocket(url, [REALTIME_PRESENCE_PROTOCOL, connection.ticket])
+        socket = nextSocket
+        nextSocket.addEventListener('open', () => {
+          if (cancelled || socket !== nextSocket) return
+          reconnectDelay = 1_000
+          overseer.activatePresenceChannel().catch(() => nextSocket.close())
+        })
+        nextSocket.addEventListener('message', event => {
+          if (cancelled || socket !== nextSocket || typeof event.data !== 'string') return
+          try {
+            const message = parseRealtimePresenceMessage(JSON.parse(event.data))
+            if (message) setParticipants(message.participants)
+          } catch {
+            // Ignore malformed server frames; the next full snapshot is authoritative.
+          }
+        })
+        nextSocket.addEventListener('close', () => {
+          if (cancelled || socket !== nextSocket) return
+          socket = null
+          setParticipants([])
+          scheduleReconnect()
+        })
+      } catch {
+        // A deployment can enable the UI flag before installing its signing secret. Preserve the
+        // existing RPC subscription rather than turning a rollout mistake into missing presence.
+        if (!cancelled) startLegacySubscription()
       }
-    }).catch(() => {})
+    }
+
+    if (realtimePresence) void connectRealtime()
+    else startLegacySubscription()
 
     return () => {
       cancelled = true
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer)
+      socket?.close(1000, 'Presence component unmounted.')
       sub?.[Symbol.dispose]()
     }
-  }, [overseer])
+  }, [overseer, realtimePresence])
 
   // Avoid briefly showing the current user while whoami() is pending.
   const others = useMemo(

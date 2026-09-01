@@ -26,6 +26,7 @@ class TestHarness {
   fatal: unknown = null
   remoteEvents: RemoteFileEvent[][] = []
   dirty: boolean[] = []
+  localEdits: boolean[] = []
 
   readonly delegate: ChatOtClientDelegate = {
     fetchCommitFiles: async (commitId: string) => {
@@ -41,6 +42,7 @@ class TestHarness {
     onRemoteChange: events => { this.remoteEvents.push(events) },
     onLocalEditsDiscarded: () => { this.discards++ },
     onDirtyState: dirty => { this.dirty.push(dirty) },
+    onLocalEditsState: hasLocalEdits => { this.localEdits.push(hasLocalEdits) },
     onFatalError: err => { this.fatal = err },
   }
 
@@ -99,8 +101,10 @@ describe('ChatOtClient', () => {
     await flush()
 
     h.client.ensureGadgetEditable(1, 'head', new Map([['a.txt', 'abc']]))
+    h.localEdits.length = 0
     h.client.applyLocalChange({ 1: [['a.txt', { edit: [3, [0, 'd']] }]] })  // append "d"
     expect(filesOf(h.client.getContent(), 1)).toEqual({ 'a.txt': 'abcd' })
+    expect(h.localEdits).toContain(true)
 
     // Hold the RPC response so the echo row (which precedes it in reality) does the clearing.
     h.submitResult = () => new Promise(() => {})
@@ -126,6 +130,7 @@ describe('ChatOtClient', () => {
                          { clientId: submission.clientId, seq: submission.seq }))
     await flush()
     expect(h.client.hasLocalEdits()).toBe(false)
+    expect(h.localEdits.at(-1)).toBe(false)
     expect(filesOf(h.client.getContent(), 1)).toEqual({ 'a.txt': 'abcd' })
     // The echo changes nothing displayed, so it must deliver no notification at all -- in
     // particular not an empty events array, which means a coarse change and would make the code

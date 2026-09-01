@@ -107,6 +107,11 @@ export default function UsageSettings() {
                 limit: formatNumber(usage.dailyLimit),
               })}
             </p>
+            {usage.dailyReserved > 0 && (
+              <p className="text-xs text-kumo-subtle mt-1">
+                {t('billing.reserved', { count: usage.dailyReserved })}
+              </p>
+            )}
             {usage.resetAt && (
               <p className="text-xs text-kumo-subtle mt-1">
                 {t('billing.resetBefore')}<ResetCountdown resetAt={usage.resetAt} onElapsed={refresh} />{t('billing.resetAfter')}

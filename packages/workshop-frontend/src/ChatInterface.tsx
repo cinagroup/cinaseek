@@ -1925,6 +1925,7 @@ export const ChatInput = ({
   onStop,
   showThinkingTraces = true,
   onToggleThinkingTraces,
+  onTransientStateChange,
 }: {
   createCapsuleGatekeeper: (
     accountId: number,
@@ -1978,6 +1979,8 @@ export const ChatInput = ({
   onStop?: () => void;
   showThinkingTraces?: boolean;
   onToggleThinkingTraces?: () => void;
+  /** Reports attachments or a send in progress, which must survive before session suspension. */
+  onTransientStateChange?: (hasTransientState: boolean) => void;
   /** Show the "Pre-approve actions" menu item (only when there are uncovered candidates). */
   /** Open the pre-approval dialog (owned by the parent). */
   /** Called after a gatekeeper is connected via the attach flow, so the parent can refresh the
@@ -1991,6 +1994,12 @@ export const ChatInput = ({
     formatTokensFromDraft(initialDraft));
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
+
+  useEffect(() => {
+    onTransientStateChange?.(isSending || pendingAttachments.length > 0);
+  }, [isSending, onTransientStateChange, pendingAttachments.length]);
+
+  useEffect(() => () => onTransientStateChange?.(false), [onTransientStateChange]);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
   // leaving the chat dismisses it.
   const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
@@ -4489,6 +4498,7 @@ interface ChatInterfaceProps {
   onDiscardConsoleLogs: () => void;
   onChatCountChange?: (count: number, hasChatZero: boolean) => void;
   onAgentActiveChange?: (chatId: number, isActive: boolean) => void;
+  onComposerTransientStateChange?: (hasTransientState: boolean) => void;
   // Called after an auto-approval rule is enabled from the chat thread, so the Activity pane's
   // Auto-approval list reflects it without a reload.
   onAutoApproveChange?: () => void;
@@ -4673,6 +4683,7 @@ function ChatInterface({
   onDiscardConsoleLogs,
   onChatCountChange,
   onAgentActiveChange,
+  onComposerTransientStateChange,
   onAutoApproveChange,
   sidebarMode,
   sidebarWidth = 280,
@@ -8295,6 +8306,7 @@ function ChatInterface({
                     onStop={handleStop}
                     showThinkingTraces={showThinkingTraces}
                     onToggleThinkingTraces={toggleShowThinkingTraces}
+                    onTransientStateChange={onComposerTransientStateChange}
                     draftStorageKey={currentUser && workspaceId && selectedChatId !== null
                       ? composerDraftStorageKey(
                           currentUser.id,

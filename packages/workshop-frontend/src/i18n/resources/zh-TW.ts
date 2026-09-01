@@ -116,6 +116,7 @@ const zhTW: TranslationCatalog = {
       section: '用量與帳單', loading: '正在載入用量…', allowance: '每日免費額度',
       remaining_one: '今日剩餘 {{remaining}} / {{limit}} 次請求',
       remaining_other: '今日剩餘 {{remaining}} / {{limit}} 次請求',
+      reserved: '{{count}} 次額度正由進行中的任務預留',
       resetBefore: '額度將於 UTC 00:00 重設，還有', resetAfter: '。', cloudflareAccount: 'Cloudflare 帳戶',
       notConnected: '未連線',
       connectDescription: '連接 Cloudflare 帳戶後，即使免費額度用完也能繼續建立。超出免費額度的用量將從你自己的 Cloudflare AI Gateway 點數中扣除。',

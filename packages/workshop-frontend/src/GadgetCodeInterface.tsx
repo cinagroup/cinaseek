@@ -66,6 +66,7 @@ interface GadgetCodeInterfaceProps {
   isAgentActive: boolean
   isVisible?: boolean
   onHasCodeChange?: (hasCode: boolean) => void
+  onHasPendingLocalEditsChange?: (hasPendingLocalEdits: boolean) => void
 }
 
 const EMPTY_FILES: ReadonlyMap<string, string> = new Map()
@@ -171,7 +172,7 @@ function replaceSpanTextChange(
 export default function GadgetCodeInterface({
   overseer, workpieceId, headCommitId, height = '100%', selectedChatId = null, chatChanges,
   liveRows, liveEditPreviews, pendingGadgetIds, streamingActiveFile, isAgentActive,
-  isVisible = true, onHasCodeChange,
+  isVisible = true, onHasCodeChange, onHasPendingLocalEditsChange,
 }: GadgetCodeInterfaceProps) {
   const toasts = useKumoToastManager()
   const toastsRef = useRef(toasts)
@@ -236,6 +237,13 @@ export default function GadgetCodeInterface({
   const [clientError, setClientError] = useState(false)
   // Unacknowledged local edits are stuck behind a failing submission ("connection issue").
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [hasPendingLocalEdits, setHasPendingLocalEdits] = useState(false)
+
+  useEffect(() => {
+    onHasPendingLocalEditsChange?.(hasPendingLocalEdits)
+  }, [hasPendingLocalEdits, onHasPendingLocalEditsChange])
+
+  useEffect(() => () => onHasPendingLocalEditsChange?.(false), [onHasPendingLocalEditsChange])
 
   // Per-open-file remote-delta listeners, keyed by `${gadgetId}\u0000${path}` (see EditSession).
   const fileListenersRef = useRef(new Map<string, Set<(change: FileChange) => void>>())
@@ -351,6 +359,7 @@ export default function GadgetCodeInterface({
         })
       },
       onDirtyState: setHasUnsavedChanges,
+      onLocalEditsState: setHasPendingLocalEdits,
       onFatalError: err => {
         console.error('Chat code state failed to load:', err)
         reportIssue('code-view.ot-client', err, { handled: true })

@@ -220,6 +220,7 @@ const en = {
       allowance: 'Free daily allowance',
       remaining_one: '{{remaining}} of {{limit}} request remaining today',
       remaining_other: '{{remaining}} of {{limit}} requests remaining today',
+      reserved: '{{count}} currently reserved by in-progress runs',
       resetBefore: 'Resets at 00:00 UTC, in ',
       resetAfter: '.',
       cloudflareAccount: 'Cloudflare account',
