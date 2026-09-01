@@ -13,7 +13,7 @@ const MODEL_PROFILE: AiChatAuthorInfo = { type: "agent", id: MODEL_ID, name: "Sc
 const MODEL_CONFIG: AiModelConfig = {
   provider: "cloudflare",
   model: MODEL_ID,
-  accountId: "test-account",
+  accountId: "0123456789abcdef0123456789abcdef",
   apiToken: "test-token",
 };
 
