@@ -140,6 +140,17 @@ Every behavioral stage must be independently reversible without downgrading stor
 The first lifecycle changes are dark by default and are controlled through the existing UI
 feature-flag mechanism:
 
+Production self-hosted instances can attach their account-local Cloudflare Flagship app without
+putting its app ID in the reusable release manifest:
+
+    node scripts/deploy-cloudflare.mjs --domain example.com \
+      --flagship-app-id <app-uuid> [other production options]
+
+The generated, gitignored production config binds that app as `FLAGS`, and later deployments
+preserve the binding when the option is omitted. The source `wrangler.jsonc` and customer release
+manifest intentionally do not carry an app ID because Flagship apps are account-specific. An
+instance without the binding fails closed to the defaults below.
+
 | Flag | Default | Behaviour | Immediate rollback |
 | --- | --- | --- | --- |
 | `workspace-idle-suspension` | off | Dispose the Overseer subscription after a tab is hidden for 90 seconds or a visible tab is idle for five minutes, only when no agent run, attachment/send operation, or unacknowledged local edit is active. Reopen automatically on visibility or user activity. | Disable the flag; clients retain their existing Overseer connection. |

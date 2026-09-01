@@ -123,6 +123,14 @@ export function normalizeAccessAudience(value) {
   return audience;
 }
 
+export function normalizeFlagshipAppId(value) {
+  const appId = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(appId)) {
+    throw new Error("--flagship-app-id must be a Cloudflare Flagship app UUID");
+  }
+  return appId;
+}
+
 export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
   const normalizedDomain = normalizeDomain(domain);
   const normalizedIssuer = normalizeAccessIssuer(issuer);
@@ -264,7 +272,7 @@ function previousConfig(path) {
   return existsSync(path) ? readJsonc(path) : {};
 }
 
-function preserveProvisionedResources(config, previous) {
+export function preserveProvisionedResources(config, previous) {
   const previousKv = new Map(
       (previous.kv_namespaces ?? []).map((binding) => [binding.binding, binding]));
   config.kv_namespaces = (config.kv_namespaces ?? []).map(({ binding }) => ({
@@ -280,6 +288,16 @@ function preserveProvisionedResources(config, previous) {
       ? { bucket_name: previousR2.get(binding).bucket_name }
       : {}),
   }));
+
+  const previousFlagship = new Map(
+      (previous.flagship ?? []).map((binding) => [binding.binding, binding]));
+  const flagship = config.flagship ?? previous.flagship ?? [];
+  if (flagship.length > 0) {
+    config.flagship = flagship.map(({ binding, app_id: appId }) => ({
+      binding,
+      app_id: previousFlagship.get(binding)?.app_id ?? appId,
+    }));
+  }
 }
 
 function baseProductionConfig(root, packageName, workerName, previous) {
@@ -322,6 +340,7 @@ export function createInstanceConfigs({
   admin,
   accessIssuer,
   accessAudience,
+  flagshipAppId,
   aiGateway,
   aiGatewayAccountId,
   aiGatewayProviders,
@@ -342,6 +361,9 @@ export function createInstanceConfigs({
         audience: normalizeAccessAudience(accessAudience),
       }
     : undefined;
+  const flagship = flagshipAppId === undefined
+    ? undefined
+    : normalizeFlagshipAppId(flagshipAppId);
   const gateway = normalizeAiGatewayOptions({
     gateway: aiGateway,
     accountId: aiGatewayAccountId,
@@ -528,6 +550,9 @@ export function createInstanceConfigs({
       names.backend,
       previousConfig(configPaths["workshop-backend"]),
   );
+  if (flagship) {
+    backend.flagship = [{ binding: "FLAGS", app_id: flagship }];
+  }
   backend.vars = {
     ...backend.vars,
     PUBLIC_BASE_URL: publicBaseUrl,
@@ -776,6 +801,7 @@ export function parseArgs(argv) {
     admin: undefined,
     accessIssuer: undefined,
     accessAudience: undefined,
+    flagshipAppId: undefined,
     aiGateway: undefined,
     aiGatewayAccountId: undefined,
     aiGatewayProviders: undefined,
@@ -796,6 +822,7 @@ export function parseArgs(argv) {
     else if (argv[i] === "--admin") args.admin = readValue(argv[i], i++);
     else if (argv[i] === "--access-issuer") args.accessIssuer = readValue(argv[i], i++);
     else if (argv[i] === "--access-audience") args.accessAudience = readValue(argv[i], i++);
+    else if (argv[i] === "--flagship-app-id") args.flagshipAppId = readValue(argv[i], i++);
     else if (argv[i] === "--ai-gateway") args.aiGateway = readValue(argv[i], i++);
     else if (argv[i] === "--ai-gateway-account-id") {
       args.aiGatewayAccountId = readValue(argv[i], i++);
@@ -903,6 +930,7 @@ async function main() {
     admin: args.admin?.trim(),
     accessIssuer: args.accessIssuer,
     accessAudience: args.accessAudience,
+    flagshipAppId: args.flagshipAppId,
     aiGateway: args.aiGateway,
     aiGatewayAccountId: args.aiGatewayAccountId,
     aiGatewayProviders: args.aiGatewayProviders,

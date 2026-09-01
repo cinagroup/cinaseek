@@ -9,9 +9,11 @@ import {
   normalizeAccessIssuer,
   normalizeAiGatewayOptions,
   normalizeDomain,
+  normalizeFlagshipAppId,
   parseArgs,
   planAiGatewaySecret,
   planRequiredWorkerSecrets,
+  preserveProvisionedResources,
   verifyAccessEdge,
 } from "./deploy-cloudflare.mjs";
 
@@ -128,6 +130,14 @@ test("fails Access preflight before deploy when protection or keys are wrong", a
     issuer: "https://cinagroup.cloudflareaccess.com",
     fetchImpl: async () => wrongKeyResponses.shift(),
   }), /no RS256 signing key/);
+});
+
+test("normalizes and validates Cloudflare Flagship app IDs", () => {
+  assert.equal(
+      normalizeFlagshipAppId(" AB7716CE-3292-45EC-B654-E739E7815396 "),
+      "ab7716ce-3292-45ec-b654-e739e7815396",
+  );
+  assert.throws(() => normalizeFlagshipAppId("cinaseek-production"), /Flagship app UUID/);
 });
 
 test("normalizes and validates AI Gateway settings", () => {
@@ -359,6 +369,36 @@ test("creates an internal core topology with one public custom domain", () => {
     { binding: "BLUEPRINT_CONTENT" },
     { binding: "WORKSPACE_BLOBS" },
   ]);
+  assert.equal(instance.configs["workshop-backend"].flagship, undefined);
+});
+
+test("binds a production Flagship app when explicitly requested", () => {
+  const instance = createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    flagshipAppId: "ab7716ce-3292-45ec-b654-e739e7815396",
+    stateDir: join(ROOT, ".wrangler", "test-config-does-not-exist"),
+  });
+
+  assert.deepEqual(instance.configs["workshop-backend"].flagship, [{
+    binding: "FLAGS",
+    app_id: "ab7716ce-3292-45ec-b654-e739e7815396",
+  }]);
+});
+
+test("preserves an account-local Flagship binding across later deployments", () => {
+  const config = { kv_namespaces: [], r2_buckets: [] };
+  preserveProvisionedResources(config, {
+    flagship: [{
+      binding: "FLAGS",
+      app_id: "ab7716ce-3292-45ec-b654-e739e7815396",
+    }],
+  });
+
+  assert.deepEqual(config.flagship, [{
+    binding: "FLAGS",
+    app_id: "ab7716ce-3292-45ec-b654-e739e7815396",
+  }]);
 });
 
 test("adds an administrator only when explicitly requested", () => {

@@ -15,6 +15,9 @@ in one canary: attribution and rollback become ambiguous.
   Workflow, R2 bucket, AI funding route, and feature-flag cohort.
 - [ ] Confirm alerts route to an owner who can disable UI flags and change
   `WORKSPACE_BLOB_MODE` without deploying code.
+- [ ] Confirm the production backend has a `FLAGS` binding to its account-local Flagship app,
+  both rollout flags have default variation `off`, and the deployment operator has
+  `flagship:read` plus `flagship:write` permissions for emergency rollback.
 - [ ] Run `pnpm lint`, `pnpm build`, `pnpm test`, and the release-manifest golden test.
 - [ ] Record the previous release ID and current values of `workspace-idle-suspension`,
   `realtime-presence`, `REALTIME_CONSOLE_ENABLED`, `WORKSPACE_BLOB_MODE`, and
