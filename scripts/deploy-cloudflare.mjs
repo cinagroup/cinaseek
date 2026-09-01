@@ -131,6 +131,14 @@ export function normalizeFlagshipAppId(value) {
   return appId;
 }
 
+export function normalizePipelineStreamId(value) {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(normalized)) {
+    throw new Error("--product-analytics-stream-id must be a 32-character Pipeline Stream ID");
+  }
+  return normalized;
+}
+
 export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
   const normalizedDomain = normalizeDomain(domain);
   const normalizedIssuer = normalizeAccessIssuer(issuer);
@@ -331,6 +339,11 @@ export function preserveProvisionedResources(config, previous) {
       app_id: previousFlagship.get(binding)?.app_id ?? appId,
     }));
   }
+
+  const pipelines = config.pipelines ?? previous.pipelines ?? [];
+  if (pipelines.length > 0) {
+    config.pipelines = pipelines.map(({ binding, stream }) => ({ binding, stream }));
+  }
 }
 
 function baseProductionConfig(root, packageName, workerName, previous) {
@@ -374,6 +387,7 @@ export function createInstanceConfigs({
   accessIssuer,
   accessAudience,
   flagshipAppId,
+  productAnalyticsStreamId,
   aiGateway,
   aiGatewayAccountId,
   aiGatewayProviders,
@@ -397,6 +411,9 @@ export function createInstanceConfigs({
   const flagship = flagshipAppId === undefined
     ? undefined
     : normalizeFlagshipAppId(flagshipAppId);
+  const analyticsStream = productAnalyticsStreamId === undefined
+    ? undefined
+    : normalizePipelineStreamId(productAnalyticsStreamId);
   const gateway = normalizeAiGatewayOptions({
     gateway: aiGateway,
     accountId: aiGatewayAccountId,
@@ -585,6 +602,9 @@ export function createInstanceConfigs({
   );
   if (flagship) {
     backend.flagship = [{ binding: "FLAGS", app_id: flagship }];
+  }
+  if (analyticsStream) {
+    backend.pipelines = [{ binding: "PRODUCT_ANALYTICS", stream: analyticsStream }];
   }
   backend.vars = {
     ...backend.vars,
@@ -835,6 +855,7 @@ export function parseArgs(argv) {
     accessIssuer: undefined,
     accessAudience: undefined,
     flagshipAppId: undefined,
+    productAnalyticsStreamId: undefined,
     aiGateway: undefined,
     aiGatewayAccountId: undefined,
     aiGatewayProviders: undefined,
@@ -856,6 +877,9 @@ export function parseArgs(argv) {
     else if (argv[i] === "--access-issuer") args.accessIssuer = readValue(argv[i], i++);
     else if (argv[i] === "--access-audience") args.accessAudience = readValue(argv[i], i++);
     else if (argv[i] === "--flagship-app-id") args.flagshipAppId = readValue(argv[i], i++);
+    else if (argv[i] === "--product-analytics-stream-id") {
+      args.productAnalyticsStreamId = readValue(argv[i], i++);
+    }
     else if (argv[i] === "--ai-gateway") args.aiGateway = readValue(argv[i], i++);
     else if (argv[i] === "--ai-gateway-account-id") {
       args.aiGatewayAccountId = readValue(argv[i], i++);
@@ -964,6 +988,7 @@ async function main() {
     accessIssuer: args.accessIssuer,
     accessAudience: args.accessAudience,
     flagshipAppId: args.flagshipAppId,
+    productAnalyticsStreamId: args.productAnalyticsStreamId,
     aiGateway: args.aiGateway,
     aiGatewayAccountId: args.aiGatewayAccountId,
     aiGatewayProviders: args.aiGatewayProviders,

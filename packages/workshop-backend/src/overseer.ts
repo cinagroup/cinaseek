@@ -66,6 +66,11 @@ import {
   REALTIME_PRESENCE_TICKET_TTL_MS,
   signRealtimePresenceTicket,
 } from "./realtime-presence-ticket";
+import {
+  dynamicWorkerExecutionVersion,
+  resolveAgentMaxDurationMs,
+  resolveAgentMaxTurns,
+} from "./cost-controls";
 
 const logger = createWorkshopLogger("workshop.overseer");
 export const AGENT_RUNNING_ERROR_MESSAGE = "Agent is running, wait for it to finish.";
@@ -528,10 +533,6 @@ const MAX_CONFIGURED_WORKSPACE_ATTACHMENT_LIMIT_COUNT = 100_000;
 const MAX_STAGED_CHAT_ATTACHMENT_AGE_MS = 24 * 60 * 60 * 1000;
 const CHAT_ATTACHMENT_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const WORKSPACE_BLOB_DELETE_BATCH_SIZE = 1000;
-const DEFAULT_AGENT_MAX_TURNS = 30;
-const DEFAULT_AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
-const MIN_AGENT_MAX_DURATION_MS = 60 * 1000;
-const MAX_AGENT_MAX_DURATION_MS = 60 * 60 * 1000;
 
 function validateChatAttachmentId(id: string): string {
   if (!CHAT_ATTACHMENT_ID_REGEX.test(id)) throw new Error("Invalid chat attachment ID.");
@@ -4077,12 +4078,15 @@ class OverseerImpl implements AgentHooks {
       // Chat sequence numbers also advance for ordinary conversation. The executable snapshot is
       // instead identified by the code stream's generation/revision; capability-only changes are
       // covered independently by the per-gadget runtime revision.
-      executionVersion =
-          `preview.${chatId}.${codeBase.generation}.${codeBase.revision}.r${runtimeRevision}`;
+      executionVersion = dynamicWorkerExecutionVersion(mainlineCommitId, runtimeRevision, {
+        chatId,
+        generation: codeBase.generation,
+        revision: codeBase.revision,
+      });
     } else {
       // A git commit is immutable and already content-addressed. Using the gadget's own head avoids
       // changing every worker identity when an unrelated gadget advances its head.
-      executionVersion = `main.${mainlineCommitId ?? "empty"}.r${runtimeRevision}`;
+      executionVersion = dynamicWorkerExecutionVersion(mainlineCommitId, runtimeRevision);
     }
 
     let workerId = `${this.ctx.id}.${gadgetId}.${executionVersion}`;
@@ -6026,18 +6030,11 @@ class OverseerImpl implements AgentHooks {
   }
 
   #agentMaxTurns(): number {
-    let configured = Number(this.env.AGENT_MAX_TURNS);
-    return Number.isSafeInteger(configured) && configured >= 1 && configured <= 30
-      ? configured
-      : DEFAULT_AGENT_MAX_TURNS;
+    return resolveAgentMaxTurns(this.env.AGENT_MAX_TURNS);
   }
 
   #agentMaxDurationMs(): number {
-    let configured = Number(this.env.AGENT_MAX_DURATION_MS);
-    return Number.isSafeInteger(configured) && configured >= MIN_AGENT_MAX_DURATION_MS &&
-        configured <= MAX_AGENT_MAX_DURATION_MS
-      ? configured
-      : DEFAULT_AGENT_MAX_DURATION_MS;
+    return resolveAgentMaxDurationMs(this.env.AGENT_MAX_DURATION_MS);
   }
 
   async #runAgentTurnWithContext(chatId: number, aiModel: UserAiModelRecord,

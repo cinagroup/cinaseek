@@ -1,0 +1,34 @@
+{
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "event_ts",
+      "type": "timestamp",
+      "required": true
+    },
+    {
+      "name": "event_name",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "user_id",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "gadget_id",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "properties",
+      "type": "json",
+      "required": true
+    }
+  ]
+}

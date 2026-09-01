@@ -25,6 +25,7 @@ export default defineConfig({
             useSQLite: true,
           },
         },
+        r2Buckets: ['WORKSPACE_BLOBS'],
         bindings: {
           REALTIME_TICKET_SECRET: 'test-only-realtime-ticket-secret-32-bytes',
           REALTIME_CONSOLE_ENABLED: 'true',

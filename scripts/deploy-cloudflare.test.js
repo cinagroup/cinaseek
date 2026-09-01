@@ -10,6 +10,7 @@ import {
   normalizeAiGatewayOptions,
   normalizeDomain,
   normalizeFlagshipAppId,
+  normalizePipelineStreamId,
   parseArgs,
   planAiGatewaySecret,
   planRequiredWorkerSecrets,
@@ -148,6 +149,15 @@ test("normalizes and validates Cloudflare Flagship app IDs", () => {
       "ab7716ce-3292-45ec-b654-e739e7815396",
   );
   assert.throws(() => normalizeFlagshipAppId("cinaseek-production"), /Flagship app UUID/);
+});
+
+test("normalizes and validates Pipeline Stream IDs", () => {
+  assert.equal(
+      normalizePipelineStreamId(" 9DCF8722A58E453FB25E98EFB2ADEF63 "),
+      "9dcf8722a58e453fb25e98efb2adef63",
+  );
+  assert.throws(() => normalizePipelineStreamId("cinaseek_stream"),
+      /32-character Pipeline Stream ID/);
 });
 
 test("fails Access preflight when Gatekeeper OAuth is challenged", async () => {
@@ -417,6 +427,35 @@ test("preserves an account-local Flagship binding across later deployments", () 
   assert.deepEqual(config.flagship, [{
     binding: "FLAGS",
     app_id: "ab7716ce-3292-45ec-b654-e739e7815396",
+  }]);
+});
+
+test("preserves an account-local Pipeline binding across later deployments", () => {
+  const config = { kv_namespaces: [], r2_buckets: [] };
+  preserveProvisionedResources(config, {
+    pipelines: [{
+      binding: "PRODUCT_ANALYTICS",
+      stream: "9dcf8722a58e453fb25e98efb2adef63",
+    }],
+  });
+
+  assert.deepEqual(config.pipelines, [{
+    binding: "PRODUCT_ANALYTICS",
+    stream: "9dcf8722a58e453fb25e98efb2adef63",
+  }]);
+});
+
+test("binds Product Analytics when a Pipeline Stream is explicitly requested", () => {
+  const instance = createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    productAnalyticsStreamId: "9DCF8722A58E453FB25E98EFB2ADEF63",
+    stateDir: join(ROOT, ".wrangler", "test-config-does-not-exist"),
+  });
+
+  assert.deepEqual(instance.configs["workshop-backend"].pipelines, [{
+    binding: "PRODUCT_ANALYTICS",
+    stream: "9dcf8722a58e453fb25e98efb2adef63",
   }]);
 });
 
