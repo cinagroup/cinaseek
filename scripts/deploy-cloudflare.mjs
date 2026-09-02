@@ -139,6 +139,43 @@ export function normalizePipelineStreamId(value) {
   return normalized;
 }
 
+function normalizeDailyLlmCallLimit(value) {
+  const normalized = String(value).trim();
+  const parsed = Number(normalized);
+  if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error("--daily-llm-call-limit must be a positive integer");
+  }
+  return String(parsed);
+}
+
+function normalizeMinimumCloudflareBalance(value) {
+  const normalized = String(value).trim();
+  const parsed = Number(normalized);
+  if (!normalized || !Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("--minimum-cloudflare-balance must be a non-negative number");
+  }
+  return String(parsed);
+}
+
+function normalizeWorkspaceBlobMode(value) {
+  const normalized = String(value).trim().toLowerCase();
+  if (!new Set(["disabled", "mirror", "r2"]).has(normalized)) {
+    throw new Error("--workspace-blob-mode must be disabled, mirror, or r2");
+  }
+  return normalized;
+}
+
+function normalizePositiveInteger(value, option, maximum = Number.MAX_SAFE_INTEGER) {
+  const normalized = String(value).trim();
+  const parsed = Number(normalized);
+  if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(parsed) || parsed <= 0 ||
+      parsed > maximum) {
+    const suffix = maximum === Number.MAX_SAFE_INTEGER ? "" : ` no greater than ${maximum}`;
+    throw new Error(`${option} must be a positive integer${suffix}`);
+  }
+  return String(parsed);
+}
+
 export async function verifyAccessEdge({ domain, issuer, fetchImpl = fetch }) {
   const normalizedDomain = normalizeDomain(domain);
   const normalizedIssuer = normalizeAccessIssuer(issuer);
@@ -384,6 +421,14 @@ export function createInstanceConfigs({
   root = ROOT,
   domain: domainInput,
   admin,
+  clearAdmins = false,
+  cloudflareLimitsEnabled,
+  dailyLlmCallLimit,
+  minimumCloudflareBalance,
+  realtimeConsoleEnabled,
+  workspaceBlobMode,
+  workspaceAttachmentLimitBytes,
+  workspaceAttachmentLimitCount,
   accessIssuer,
   accessAudience,
   flagshipAppId,
@@ -397,6 +442,9 @@ export function createInstanceConfigs({
   stateDir: stateDirInput,
 } = {}) {
   const domain = normalizeDomain(domainInput);
+  if (admin !== undefined && clearAdmins) {
+    throw new Error("--admin and --clear-admins cannot be used together");
+  }
   const hasAccessIssuer = accessIssuer !== undefined;
   const hasAccessAudience = accessAudience !== undefined;
   if (hasAccessIssuer !== hasAccessAudience) {
@@ -594,11 +642,12 @@ export function createInstanceConfigs({
     EMAIL_DOMAIN: `mail.${domain}`,
   };
 
+  const previousBackend = previousConfig(configPaths["workshop-backend"]);
   const backend = baseProductionConfig(
       root,
       "workshop-backend",
       names.backend,
-      previousConfig(configPaths["workshop-backend"]),
+      previousBackend,
   );
   if (flagship) {
     backend.flagship = [{ binding: "FLAGS", app_id: flagship }];
@@ -609,7 +658,61 @@ export function createInstanceConfigs({
   backend.vars = {
     ...backend.vars,
     PUBLIC_BASE_URL: publicBaseUrl,
-    ...(admin ? { ADMINS: [admin] } : {}),
+    ...(admin
+      ? { ADMINS: [admin] }
+      : clearAdmins || previousBackend.vars?.ADMINS === undefined
+        ? {}
+        : { ADMINS: previousBackend.vars.ADMINS }),
+    ...(cloudflareLimitsEnabled !== undefined
+      ? { ENABLE_CLOUDFLARE_LIMITS: cloudflareLimitsEnabled ? "true" : "" }
+      : previousBackend.vars?.ENABLE_CLOUDFLARE_LIMITS === undefined
+        ? {}
+        : { ENABLE_CLOUDFLARE_LIMITS: previousBackend.vars.ENABLE_CLOUDFLARE_LIMITS }),
+    ...(dailyLlmCallLimit !== undefined
+      ? { DAILY_LLM_CALL_LIMIT: normalizeDailyLlmCallLimit(dailyLlmCallLimit) }
+      : previousBackend.vars?.DAILY_LLM_CALL_LIMIT === undefined
+        ? {}
+        : { DAILY_LLM_CALL_LIMIT: previousBackend.vars.DAILY_LLM_CALL_LIMIT }),
+    ...(minimumCloudflareBalance !== undefined
+      ? {
+          MINIMUM_CLOUDFLARE_BALANCE:
+            normalizeMinimumCloudflareBalance(minimumCloudflareBalance),
+        }
+      : previousBackend.vars?.MINIMUM_CLOUDFLARE_BALANCE === undefined
+        ? {}
+        : { MINIMUM_CLOUDFLARE_BALANCE: previousBackend.vars.MINIMUM_CLOUDFLARE_BALANCE }),
+    ...(realtimeConsoleEnabled !== undefined
+      ? { REALTIME_CONSOLE_ENABLED: realtimeConsoleEnabled ? "true" : "" }
+      : previousBackend.vars?.REALTIME_CONSOLE_ENABLED === undefined
+        ? {}
+        : { REALTIME_CONSOLE_ENABLED: previousBackend.vars.REALTIME_CONSOLE_ENABLED }),
+    ...(workspaceBlobMode !== undefined
+      ? { WORKSPACE_BLOB_MODE: normalizeWorkspaceBlobMode(workspaceBlobMode) }
+      : previousBackend.vars?.WORKSPACE_BLOB_MODE === undefined
+        ? {}
+        : { WORKSPACE_BLOB_MODE: previousBackend.vars.WORKSPACE_BLOB_MODE }),
+    ...(workspaceAttachmentLimitBytes !== undefined
+      ? {
+          WORKSPACE_ATTACHMENT_LIMIT_BYTES: normalizePositiveInteger(
+              workspaceAttachmentLimitBytes, "--workspace-attachment-limit-bytes"),
+        }
+      : previousBackend.vars?.WORKSPACE_ATTACHMENT_LIMIT_BYTES === undefined
+        ? {}
+        : {
+            WORKSPACE_ATTACHMENT_LIMIT_BYTES:
+              previousBackend.vars.WORKSPACE_ATTACHMENT_LIMIT_BYTES,
+          }),
+    ...(workspaceAttachmentLimitCount !== undefined
+      ? {
+          WORKSPACE_ATTACHMENT_LIMIT_COUNT: normalizePositiveInteger(
+              workspaceAttachmentLimitCount, "--workspace-attachment-limit-count", 100_000),
+        }
+      : previousBackend.vars?.WORKSPACE_ATTACHMENT_LIMIT_COUNT === undefined
+        ? {}
+        : {
+            WORKSPACE_ATTACHMENT_LIMIT_COUNT:
+              previousBackend.vars.WORKSPACE_ATTACHMENT_LIMIT_COUNT,
+          }),
     // These mode vars are always emitted because deploy uses --keep-vars for unrelated,
     // externally managed settings. Empty values explicitly clear a previous deployment's mode.
     CF_ACCESS_ISS: access?.issuer ?? "",
@@ -852,6 +955,14 @@ export function parseArgs(argv) {
   const args = {
     domain: undefined,
     admin: undefined,
+    clearAdmins: false,
+    cloudflareLimitsEnabled: undefined,
+    dailyLlmCallLimit: undefined,
+    minimumCloudflareBalance: undefined,
+    realtimeConsoleEnabled: undefined,
+    workspaceBlobMode: undefined,
+    workspaceAttachmentLimitBytes: undefined,
+    workspaceAttachmentLimitCount: undefined,
     accessIssuer: undefined,
     accessAudience: undefined,
     flagshipAppId: undefined,
@@ -874,6 +985,52 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--domain") args.domain = readValue(argv[i], i++);
     else if (argv[i] === "--admin") args.admin = readValue(argv[i], i++);
+    else if (argv[i] === "--clear-admins") args.clearAdmins = true;
+    else if (argv[i] === "--enable-cloudflare-limits") {
+      if (args.cloudflareLimitsEnabled === false) {
+        throw new Error(
+            "--enable-cloudflare-limits and --disable-cloudflare-limits cannot be used together");
+      }
+      args.cloudflareLimitsEnabled = true;
+    }
+    else if (argv[i] === "--disable-cloudflare-limits") {
+      if (args.cloudflareLimitsEnabled === true) {
+        throw new Error(
+            "--enable-cloudflare-limits and --disable-cloudflare-limits cannot be used together");
+      }
+      args.cloudflareLimitsEnabled = false;
+    }
+    else if (argv[i] === "--daily-llm-call-limit") {
+      args.dailyLlmCallLimit = normalizeDailyLlmCallLimit(readValue(argv[i], i++));
+    }
+    else if (argv[i] === "--minimum-cloudflare-balance") {
+      args.minimumCloudflareBalance = normalizeMinimumCloudflareBalance(readValue(argv[i], i++));
+    }
+    else if (argv[i] === "--enable-realtime-console") {
+      if (args.realtimeConsoleEnabled === false) {
+        throw new Error(
+            "--enable-realtime-console and --disable-realtime-console cannot be used together");
+      }
+      args.realtimeConsoleEnabled = true;
+    }
+    else if (argv[i] === "--disable-realtime-console") {
+      if (args.realtimeConsoleEnabled === true) {
+        throw new Error(
+            "--enable-realtime-console and --disable-realtime-console cannot be used together");
+      }
+      args.realtimeConsoleEnabled = false;
+    }
+    else if (argv[i] === "--workspace-blob-mode") {
+      args.workspaceBlobMode = normalizeWorkspaceBlobMode(readValue(argv[i], i++));
+    }
+    else if (argv[i] === "--workspace-attachment-limit-bytes") {
+      args.workspaceAttachmentLimitBytes = normalizePositiveInteger(
+          readValue(argv[i], i++), "--workspace-attachment-limit-bytes");
+    }
+    else if (argv[i] === "--workspace-attachment-limit-count") {
+      args.workspaceAttachmentLimitCount = normalizePositiveInteger(
+          readValue(argv[i], i++), "--workspace-attachment-limit-count", 100_000);
+    }
     else if (argv[i] === "--access-issuer") args.accessIssuer = readValue(argv[i], i++);
     else if (argv[i] === "--access-audience") args.accessAudience = readValue(argv[i], i++);
     else if (argv[i] === "--flagship-app-id") args.flagshipAppId = readValue(argv[i], i++);
@@ -896,6 +1053,9 @@ export function parseArgs(argv) {
   if (!args.domain) throw new Error("--domain <hostname> is required");
   if (args.admin !== undefined && !args.admin.trim()) {
     throw new Error("--admin must not be empty");
+  }
+  if (args.admin !== undefined && args.clearAdmins) {
+    throw new Error("--admin and --clear-admins cannot be used together");
   }
   return args;
 }
@@ -985,6 +1145,14 @@ async function main() {
   const instance = createInstanceConfigs({
     domain: args.domain,
     admin: args.admin?.trim(),
+    clearAdmins: args.clearAdmins,
+    cloudflareLimitsEnabled: args.cloudflareLimitsEnabled,
+    dailyLlmCallLimit: args.dailyLlmCallLimit,
+    minimumCloudflareBalance: args.minimumCloudflareBalance,
+    realtimeConsoleEnabled: args.realtimeConsoleEnabled,
+    workspaceBlobMode: args.workspaceBlobMode,
+    workspaceAttachmentLimitBytes: args.workspaceAttachmentLimitBytes,
+    workspaceAttachmentLimitCount: args.workspaceAttachmentLimitCount,
     accessIssuer: args.accessIssuer,
     accessAudience: args.accessAudience,
     flagshipAppId: args.flagshipAppId,

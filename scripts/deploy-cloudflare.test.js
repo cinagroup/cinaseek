@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import {
@@ -39,6 +41,76 @@ test("rejects deployment options whose values are missing", () => {
   assert.throws(() => parseArgs(["--domain", "--dry-run"]), /--domain requires a value/);
   assert.throws(() => parseArgs(["--domain", "cinaseek.ai", "--ai-gateway"]),
       /--ai-gateway requires a value/);
+  assert.throws(() => parseArgs(["--domain", "cinaseek.ai", "--daily-llm-call-limit"]),
+      /--daily-llm-call-limit requires a value/);
+  assert.throws(() => parseArgs(["--domain", "cinaseek.ai", "--minimum-cloudflare-balance"]),
+      /--minimum-cloudflare-balance requires a value/);
+  assert.throws(() => parseArgs(["--domain", "cinaseek.ai", "--workspace-blob-mode"]),
+      /--workspace-blob-mode requires a value/);
+  assert.throws(
+      () => parseArgs(["--domain", "cinaseek.ai", "--admin", "owner", "--clear-admins"]),
+      /cannot be used together/,
+  );
+  assert.throws(
+      () => parseArgs([
+        "--domain", "cinaseek.ai", "--enable-cloudflare-limits", "--disable-cloudflare-limits",
+      ]),
+      /cannot be used together/,
+  );
+  assert.throws(
+      () => parseArgs(["--domain", "cinaseek.ai", "--daily-llm-call-limit", "1.5"]),
+      /must be a positive integer/,
+  );
+  assert.throws(
+      () => parseArgs(["--domain", "cinaseek.ai", "--minimum-cloudflare-balance", "-1"]),
+      /must be a non-negative number/,
+  );
+  assert.throws(
+      () => parseArgs(["--domain", "cinaseek.ai", "--workspace-blob-mode", "invalid"]),
+      /must be disabled, mirror, or r2/,
+  );
+  assert.throws(
+      () => parseArgs([
+        "--domain", "cinaseek.ai", "--enable-realtime-console", "--disable-realtime-console",
+      ]),
+      /cannot be used together/,
+  );
+  assert.throws(
+      () => parseArgs([
+        "--domain", "cinaseek.ai", "--workspace-attachment-limit-count", "100001",
+      ]),
+      /no greater than 100000/,
+  );
+  assert.equal(parseArgs(["--domain", "cinaseek.ai", "--clear-admins"]).clearAdmins, true);
+  assert.deepEqual(
+      parseArgs([
+        "--domain", "cinaseek.ai", "--enable-cloudflare-limits",
+        "--daily-llm-call-limit", "100", "--minimum-cloudflare-balance", "2.00",
+      ]),
+      {
+        domain: "cinaseek.ai",
+        admin: undefined,
+        clearAdmins: false,
+        cloudflareLimitsEnabled: true,
+        dailyLlmCallLimit: "100",
+        minimumCloudflareBalance: "2",
+        realtimeConsoleEnabled: undefined,
+        workspaceBlobMode: undefined,
+        workspaceAttachmentLimitBytes: undefined,
+        workspaceAttachmentLimitCount: undefined,
+        accessIssuer: undefined,
+        accessAudience: undefined,
+        flagshipAppId: undefined,
+        productAnalyticsStreamId: undefined,
+        aiGateway: undefined,
+        aiGatewayAccountId: undefined,
+        aiGatewayProviders: undefined,
+        workersAiGateway: undefined,
+        workersAiDirect: false,
+        dryRun: false,
+        zoneRoute: false,
+      },
+  );
 });
 
 test("normalizes and validates Cloudflare Access settings", () => {
@@ -467,6 +539,127 @@ test("adds an administrator only when explicitly requested", () => {
     stateDir: join(ROOT, ".wrangler", "test-config-does-not-exist"),
   });
   assert.deepEqual(instance.configs["workshop-backend"].vars.ADMINS, ["owner"]);
+});
+
+test("preserves administrators across later deployments unless explicitly cleared", (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), "cinaseek-deploy-admins-"));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  writeFileSync(
+      join(stateDir, "workshop-backend.jsonc"),
+      JSON.stringify({ vars: { ADMINS: ["owner"] } }),
+  );
+
+  const preserved = createInstanceConfigs({ root: ROOT, domain: "cinaseek.ai", stateDir });
+  assert.deepEqual(preserved.configs["workshop-backend"].vars.ADMINS, ["owner"]);
+
+  const cleared = createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    clearAdmins: true,
+    stateDir,
+  });
+  assert.equal(cleared.configs["workshop-backend"].vars.ADMINS, undefined);
+});
+
+test("configures and preserves Cloudflare commercial limits unless explicitly disabled", (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), "cinaseek-deploy-limits-"));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+
+  const enabled = createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    cloudflareLimitsEnabled: true,
+    dailyLlmCallLimit: "100",
+    minimumCloudflareBalance: "2.00",
+    stateDir,
+  });
+  assert.equal(enabled.configs["workshop-backend"].vars.ENABLE_CLOUDFLARE_LIMITS, "true");
+  assert.equal(enabled.configs["workshop-backend"].vars.DAILY_LLM_CALL_LIMIT, "100");
+  assert.equal(enabled.configs["workshop-backend"].vars.MINIMUM_CLOUDFLARE_BALANCE, "2");
+
+  writeFileSync(
+      join(stateDir, "workshop-backend.jsonc"),
+      JSON.stringify({
+        vars: {
+          ENABLE_CLOUDFLARE_LIMITS: "true",
+          DAILY_LLM_CALL_LIMIT: "250",
+          MINIMUM_CLOUDFLARE_BALANCE: "5",
+        },
+      }),
+  );
+  const preserved = createInstanceConfigs({ root: ROOT, domain: "cinaseek.ai", stateDir });
+  assert.equal(preserved.configs["workshop-backend"].vars.ENABLE_CLOUDFLARE_LIMITS, "true");
+  assert.equal(preserved.configs["workshop-backend"].vars.DAILY_LLM_CALL_LIMIT, "250");
+  assert.equal(preserved.configs["workshop-backend"].vars.MINIMUM_CLOUDFLARE_BALANCE, "5");
+
+  const disabled = createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    cloudflareLimitsEnabled: false,
+    stateDir,
+  });
+  assert.equal(disabled.configs["workshop-backend"].vars.ENABLE_CLOUDFLARE_LIMITS, "");
+  assert.equal(disabled.configs["workshop-backend"].vars.DAILY_LLM_CALL_LIMIT, "250");
+  assert.equal(disabled.configs["workshop-backend"].vars.MINIMUM_CLOUDFLARE_BALANCE, "5");
+
+  assert.throws(() => createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    dailyLlmCallLimit: "0",
+    stateDir,
+  }), /must be a positive integer/);
+  assert.throws(() => createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    minimumCloudflareBalance: "NaN",
+    stateDir,
+  }), /must be a non-negative number/);
+});
+
+test("configures and preserves realtime and workspace attachment controls", (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), "cinaseek-deploy-workspace-controls-"));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+
+  const enabled = createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    realtimeConsoleEnabled: true,
+    workspaceBlobMode: "r2",
+    workspaceAttachmentLimitBytes: "1073741824",
+    workspaceAttachmentLimitCount: "2000",
+    stateDir,
+  });
+  const enabledVars = enabled.configs["workshop-backend"].vars;
+  assert.equal(enabledVars.REALTIME_CONSOLE_ENABLED, "true");
+  assert.equal(enabledVars.WORKSPACE_BLOB_MODE, "r2");
+  assert.equal(enabledVars.WORKSPACE_ATTACHMENT_LIMIT_BYTES, "1073741824");
+  assert.equal(enabledVars.WORKSPACE_ATTACHMENT_LIMIT_COUNT, "2000");
+
+  writeFileSync(
+      join(stateDir, "workshop-backend.jsonc"),
+      JSON.stringify({ vars: {
+        REALTIME_CONSOLE_ENABLED: "true",
+        WORKSPACE_BLOB_MODE: "mirror",
+        WORKSPACE_ATTACHMENT_LIMIT_BYTES: "2048",
+        WORKSPACE_ATTACHMENT_LIMIT_COUNT: "20",
+      } }),
+  );
+  const preserved = createInstanceConfigs({ root: ROOT, domain: "cinaseek.ai", stateDir });
+  const preservedVars = preserved.configs["workshop-backend"].vars;
+  assert.equal(preservedVars.REALTIME_CONSOLE_ENABLED, "true");
+  assert.equal(preservedVars.WORKSPACE_BLOB_MODE, "mirror");
+  assert.equal(preservedVars.WORKSPACE_ATTACHMENT_LIMIT_BYTES, "2048");
+  assert.equal(preservedVars.WORKSPACE_ATTACHMENT_LIMIT_COUNT, "20");
+
+  const disabled = createInstanceConfigs({
+    root: ROOT,
+    domain: "cinaseek.ai",
+    realtimeConsoleEnabled: false,
+    workspaceBlobMode: "disabled",
+    stateDir,
+  });
+  assert.equal(disabled.configs["workshop-backend"].vars.REALTIME_CONSOLE_ENABLED, "");
+  assert.equal(disabled.configs["workshop-backend"].vars.WORKSPACE_BLOB_MODE, "disabled");
 });
 
 test("uses a zone route when the hostname already has DNS records", () => {

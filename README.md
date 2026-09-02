@@ -192,7 +192,7 @@ If the hostname already has an A, AAAA, or CNAME record in the Cloudflare zone, 
 
     node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --zone-route
 
-The standalone path deploys the public router, backend, and the credential-free Context and Scheduler Gatekeepers. It keeps internal Workers off `workers.dev`, attaches the router either as the custom-domain origin or as an existing-zone route, and stores account-specific generated configuration under the gitignored `.wrangler/production/` directory. Password sign-in remains enabled by default. To grant an existing username deployment-admin access, add `--admin <username>` on a subsequent deploy; do not reserve a guessable admin name before its account exists. Third-party Gatekeepers should be added only after their OAuth credentials are provisioned.
+The standalone path deploys the public router, backend, and the credential-free Context and Scheduler Gatekeepers. It keeps internal Workers off `workers.dev`, attaches the router either as the custom-domain origin or as an existing-zone route, and stores account-specific generated configuration under the gitignored `.wrangler/production/` directory. Password sign-in remains enabled by default. To grant an existing username deployment-admin access, add `--admin <username>` on a subsequent deploy; do not reserve a guessable admin name before its account exists. Later deployments preserve that local instance's administrator binding when `--admin` is omitted; use `--clear-admins` only when intentionally removing all deployment administrators. Third-party Gatekeepers should be added only after their OAuth credentials are provisioned.
 
 To use Cloudflare Access, create and test the Access application and its Allow policies before switching the deployment. Then provide the application's team issuer and Audience (AUD) tag together:
 
@@ -209,6 +209,30 @@ To route deployment-managed models through Cloudflare AI Gateway, create or sele
     node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --zone-route --ai-gateway cinaseek --ai-gateway-account-id <cloudflare-account-id> --ai-gateway-providers openai,anthropic,google,openai-compatible
 
 The token environment variable is required on the first Gateway-enabled deployment and when rotating the secret. Later deployments reuse the existing Worker secret. On a completely new account, deploy the base Worker once without the Gateway flags first; Gateway deployment fails closed if it cannot verify the remote secret state. `openai-compatible` accepts a Cloudflare Custom Provider path such as `custom-internal/v1` plus its real model ID, avoiding the deprecated Gateway `/compat` API; outside Gateway mode it exposes any directly reachable OpenAI Chat Completions-compatible base URL. Workers AI inference is user-funded: users add their own Account ID and API Token and may explicitly contribute curated models to the shared credential pool. See [User-funded Workers AI](docs/workers-ai-credential-pool.md).
+
+To enable the optional commercial limit flow, set its production policy explicitly. The values are
+preserved by later standalone deployments when these flags are omitted; use
+`--disable-cloudflare-limits` only to turn enforcement off intentionally:
+
+    node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --zone-route \
+      --enable-cloudflare-limits --daily-llm-call-limit 100 \
+      --minimum-cloudflare-balance 2
+
+This grants each user 100 platform-funded LLM calls per UTC day, then requires a connected
+Cloudflare account with at least $2 of AI Gateway credit for BYOK continuation. The daily limit must
+be a positive integer; the balance threshold may be zero or greater. See
+[AI Gateway billing](docs/ai-gateway-billing.md) for routing and connection requirements.
+
+Production realtime console and workspace attachment controls are likewise explicit and preserved
+by later standalone deployments when omitted:
+
+    node scripts/deploy-cloudflare.mjs --domain cinaseek.ai --zone-route \
+      --enable-realtime-console --workspace-blob-mode r2 \
+      --workspace-attachment-limit-bytes 1073741824 \
+      --workspace-attachment-limit-count 2000
+
+Use `--disable-realtime-console` or `--workspace-blob-mode disabled` only for an intentional
+rollback. Attachment counts may not exceed 100,000.
 
 ### Run locally
 
