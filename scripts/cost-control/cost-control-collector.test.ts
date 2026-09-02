@@ -33,6 +33,7 @@ describe("cost-control collector", () => {
   });
 
   it("builds a complete healthy sample and carries the reservation ledger", async () => {
+    let baselineQueries = 0;
     const client = {
       async queryLogMetrics(from: Date, to: Date, events: string[]) {
         if (events.includes("realtime.ticket.config.invalid")) {
@@ -60,6 +61,7 @@ describe("cost-control collector", () => {
           ];
         }
         if (events.includes("cost.metric.workspace.reopen.finished")) {
+          baselineQueries++;
           return [{
             event: "cost.metric.workspace.reopen.finished",
             operation: "ok",
@@ -162,6 +164,17 @@ describe("cost-control collector", () => {
     assert.ok(Math.abs((collected.sample.unitCost?.perSuccessfulRun?.current ?? 0) - 0.1) < 1e-12);
     assert.ok(Math.abs((collected.sample.unitCost?.perSuccessfulRun?.baseline ?? 0) - 0.1) < 1e-12);
     assert.equal(Object.keys(collected.nextState.activeReservations).length, 1);
+    assert.equal(collected.nextState.workspaceReopenBaseline?.p95DurationMs, 100);
+    assert.equal(baselineQueries, 1);
+
+    const repeated = await collectCostControlSample(
+      client,
+      new Date("2026-09-02T04:52:00.000Z"),
+      collected.nextState,
+      { agentMaxDurationMs: 30 * 60_000, queryWorkspaceOrphanBytes: async () => 0 },
+    );
+    assert.equal(repeated.sample.workspaceReopens?.baselineP95DurationMs, 100);
+    assert.equal(baselineQueries, 1);
   });
 
   it("isolates one failed source and leaves its alert input absent", async () => {

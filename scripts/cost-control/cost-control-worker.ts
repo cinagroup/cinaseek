@@ -155,11 +155,34 @@ function parseCollectorState(value: unknown): CostControlCollectorState {
     }
     activeReservations[executionId] = timestamp;
   }
+  const baseline = value.workspaceReopenBaseline;
+  if (baseline !== undefined && (!isRecord(baseline) ||
+      !isIsoTimestamp(baseline.refreshedAt) ||
+      !isIsoTimestamp(baseline.windowFrom) ||
+      !isIsoTimestamp(baseline.windowTo) ||
+      Date.parse(baseline.windowFrom) >= Date.parse(baseline.windowTo) ||
+      (baseline.p95DurationMs !== undefined &&
+        (typeof baseline.p95DurationMs !== "number" ||
+         !Number.isFinite(baseline.p95DurationMs) || baseline.p95DurationMs < 0)))) {
+    throw new Error("persisted workspace reopen baseline is invalid");
+  }
   return {
     activeReservations,
     ...(value.lastReservationScanAt === undefined
       ? {}
       : { lastReservationScanAt: value.lastReservationScanAt as string }),
+    ...(baseline === undefined
+      ? {}
+      : {
+          workspaceReopenBaseline: {
+            refreshedAt: baseline.refreshedAt as string,
+            windowFrom: baseline.windowFrom as string,
+            windowTo: baseline.windowTo as string,
+            ...(baseline.p95DurationMs === undefined
+              ? {}
+              : { p95DurationMs: baseline.p95DurationMs as number }),
+          },
+        }),
   };
 }
 

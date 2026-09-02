@@ -92,9 +92,11 @@ inside that workspace.
   for a workspace it has successfully opened so another account cannot manufacture metrics for an
   unopened workspace.
 - The scheduled cost-control Worker evaluates reopen errors over a closed 30-minute window, compares
-  successful-reopen p95 latency with the preceding rolling seven-day baseline, and pages immediately
-  if a draft or attachment is reported lost. The strict abort thresholds are error rate above 0.5%,
-  p95 above baseline by more than 20%, or any loss report.
+  successful-reopen p95 latency with a daily-refreshed rolling seven-day baseline, and pages
+  immediately if a draft or attachment is reported lost. Caching that large baseline query in the
+  monitor's versioned KV state keeps the monitor from rescanning seven days every 15 minutes. The
+  strict abort thresholds are error rate above 0.5%, p95 above baseline by more than 20%, or any
+  loss report.
 
 ### Agent runs
 

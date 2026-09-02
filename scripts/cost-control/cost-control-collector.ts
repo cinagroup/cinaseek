@@ -60,6 +60,17 @@ export interface CostControlCollectorState {
   activeReservations: Record<string, number>;
   /** End of the last successfully ingested reservation event window. */
   lastReservationScanAt?: string;
+  /** Daily-refreshed seven-day workspace-reopen latency baseline. */
+  workspaceReopenBaseline?: {
+    /** Evaluation timestamp of the successful refresh. */
+    refreshedAt: string;
+    /** Inclusive start of the queried rolling window. */
+    windowFrom: string;
+    /** Exclusive end of the queried rolling window. */
+    windowTo: string;
+    /** Successful-reopen p95; absent when the completed window had no samples. */
+    p95DurationMs?: number;
+  };
 }
 
 /** A secret-free source failure that makes only the affected alert inconclusive. */
@@ -274,6 +285,9 @@ export async function collectCostControlSample(
   }
   const windows = planCostControlWindows(now, options.ingestionLagMs);
   const failures: CostControlSourceFailure[] = [];
+  const refreshWorkspaceReopenBaseline =
+    state.workspaceReopenBaseline === undefined ||
+    utcDate(new Date(state.workspaceReopenBaseline.refreshedAt)) !== utcDate(windows.observedAt);
 
   const sessionsPromise = capture("workspace_sessions", failures, () =>
     client.queryLogMetrics(
@@ -289,13 +303,15 @@ export async function collectCostControlSample(
       REOPEN_EVENTS,
       { groupByOperation: true, includeDurationP95: true },
     ));
-  const workspaceReopenBaselinePromise = capture("workspace_reopen_baseline", failures, () =>
-    client.queryLogMetrics(
-      windows.workspaceReopenBaseline.from,
-      windows.workspaceReopenBaseline.to,
-      ["cost.metric.workspace.reopen.finished"],
-      { groupByOperation: true, includeDurationP95: true },
-    ));
+  const workspaceReopenBaselinePromise = refreshWorkspaceReopenBaseline
+    ? capture("workspace_reopen_baseline", failures, () =>
+        client.queryLogMetrics(
+          windows.workspaceReopenBaseline.from,
+          windows.workspaceReopenBaseline.to,
+          ["cost.metric.workspace.reopen.finished"],
+          { groupByOperation: true, includeDurationP95: true },
+        ))
+    : Promise.resolve(null);
   const realtimePromise = capture("realtime", failures, () =>
     client.queryLogMetrics(
       windows.realtime.from,
@@ -409,23 +425,36 @@ export async function collectCostControlSample(
   ]);
 
   const sample: CostControlSample = { observedAt: windows.observedAt.toISOString() };
+  let nextWorkspaceReopenBaseline = state.workspaceReopenBaseline;
+  if (workspaceReopenBaseline !== undefined && workspaceReopenBaseline !== null) {
+    const p95DurationMs = metricP95(
+      workspaceReopenBaseline,
+      "cost.metric.workspace.reopen.finished",
+      "ok",
+    );
+    nextWorkspaceReopenBaseline = {
+      refreshedAt: windows.observedAt.toISOString(),
+      windowFrom: windows.workspaceReopenBaseline.from.toISOString(),
+      windowTo: windows.workspaceReopenBaseline.to.toISOString(),
+      ...(p95DurationMs === undefined ? {} : { p95DurationMs }),
+    };
+  }
+  const baselineForEvaluation = refreshWorkspaceReopenBaseline && workspaceReopenBaseline === undefined
+    ? undefined
+    : nextWorkspaceReopenBaseline;
   if (sessions) {
     sample.workspaceSessions = {
       started: metricCount(sessions, "cost.metric.workspace.session.started"),
       finished: metricCount(sessions, "cost.metric.workspace.session.finished"),
     };
   }
-  if (workspaceReopens && workspaceReopenBaseline) {
+  if (workspaceReopens && baselineForEvaluation) {
     const p95DurationMs = metricP95(
       workspaceReopens,
       "cost.metric.workspace.reopen.finished",
       "ok",
     );
-    const baselineP95DurationMs = metricP95(
-      workspaceReopenBaseline,
-      "cost.metric.workspace.reopen.finished",
-      "ok",
-    );
+    const baselineP95DurationMs = baselineForEvaluation.p95DurationMs;
     sample.workspaceReopens = {
       successful: metricCount(
         workspaceReopens,
@@ -576,6 +605,9 @@ export async function collectCostControlSample(
         : state.lastReservationScanAt
           ? { lastReservationScanAt: state.lastReservationScanAt }
           : {}),
+      ...(nextWorkspaceReopenBaseline === undefined
+        ? {}
+        : { workspaceReopenBaseline: nextWorkspaceReopenBaseline }),
     },
     failures,
   };

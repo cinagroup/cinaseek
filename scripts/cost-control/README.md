@@ -46,10 +46,12 @@ be configured as a Cloudflare Workers Observability saved-query alert on
 `realtime.ticket.config.invalid` or `realtime.workspace.mismatch`; the scheduled evaluator provides
 stateful incident/recovery evidence and catches delivery/configuration drift.
 
-The workspace-reopen alert reads a closed 30-minute outcome window and a rolling seven-day p95
-latency baseline that ends at the start of that window. It fires above a 0.5% error rate, above
-baseline by more than 20%, or on any `workspace.reopen.data_lost` event. A missing or zero baseline
-is `insufficient_data`, never healthy.
+The workspace-reopen alert reads a closed 30-minute outcome window and compares it with the latest
+rolling seven-day p95 latency baseline. Because a seven-day Workers Observability scan is materially
+larger than an outcome-window query, the baseline is refreshed at most once per UTC day and cached
+in the same versioned KV state; a failed refresh is retried and cannot recover an incident. It fires
+above a 0.5% error rate, above baseline by more than 20%, or on any
+`workspace.reopen.data_lost` event. A missing or zero baseline is `insufficient_data`, never healthy.
 
 Workspace blob integrity remains `insufficient_data` when either reconciliation binding is absent.
 Passing a hard-coded zero would create a false recovery and is not supported. A complete scan is
