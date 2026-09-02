@@ -28,6 +28,15 @@ Copy the example to an ignored production Wrangler file, replace its non-secret 
 the two secrets with `wrangler secret put`, and deploy with the repository-pinned Wrangler. Do not
 commit namespace IDs for customer instances or secret values.
 
+Before creating the KV namespace or deploying the Worker, export the four non-secret variables from
+the example config and run the fail-closed token preflight:
+
+    node scripts/cost-control/token-preflight.ts
+
+The command reads the token only from `CINASEEK_AI_GATEWAY_TOKEN`, exercises all four production
+capabilities, prints only `ok`, bounded HTTP-like statuses, and numeric provider codes, and exits 1
+unless every check passes. It never falls back to a broader token.
+
 The scheduled evaluator runs every 15 minutes. The immediate realtime security condition must also
 be configured as a Cloudflare Workers Observability saved-query alert on
 `realtime.ticket.config.invalid` or `realtime.workspace.mismatch`; the scheduled evaluator provides
