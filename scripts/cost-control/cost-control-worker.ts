@@ -96,6 +96,7 @@ export interface CostControlWorkerDependencies {
 const ALERT_IDS = new Set<CostControlAlertId>([
   "do_cost_per_active_workspace",
   "workspace_session_completion",
+  "workspace_reopen_slo",
   "realtime_security",
   "realtime_handshake_failure_rate",
   "workspace_blob_integrity",

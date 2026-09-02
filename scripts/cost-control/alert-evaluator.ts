@@ -1,7 +1,8 @@
-/** Stable identifiers for the eight production cost-control alerts. */
+/** Stable identifiers for the nine production cost-control alerts. */
 export type CostControlAlertId =
   | "do_cost_per_active_workspace"
   | "workspace_session_completion"
+  | "workspace_reopen_slo"
   | "realtime_security"
   | "realtime_handshake_failure_rate"
   | "workspace_blob_integrity"
@@ -29,6 +30,14 @@ export interface CostControlSample {
   doGbSecondsPerActiveWorkspace?: { current: number; baseline: number };
   /** Workspace session pair counts over the closed 30-minute window. */
   workspaceSessions?: { started: number; finished: number };
+  /** Client-observed workspace reopen outcomes and seven-day p95 baseline. */
+  workspaceReopens?: {
+    successful: number;
+    failed: number;
+    dataLosses: number;
+    p95DurationMs?: number;
+    baselineP95DurationMs?: number;
+  };
   /** Immediate security-significant realtime events. */
   realtimeSecurity?: { ticketConfigurationErrors: number; crossWorkspaceMismatches: number };
   /** Realtime handshake outcomes over the closed 15-minute window. */
@@ -172,6 +181,77 @@ function evaluateWorkspaceSessions(sample: CostControlSample): CostControlAlertR
         "workspace_session_completion",
         "ok",
         "Workspace session finish/start ratio is at least 95%.",
+        observed,
+      );
+}
+
+function evaluateWorkspaceReopens(sample: CostControlSample): CostControlAlertResult {
+  const values = sample.workspaceReopens;
+  if (!values || !validCounts([values.successful, values.failed, values.dataLosses])) {
+    return result(
+      "workspace_reopen_slo",
+      "insufficient_data",
+      "Workspace reopen outcome sample is absent or invalid.",
+    );
+  }
+  const total = values.successful + values.failed;
+  const failureRate = total > 0 ? values.failed / total : 0;
+  const observed: Record<string, number> = {
+    successful: values.successful,
+    failed: values.failed,
+    total,
+    failureRate,
+    dataLosses: values.dataLosses,
+  };
+  if (values.dataLosses > 0) {
+    return result(
+      "workspace_reopen_slo",
+      "firing",
+      "A workspace reopen reported lost draft or attachment state.",
+      observed,
+    );
+  }
+  if (total === 0) {
+    return result(
+      "workspace_reopen_slo",
+      "insufficient_data",
+      "Workspace reopen evaluation requires at least one outcome.",
+      observed,
+    );
+  }
+  if (failureRate > 0.005) {
+    return result(
+      "workspace_reopen_slo",
+      "firing",
+      "Workspace reopen error rate is above 0.5% for the closed 30-minute window.",
+      observed,
+    );
+  }
+  const p95 = values.p95DurationMs;
+  const baselineP95 = values.baselineP95DurationMs;
+  const ratio = p95 === undefined || baselineP95 === undefined
+    ? undefined
+    : growthRatio(p95, baselineP95);
+  if (ratio === undefined) {
+    return result(
+      "workspace_reopen_slo",
+      "insufficient_data",
+      "Workspace reopen latency requires finite p95 values and a positive seven-day baseline.",
+      observed,
+    );
+  }
+  Object.assign(observed, { p95DurationMs: p95, baselineP95DurationMs: baselineP95, ratio });
+  return ratio > 1.2
+    ? result(
+        "workspace_reopen_slo",
+        "firing",
+        "Workspace reopen p95 latency is more than 20% above the seven-day baseline.",
+        observed,
+      )
+    : result(
+        "workspace_reopen_slo",
+        "ok",
+        "Workspace reopen errors, latency, and client-state integrity are within thresholds.",
         observed,
       );
 }
@@ -430,7 +510,7 @@ function evaluateUnitCost(
   };
 }
 
-/** Evaluate all eight runbook alerts and derive incident/recovery edges. */
+/** Evaluate all nine runbook alerts and derive incident/recovery edges. */
 export function evaluateCostControlAlerts(
   sample: CostControlSample,
   previousState: CostControlAlertState = initialCostControlAlertState(),
@@ -444,6 +524,7 @@ export function evaluateCostControlAlerts(
   const results = [
     evaluateDoCost(sample),
     evaluateWorkspaceSessions(sample),
+    evaluateWorkspaceReopens(sample),
     evaluateRealtimeSecurity(sample),
     evaluateRealtimeHandshakes(sample),
     evaluateWorkspaceBlobs(sample),

@@ -16,6 +16,8 @@ describe("cost-control collector", () => {
     assert.equal(windows.realtime.to.toISOString(), "2026-09-02T04:30:00.000Z");
     assert.equal(windows.workspaceSessions.from.toISOString(), "2026-09-02T04:00:00.000Z");
     assert.equal(windows.workspaceSessions.to.toISOString(), "2026-09-02T04:30:00.000Z");
+    assert.equal(windows.workspaceReopenBaseline.from.toISOString(), "2026-08-26T04:00:00.000Z");
+    assert.equal(windows.workspaceReopenBaseline.to.toISOString(), "2026-09-02T04:00:00.000Z");
     assert.equal(windows.hour.from.toISOString(), "2026-09-02T03:00:00.000Z");
     assert.equal(windows.hour.to.toISOString(), "2026-09-02T04:00:00.000Z");
     assert.equal(windows.baselineHours[0].from.toISOString(), "2026-08-26T03:00:00.000Z");
@@ -40,6 +42,32 @@ describe("cost-control collector", () => {
           ];
         }
         if (events.includes("chat.attachment.r2.mirror.failed")) return [];
+        if (events.includes("workspace.reopen.data_lost")) {
+          return [
+            {
+              event: "cost.metric.workspace.reopen.finished",
+              operation: "ok",
+              count: 199,
+              durationMs: 0,
+              p95DurationMs: 120,
+            },
+            {
+              event: "cost.metric.workspace.reopen.finished",
+              operation: "error",
+              count: 1,
+              durationMs: 0,
+            },
+          ];
+        }
+        if (events.includes("cost.metric.workspace.reopen.finished")) {
+          return [{
+            event: "cost.metric.workspace.reopen.finished",
+            operation: "ok",
+            count: 1_000,
+            durationMs: 0,
+            p95DurationMs: 100,
+          }];
+        }
         if (events.includes("cost.metric.workspace.session.started")) {
           return [
             { event: "cost.metric.workspace.session.started", count: 100, durationMs: 0 },
@@ -107,6 +135,13 @@ describe("cost-control collector", () => {
 
     assert.deepEqual(collected.failures, []);
     assert.deepEqual(collected.sample.workspaceSessions, { started: 100, finished: 96 });
+    assert.deepEqual(collected.sample.workspaceReopens, {
+      successful: 199,
+      failed: 1,
+      dataLosses: 0,
+      p95DurationMs: 120,
+      baselineP95DurationMs: 100,
+    });
     assert.deepEqual(collected.sample.realtimeSecurity, {
       ticketConfigurationErrors: 0,
       crossWorkspaceMismatches: 0,

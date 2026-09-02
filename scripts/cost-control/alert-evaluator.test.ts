@@ -13,6 +13,13 @@ function healthySample(): CostControlSample {
     observedAt: OBSERVED_AT,
     doGbSecondsPerActiveWorkspace: { current: 12.9, baseline: 10 },
     workspaceSessions: { started: 100, finished: 95 },
+    workspaceReopens: {
+      successful: 199,
+      failed: 1,
+      dataLosses: 0,
+      p95DurationMs: 120,
+      baselineP95DurationMs: 100,
+    },
     realtimeSecurity: { ticketConfigurationErrors: 0, crossWorkspaceMismatches: 0 },
     realtimeHandshakes: { successful: 995, failed: 5 },
     workspaceBlobs: { mirrorFailures: 0, deletionFailures: 0, orphanBytes: 0 },
@@ -36,13 +43,14 @@ function healthySample(): CostControlSample {
 }
 
 describe("cost-control alert evaluator", () => {
-  it("treats exact thresholds as healthy and returns all eight alerts in stable order", () => {
+  it("treats exact thresholds as healthy and returns all nine alerts in stable order", () => {
     const evaluation = evaluateCostControlAlerts(healthySample());
 
-    assert.equal(evaluation.results.length, 8);
+    assert.equal(evaluation.results.length, 9);
     assert.deepEqual(evaluation.results.map(({ id }) => id), [
       "do_cost_per_active_workspace",
       "workspace_session_completion",
+      "workspace_reopen_slo",
       "realtime_security",
       "realtime_handshake_failure_rate",
       "workspace_blob_integrity",
@@ -50,7 +58,7 @@ describe("cost-control alert evaluator", () => {
       "usage_limit_or_stale_reservation",
       "unit_cost_growth",
     ]);
-    assert.deepEqual(evaluation.results.map(({ status }) => status), Array(8).fill("ok"));
+    assert.deepEqual(evaluation.results.map(({ status }) => status), Array(9).fill("ok"));
     assert.deepEqual(evaluation.transitions, []);
   });
 
@@ -58,6 +66,13 @@ describe("cost-control alert evaluator", () => {
     const sample = healthySample();
     sample.doGbSecondsPerActiveWorkspace = { current: 13.01, baseline: 10 };
     sample.workspaceSessions = { started: 100, finished: 94 };
+    sample.workspaceReopens = {
+      successful: 199,
+      failed: 1,
+      dataLosses: 1,
+      p95DurationMs: 120,
+      baselineP95DurationMs: 100,
+    };
     sample.realtimeSecurity = { ticketConfigurationErrors: 1, crossWorkspaceMismatches: 0 };
     sample.realtimeHandshakes = { successful: 994, failed: 6 };
     sample.workspaceBlobs = { mirrorFailures: 0, deletionFailures: 1, orphanBytes: 0 };
@@ -82,8 +97,40 @@ describe("cost-control alert evaluator", () => {
       lastUnitCostWindowId: "2026-09-02T03:00:00Z",
     });
 
-    assert.deepEqual(first.results.map(({ status }) => status), Array(8).fill("firing"));
-    assert.deepEqual(first.transitions.map(({ type }) => type), Array(8).fill("firing"));
+    assert.deepEqual(first.results.map(({ status }) => status), Array(9).fill("firing"));
+    assert.deepEqual(first.transitions.map(({ type }) => type), Array(9).fill("firing"));
+  });
+
+  it("fires the reopen alert independently for error-rate and p95 latency breaches", () => {
+    const errorSample = healthySample();
+    errorSample.workspaceReopens = {
+      successful: 198,
+      failed: 2,
+      dataLosses: 0,
+      p95DurationMs: 120,
+      baselineP95DurationMs: 100,
+    };
+    assert.equal(
+      evaluateCostControlAlerts(errorSample).results.find(
+        ({ id }) => id === "workspace_reopen_slo",
+      )?.reason,
+      "Workspace reopen error rate is above 0.5% for the closed 30-minute window.",
+    );
+
+    const latencySample = healthySample();
+    latencySample.workspaceReopens = {
+      successful: 200,
+      failed: 0,
+      dataLosses: 0,
+      p95DurationMs: 121,
+      baselineP95DurationMs: 100,
+    };
+    assert.equal(
+      evaluateCostControlAlerts(latencySample).results.find(
+        ({ id }) => id === "workspace_reopen_slo",
+      )?.reason,
+      "Workspace reopen p95 latency is more than 20% above the seven-day baseline.",
+    );
   });
 
   it("pages once, retains firing state through missing data, and emits one recovery", () => {

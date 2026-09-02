@@ -33,6 +33,8 @@ export interface LogMetricGroup {
   count: number;
   /** Sum of `durationMs` for matching events that carry it. */
   durationMs: number;
+  /** p95 of `durationMs` for matching events, when requested. */
+  p95DurationMs?: number;
 }
 
 /** Optional grouping dimensions for a Workers Observability calculation. */
@@ -41,6 +43,8 @@ export interface LogMetricQueryOptions {
   groupByOperation?: boolean;
   /** Query and merge `durationMs` sums separately so missing duration fields cannot erase counts. */
   includeDuration?: boolean;
+  /** Query and merge the p95 `durationMs` separately. */
+  includeDurationP95?: boolean;
 }
 
 /** One authoritative Durable Object hourly cost sample. */
@@ -248,6 +252,7 @@ function parseLogMetrics(value: unknown): LogMetricGroup[] {
       const row = merged.get(key) ?? { event, operation, count: 0, durationMs: 0 };
       if (calculation.alias === "count") row.count = aggregate.value;
       else if (calculation.alias === "durationMs") row.durationMs = aggregate.value;
+      else if (calculation.alias === "p95DurationMs") row.p95DurationMs = aggregate.value;
       else throw new CloudflareAlertMetricsError(502, "Unexpected observability calculation alias.");
       merged.set(key, row);
     }
@@ -407,7 +412,7 @@ export class CloudflareAlertMetricsClient {
           },
         }),
       });
-    const [countResult, durationResult] = await Promise.all([
+    const [countResult, durationResult, p95Result] = await Promise.all([
       query("cinaseek-cost-control-metric-counts", [
         { operator: "count", alias: "count" },
       ]),
@@ -419,16 +424,27 @@ export class CloudflareAlertMetricsClient {
             alias: "durationMs",
           }])
         : Promise.resolve(undefined),
+      options.includeDurationP95
+        ? query("cinaseek-cost-control-metric-p95-durations", [{
+            operator: "p95",
+            key: "durationMs",
+            keyType: "number",
+            alias: "p95DurationMs",
+          }])
+        : Promise.resolve(undefined),
     ]);
     const countCalculations = countResult.calculations;
     const durationCalculations = durationResult?.calculations;
+    const p95Calculations = p95Result?.calculations;
     if (!Array.isArray(countCalculations) ||
-        (durationCalculations !== undefined && !Array.isArray(durationCalculations))) {
+        (durationCalculations !== undefined && !Array.isArray(durationCalculations)) ||
+        (p95Calculations !== undefined && !Array.isArray(p95Calculations))) {
       throw new CloudflareAlertMetricsError(502, "Invalid observability calculations.");
     }
     return parseLogMetrics([
       ...countCalculations,
       ...(durationCalculations ?? []),
+      ...(p95Calculations ?? []),
     ]);
   }
 

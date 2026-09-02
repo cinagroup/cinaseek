@@ -44,10 +44,19 @@ describe("Cloudflare alert metrics client", () => {
                 ],
               }],
             }]
-            : [{
+            : alias === "durationMs" ? [{
               alias: "durationMs",
               aggregates: [{
                 value: 1200,
+                groups: [
+                  { key: "event", value: "cost.metric.agent.run.finished" },
+                  { key: "operation", value: "ok" },
+                ],
+              }],
+            }] : [{
+              alias: "p95DurationMs",
+              aggregates: [{
+                value: 950,
                 groups: [
                   { key: "event", value: "cost.metric.agent.run.finished" },
                   { key: "operation", value: "ok" },
@@ -62,7 +71,7 @@ describe("Cloudflare alert metrics client", () => {
       FROM,
       TO,
       ["cost.metric.agent.run.finished", "cost.metric.workspace.session.started"],
-      { groupByOperation: true, includeDuration: true },
+      { groupByOperation: true, includeDuration: true, includeDurationP95: true },
     );
 
     assert.deepEqual(rows, [{
@@ -70,8 +79,9 @@ describe("Cloudflare alert metrics client", () => {
       operation: "ok",
       count: 4,
       durationMs: 1200,
+      p95DurationMs: 950,
     }]);
-    assert.equal(requests.length, 2);
+    assert.equal(requests.length, 3);
     assert.match(requests[0].url, /workers\/observability\/telemetry\/query$/);
     const body = JSON.parse(String(requests[0].init?.body));
     assert.deepEqual(body.parameters.filters[0], {

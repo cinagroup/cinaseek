@@ -42,6 +42,8 @@ export interface CostControlWindows {
   realtime: DateRange;
   /** Last complete 30-minute window. */
   workspaceSessions: DateRange;
+  /** Seven-day rolling baseline ending where the workspace-reopen window begins. */
+  workspaceReopenBaseline: DateRange;
   /** Last complete UTC hour. */
   hour: DateRange;
   /** Same UTC hour on each of the previous seven days. */
@@ -116,6 +118,7 @@ export function planCostControlWindows(
   const safeNow = now.valueOf() - ingestionLagMs;
   const realtimeEnd = floorDate(safeNow, 15 * MINUTE_MS);
   const sessionEnd = floorDate(safeNow, 30 * MINUTE_MS);
+  const workspaceSessions = rangeEndingAt(sessionEnd, 30 * MINUTE_MS);
   const hourEnd = floorDate(safeNow, HOUR_MS);
   const hour = rangeEndingAt(hourEnd, HOUR_MS);
   const baselineHours = Array.from({ length: 7 }, (_, index) => ({
@@ -128,7 +131,11 @@ export function planCostControlWindows(
   return {
     observedAt: new Date(safeNow),
     realtime: rangeEndingAt(realtimeEnd, 15 * MINUTE_MS),
-    workspaceSessions: rangeEndingAt(sessionEnd, 30 * MINUTE_MS),
+    workspaceSessions,
+    workspaceReopenBaseline: {
+      from: new Date(workspaceSessions.from.valueOf() - 7 * DAY_MS),
+      to: workspaceSessions.from,
+    },
     hour,
     baselineHours,
     currentSevenDays: {
@@ -155,6 +162,17 @@ function metricCount(rows: LogMetricGroup[], event: string, operation?: string):
 function metricDuration(rows: LogMetricGroup[], event: string): number {
   return rows.filter(row => row.event === event)
     .reduce((total, row) => total + row.durationMs, 0);
+}
+
+function metricP95(
+  rows: LogMetricGroup[],
+  event: string,
+  operation: string,
+): number | undefined {
+  const values = rows
+    .filter(row => row.event === event && row.operation === operation)
+    .flatMap(row => row.p95DurationMs === undefined ? [] : [row.p95DurationMs]);
+  return values.length === 1 && finiteNonNegative(values[0]) ? values[0] : undefined;
 }
 
 function mean(values: number[]): number | undefined {
@@ -222,6 +240,10 @@ const SESSION_EVENTS = [
   "cost.metric.workspace.session.started",
   "cost.metric.workspace.session.finished",
 ];
+const REOPEN_EVENTS = [
+  "cost.metric.workspace.reopen.finished",
+  "workspace.reopen.data_lost",
+];
 const REALTIME_EVENTS = [
   "realtime.ticket.config.invalid",
   "realtime.workspace.mismatch",
@@ -239,7 +261,7 @@ const HOURLY_EVENTS = [
   "cost.metric.workspace.session.finished",
 ];
 
-/** Collect all eight alert inputs while isolating failures to their dependent alert. */
+/** Collect all nine alert inputs while isolating failures to their dependent alert. */
 export async function collectCostControlSample(
   client: CloudflareAlertMetricsClient,
   now: Date,
@@ -259,6 +281,20 @@ export async function collectCostControlSample(
       windows.workspaceSessions.to,
       SESSION_EVENTS,
       { groupByOperation: true },
+    ));
+  const workspaceReopensPromise = capture("workspace_reopens", failures, () =>
+    client.queryLogMetrics(
+      windows.workspaceSessions.from,
+      windows.workspaceSessions.to,
+      REOPEN_EVENTS,
+      { groupByOperation: true, includeDurationP95: true },
+    ));
+  const workspaceReopenBaselinePromise = capture("workspace_reopen_baseline", failures, () =>
+    client.queryLogMetrics(
+      windows.workspaceReopenBaseline.from,
+      windows.workspaceReopenBaseline.to,
+      ["cost.metric.workspace.reopen.finished"],
+      { groupByOperation: true, includeDurationP95: true },
     ));
   const realtimePromise = capture("realtime", failures, () =>
     client.queryLogMetrics(
@@ -336,6 +372,8 @@ export async function collectCostControlSample(
 
   const [
     sessions,
+    workspaceReopens,
+    workspaceReopenBaseline,
     realtime,
     blobEvents,
     currentDoRows,
@@ -352,6 +390,8 @@ export async function collectCostControlSample(
     orphanBytes,
   ] = await Promise.all([
     sessionsPromise,
+    workspaceReopensPromise,
+    workspaceReopenBaselinePromise,
     realtimePromise,
     blobPromise,
     currentDoPromise,
@@ -373,6 +413,33 @@ export async function collectCostControlSample(
     sample.workspaceSessions = {
       started: metricCount(sessions, "cost.metric.workspace.session.started"),
       finished: metricCount(sessions, "cost.metric.workspace.session.finished"),
+    };
+  }
+  if (workspaceReopens && workspaceReopenBaseline) {
+    const p95DurationMs = metricP95(
+      workspaceReopens,
+      "cost.metric.workspace.reopen.finished",
+      "ok",
+    );
+    const baselineP95DurationMs = metricP95(
+      workspaceReopenBaseline,
+      "cost.metric.workspace.reopen.finished",
+      "ok",
+    );
+    sample.workspaceReopens = {
+      successful: metricCount(
+        workspaceReopens,
+        "cost.metric.workspace.reopen.finished",
+        "ok",
+      ),
+      failed: metricCount(
+        workspaceReopens,
+        "cost.metric.workspace.reopen.finished",
+        "error",
+      ),
+      dataLosses: metricCount(workspaceReopens, "workspace.reopen.data_lost"),
+      ...(p95DurationMs === undefined ? {} : { p95DurationMs }),
+      ...(baselineP95DurationMs === undefined ? {} : { baselineP95DurationMs }),
     };
   }
   if (realtime) {

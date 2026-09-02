@@ -1,6 +1,6 @@
 # Production cost-control alerts
 
-This directory contains the independent scheduled evaluator for the eight alerts in
+This directory contains the independent scheduled evaluator for the nine alerts in
 `docs/cost-control-runbook.md`. It is deliberately outside `packages/`: the current customer
 release manifest only classifies the Workshop Backend, Router, and gatekeepers, so adding an
 unclassified deployable package would break release generation.
@@ -45,6 +45,11 @@ The scheduled evaluator runs every 15 minutes. The immediate realtime security c
 be configured as a Cloudflare Workers Observability saved-query alert on
 `realtime.ticket.config.invalid` or `realtime.workspace.mismatch`; the scheduled evaluator provides
 stateful incident/recovery evidence and catches delivery/configuration drift.
+
+The workspace-reopen alert reads a closed 30-minute outcome window and a rolling seven-day p95
+latency baseline that ends at the start of that window. It fires above a 0.5% error rate, above
+baseline by more than 20%, or on any `workspace.reopen.data_lost` event. A missing or zero baseline
+is `insufficient_data`, never healthy.
 
 Workspace blob integrity remains `insufficient_data` when either reconciliation binding is absent.
 Passing a hard-coded zero would create a false recovery and is not supported. A complete scan is

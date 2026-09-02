@@ -86,6 +86,15 @@ inside that workspace.
   WebSocket timeout from turning an otherwise idle tab into an expensive reconnect/replay loop.
   Workspace stubs are disposed independently by the 90-second hidden and five-minute visible-idle
   leases, so the transport heartbeat does not keep a suspended Workspace Durable Object active.
+- `workspace_reopen_finished` records the client-observed outcome and latency after one of those
+  leases resumes. It also carries bounded `draft_state` and `attachment_state` integrity outcomes,
+  never composer contents or attachment metadata. The authenticated connection accepts reports only
+  for a workspace it has successfully opened so another account cannot manufacture metrics for an
+  unopened workspace.
+- The scheduled cost-control Worker evaluates reopen errors over a closed 30-minute window, compares
+  successful-reopen p95 latency with the preceding rolling seven-day baseline, and pages immediately
+  if a draft or attachment is reported lost. The strict abort thresholds are error rate above 0.5%,
+  p95 above baseline by more than 20%, or any loss report.
 
 ### Agent runs
 
