@@ -466,6 +466,12 @@ function AuthenticatedGadgetEditor({
   const [isAgentActive, setIsAgentActive] = useState(false)
   const [hasPendingLocalEdits, setHasPendingLocalEdits] = useState(false)
   const [hasComposerTransientState, setHasComposerTransientState] = useState(false)
+  const [composerIntegrity, setComposerIntegrity] = useState({
+    draftPresent: false,
+    attachmentPresent: false,
+  })
+  const composerIntegrityRef = useRef(composerIntegrity)
+  composerIntegrityRef.current = composerIntegrity
   const { enabled: suspendHiddenWorkspaces } = useUiFeatureFlag('workspace-idle-suspension')
   const { enabled: realtimeConsole } = useUiFeatureFlag('realtime-presence')
 
@@ -500,6 +506,7 @@ function AuthenticatedGadgetEditor({
     suspendWhenHidden: suspendHiddenWorkspaces,
     suspendWhenIdle: suspendHiddenWorkspaces,
     canSuspend: !isAgentActive && !hasPendingLocalEdits && !hasComposerTransientState,
+    getReopenIntegritySnapshot: () => composerIntegrityRef.current,
   })
   const [userInfo, setUserInfo] = useState<AiChatAuthorInfo | null>(null)
 
@@ -1765,6 +1772,7 @@ function AuthenticatedGadgetEditor({
                   onChatCountChange={handleChatCountChange}
                   onAgentActiveChange={handleAgentActiveChange}
                   onComposerTransientStateChange={setHasComposerTransientState}
+                  onComposerIntegrityStateChange={setComposerIntegrity}
                   onAutoApproveChange={() => setAutoApproveReloadTrigger(t => t + 1)}
                   onHasAnyCodeChange={setHasAnyProposedChanges}
                   onSelectedChatHasProposedChangesChange={setSelectedChatHasProposedChanges}

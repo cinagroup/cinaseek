@@ -39,6 +39,38 @@ describe("recordAnalytics", () => {
     info.mockRestore();
   });
 
+  it("logs reopen SLO dimensions and a separate data-loss signal without identifiers", () => {
+    let info = vi.spyOn(console, "info").mockImplementation(() => {});
+    let error = vi.spyOn(console, "error").mockImplementation(() => {});
+    let { ctx } = testContext();
+
+    recordAnalytics(ctx, {} as Cloudflare.Env, {
+      event_name: "workspace_reopen_finished",
+      user_id: "must-not-log-user",
+      gadget_id: "must-not-log-workspace",
+      duration_ms: 4321,
+      outcome: "ok",
+      draft_state: "lost",
+      attachment_state: "not_present",
+    });
+
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      component: "workshop.analytics",
+      event: "cost.metric.workspace.reopen.finished",
+      durationMs: 4321,
+      operation: "ok",
+      draftState: "lost",
+      attachmentState: "not_present",
+    }));
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({
+      event: "workspace.reopen.data_lost",
+      operation: "draft",
+    }));
+    expect(JSON.stringify([...info.mock.calls, ...error.mock.calls])).not.toContain("must-not-log");
+    info.mockRestore();
+    error.mockRestore();
+  });
+
   it("hoists common fields and keeps operational dimensions in properties", async () => {
     let sent: ProductAnalyticsRecord[][] = [];
     let send = vi.fn(async (records: ProductAnalyticsRecord[]) => {

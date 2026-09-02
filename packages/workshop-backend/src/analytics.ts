@@ -14,6 +14,7 @@ export type ProductAnalyticsConnectionType = "gatekeeper" | "ai_model" | "agent_
 // - connection_created/removed: gatekeeper, AI model, or agent spawner connections changed.
 // - blueprint_created/imported: blueprint lifecycle events.
 // - workspace_session_started/finished: billable workspace RPC-session lifetime proxies.
+// - workspace_reopen_finished: client-observed lifecycle suspension recovery.
 // - agent_run_started/finished: durable agent-turn lifetime and outcome.
 // - dynamic_worker_requested: the stable identity passed to the Worker Loader API.
 //
@@ -107,6 +108,15 @@ export type ProductAnalyticsOperationalInput =
       outcome: "closed" | "connection_lost";
     }
   | {
+      event_name: "workspace_reopen_finished";
+      user_id: string;
+      gadget_id: string;
+      duration_ms: number;
+      outcome: "ok" | "error";
+      draft_state: "not_present" | "preserved" | "lost" | "unknown";
+      attachment_state: "not_present" | "preserved" | "lost" | "unknown";
+    }
+  | {
       event_name: "agent_run_started";
       user_id: string;
       gadget_id: string;
@@ -167,6 +177,23 @@ function recordCostControlMetric(event: ProductAnalyticsInput): void {
         durationMs: event.duration_ms,
         operation: event.outcome,
       });
+      return;
+    case "workspace_reopen_finished":
+      logger.info("workspace reopen finished", {
+        event: "cost.metric.workspace.reopen.finished",
+        durationMs: event.duration_ms,
+        operation: event.outcome,
+        draftState: event.draft_state,
+        attachmentState: event.attachment_state,
+      });
+      if (event.draft_state === "lost" || event.attachment_state === "lost") {
+        logger.error("workspace reopen lost client state", {
+          event: "workspace.reopen.data_lost",
+          operation: event.draft_state === "lost" && event.attachment_state === "lost"
+            ? "draft_and_attachment"
+            : event.draft_state === "lost" ? "draft" : "attachment",
+        });
+      }
       return;
     case "agent_run_finished":
       logger.info("agent run finished", {

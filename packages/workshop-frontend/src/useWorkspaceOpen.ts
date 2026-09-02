@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { RpcStub, RpcTarget } from 'capnweb'
 import type {
   AuthenticatedApi,
@@ -7,6 +7,7 @@ import type {
   ObserverBindingNeed,
   ObserverConfigCallback,
   Overseer,
+  WorkspaceReopenDataState,
 } from '@gadgets/workshop-shared/api'
 import { reportIssue } from './errorReporting'
 import { linkActionLog } from './useActions'
@@ -28,6 +29,29 @@ type ObserverConfigState = {
   reject: (error: unknown) => void
 }
 
+type ReopenIntegritySnapshot = {
+  draftPresent: boolean
+  attachmentPresent: boolean
+}
+
+type ReopenAttempt = ReopenIntegritySnapshot & {
+  workspaceId: string
+  integrityKnown: boolean
+  startedAt?: number
+}
+
+function reopenDataState(
+  expected: boolean,
+  actual: boolean,
+  outcome: 'ok' | 'error',
+  integrityKnown: boolean,
+): WorkspaceReopenDataState {
+  if (!integrityKnown) return 'unknown'
+  if (!expected) return 'not_present'
+  if (outcome === 'error') return 'unknown'
+  return actual ? 'preserved' : 'lost'
+}
+
 type Options = {
   id: string | undefined
   authenticatedApi: RpcStub<AuthenticatedApi>
@@ -44,6 +68,8 @@ type Options = {
   hiddenSuspendDelayMs?: number
   /** Override the visible-page idle grace period, primarily for deterministic tests. */
   idleSuspendDelayMs?: number
+  /** Snapshot local state immediately before suspension and after a successful reopen. */
+  getReopenIntegritySnapshot?: () => ReopenIntegritySnapshot
 }
 
 export function useWorkspaceOpen({
@@ -57,6 +83,7 @@ export function useWorkspaceOpen({
   canSuspend = true,
   hiddenSuspendDelayMs = 90_000,
   idleSuspendDelayMs = 5 * 60_000,
+  getReopenIntegritySnapshot,
 }: Options) {
   const [overseer, setOverseer] = useState<{ stub: RpcStub<Overseer> } | null>(null)
   const [metadata, setMetadata] = useState<GadgetMetadata | null>(null)
@@ -67,13 +94,55 @@ export function useWorkspaceOpen({
   const [suspended, setSuspended] = useState(false)
   const openWorkspaceIdRef = useRef<string | undefined>(undefined)
   const pendingObserverRejectRef = useRef<((error: unknown) => void) | null>(null)
-  const callbacksRef = useRef({ onMetadata, onShareKeyConsumed, onInvalidShareKey })
-  callbacksRef.current = { onMetadata, onShareKeyConsumed, onInvalidShareKey }
+  const suspendedRef = useRef(false)
+  const reopenAttemptRef = useRef<ReopenAttempt | null>(null)
+  const reopenReportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const callbacksRef = useRef({
+    onMetadata,
+    onShareKeyConsumed,
+    onInvalidShareKey,
+    getReopenIntegritySnapshot,
+  })
+  callbacksRef.current = {
+    onMetadata,
+    onShareKeyConsumed,
+    onInvalidShareKey,
+    getReopenIntegritySnapshot,
+  }
 
   useDocumentTitle(error ? '' : metadata?.title)
 
+  const suspendWorkspace = useCallback(() => {
+    if (!id || suspendedRef.current) return
+    let integrity: ReopenIntegritySnapshot = { draftPresent: false, attachmentPresent: false }
+    let integrityKnown = true
+    try {
+      integrity = callbacksRef.current.getReopenIntegritySnapshot?.() ?? integrity
+    } catch {
+      // Lifecycle telemetry must never prevent suspension.
+      integrityKnown = false
+    }
+    reopenAttemptRef.current = { workspaceId: id, integrityKnown, ...integrity }
+    suspendedRef.current = true
+    setSuspended(true)
+  }, [id])
+
+  const resumeWorkspace = useCallback(() => {
+    if (!id || !suspendedRef.current) return
+    suspendedRef.current = false
+    const attempt = reopenAttemptRef.current
+    if (attempt?.workspaceId === id) attempt.startedAt = Date.now()
+    setSuspended(false)
+  }, [id])
+
+  useEffect(() => () => {
+    if (reopenReportTimerRef.current !== null) clearTimeout(reopenReportTimerRef.current)
+  }, [])
+
   useEffect(() => {
     if (!suspendWhenHidden) {
+      suspendedRef.current = false
+      reopenAttemptRef.current = null
       setSuspended(false)
       return
     }
@@ -86,9 +155,9 @@ export function useWorkspaceOpen({
     const updateVisibility = () => {
       clearSuspendTimer()
       if (document.visibilityState === 'hidden' && canSuspend) {
-        suspendTimer = setTimeout(() => setSuspended(true), Math.max(0, hiddenSuspendDelayMs))
+        suspendTimer = setTimeout(suspendWorkspace, Math.max(0, hiddenSuspendDelayMs))
       } else {
-        setSuspended(false)
+        resumeWorkspace()
       }
     }
 
@@ -98,7 +167,7 @@ export function useWorkspaceOpen({
       clearSuspendTimer()
       document.removeEventListener('visibilitychange', updateVisibility)
     }
-  }, [suspendWhenHidden, canSuspend, hiddenSuspendDelayMs, id])
+  }, [suspendWhenHidden, canSuspend, hiddenSuspendDelayMs, id, resumeWorkspace, suspendWorkspace])
 
   useEffect(() => {
     if (!suspendWhenIdle) return
@@ -111,12 +180,12 @@ export function useWorkspaceOpen({
     const scheduleIdleSuspension = () => {
       clearSuspendTimer()
       if (document.visibilityState === 'visible' && canSuspend) {
-        suspendTimer = setTimeout(() => setSuspended(true), Math.max(0, idleSuspendDelayMs))
+        suspendTimer = setTimeout(suspendWorkspace, Math.max(0, idleSuspendDelayMs))
       }
     }
     const recordActivity = () => {
       if (document.visibilityState !== 'visible') return
-      setSuspended(false)
+      resumeWorkspace()
       scheduleIdleSuspension()
     }
     const updateVisibility = () => {
@@ -124,7 +193,7 @@ export function useWorkspaceOpen({
       else clearSuspendTimer()
     }
 
-    if (!canSuspend) setSuspended(false)
+    if (!canSuspend) resumeWorkspace()
     scheduleIdleSuspension()
     document.addEventListener('visibilitychange', updateVisibility)
     window.addEventListener('pointerdown', recordActivity, { passive: true })
@@ -139,7 +208,7 @@ export function useWorkspaceOpen({
       window.removeEventListener('touchstart', recordActivity)
       window.removeEventListener('wheel', recordActivity)
     }
-  }, [suspendWhenIdle, canSuspend, idleSuspendDelayMs, id])
+  }, [suspendWhenIdle, canSuspend, idleSuspendDelayMs, id, resumeWorkspace, suspendWorkspace])
 
   useEffect(() => {
     if (suspended && id) {
@@ -153,6 +222,62 @@ export function useWorkspaceOpen({
     let configureObservers: RpcStub<ObserverConfigCallback> | null = null
     let cancelled = false
     const hadOpenWorkspace = id !== undefined && openWorkspaceIdRef.current === id
+    const reopenAttempt = id !== undefined && reopenAttemptRef.current?.workspaceId === id &&
+        reopenAttemptRef.current.startedAt !== undefined
+      ? { ...reopenAttemptRef.current, startedAt: reopenAttemptRef.current.startedAt }
+      : null
+
+    const reportReopen = (
+      attempt: ReopenAttempt & { startedAt: number },
+      outcome: 'ok' | 'error',
+      after: ReopenIntegritySnapshot,
+      durationMs: number,
+      afterKnown = true,
+    ) => {
+      try {
+        void Promise.resolve(authenticatedApi.recordWorkspaceReopen({
+          workspaceId: attempt.workspaceId,
+          durationMs,
+          outcome,
+          draftState: reopenDataState(
+            attempt.draftPresent,
+            after.draftPresent,
+            outcome,
+            attempt.integrityKnown && afterKnown,
+          ),
+          attachmentState: reopenDataState(
+            attempt.attachmentPresent,
+            after.attachmentPresent,
+            outcome,
+            attempt.integrityKnown && afterKnown,
+          ),
+        })).catch(() => {})
+      } catch {
+        // Lifecycle telemetry must never change workspace behavior.
+      }
+    }
+
+    const finishReopen = (outcome: 'ok' | 'error') => {
+      if (!reopenAttempt) return
+      reopenAttemptRef.current = null
+      const durationMs = Math.max(0, Date.now() - reopenAttempt.startedAt)
+      if (outcome === 'error') {
+        reportReopen(reopenAttempt, outcome, reopenAttempt, durationMs)
+        return
+      }
+      if (reopenReportTimerRef.current !== null) clearTimeout(reopenReportTimerRef.current)
+      reopenReportTimerRef.current = setTimeout(() => {
+        reopenReportTimerRef.current = null
+        let after: ReopenIntegritySnapshot = { draftPresent: false, attachmentPresent: false }
+        let afterKnown = true
+        try {
+          after = callbacksRef.current.getReopenIntegritySnapshot?.() ?? after
+        } catch {
+          afterKnown = false
+        }
+        reportReopen(reopenAttempt, outcome, after, durationMs, afterKnown)
+      }, 0)
+    }
 
     const disposeAttempt = () => {
       metadataSubscription?.[Symbol.dispose]()
@@ -225,9 +350,11 @@ export function useWorkspaceOpen({
         openWorkspaceIdRef.current = id
         setError(null)
         if (connectionLost) setConnectionLost(false)
+        finishReopen('ok')
       } catch (caught) {
         if (cancelled) return
         console.error('Failed to load gadget:', caught)
+        finishReopen('error')
 
         // TODO: Give share-link and observer failures stable codes so this remaining legacy
         // message classification can be removed.

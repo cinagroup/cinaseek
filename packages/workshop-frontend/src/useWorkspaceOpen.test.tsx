@@ -11,6 +11,7 @@ import {
   type AuthenticatedApi,
   type GadgetMetadata,
   type Overseer,
+  type WorkspaceReopenMetric,
 } from '@gadgets/workshop-shared/api'
 import WorkspaceOpenErrorPage from './components/WorkspaceOpenErrorPage'
 import { useWorkspaceOpen } from './useWorkspaceOpen'
@@ -34,7 +35,12 @@ function disposableStub<T extends object>(value: T, dispose = vi.fn<() => void>(
 }
 
 function api(overseer: RpcStub<Overseer>): RpcStub<AuthenticatedApi> {
-  return { openGadget: () => overseer } as unknown as RpcStub<AuthenticatedApi>
+  return {
+    openGadget: () => overseer,
+    recordWorkspaceReopen: vi.fn<
+      (metric: WorkspaceReopenMetric) => Promise<void>
+    >(async () => {}),
+  } as unknown as RpcStub<AuthenticatedApi>
 }
 
 const METADATA = {
@@ -168,8 +174,15 @@ describe('useWorkspaceOpen', () => {
       makeOverseer(secondOverseerDispose, secondSubscriptionDispose),
     ]
     const openGadget = vi.fn<() => RpcStub<Overseer>>(() => overseers.shift()!)
-    const authenticatedApi = { openGadget } as unknown as RpcStub<AuthenticatedApi>
+    const recordWorkspaceReopen = vi.fn<
+      (metric: WorkspaceReopenMetric) => Promise<void>
+    >(async () => {})
+    const authenticatedApi = {
+      openGadget,
+      recordWorkspaceReopen,
+    } as unknown as RpcStub<AuthenticatedApi>
     let canSuspend = false
+    let integrity = { draftPresent: true, attachmentPresent: false }
 
     function Probe() {
       const state = useWorkspaceOpen({
@@ -181,6 +194,7 @@ describe('useWorkspaceOpen', () => {
         suspendWhenHidden: true,
         canSuspend,
         hiddenSuspendDelayMs: 0,
+        getReopenIntegritySnapshot: () => integrity,
       })
       return <p>{state.suspended ? 'suspended' : state.metadata?.title}</p>
     }
@@ -194,8 +208,9 @@ describe('useWorkspaceOpen', () => {
     visibility = 'hidden'
     await act(async () => {
       document.dispatchEvent(new Event('visibilitychange'))
-      await vi.runAllTimersAsync()
+      await Promise.resolve()
     })
+    await act(async () => { await vi.runAllTimersAsync() })
     expect(firstOverseerDispose).not.toHaveBeenCalled()
 
     canSuspend = true
@@ -209,13 +224,21 @@ describe('useWorkspaceOpen', () => {
     expect(firstSubscriptionDispose).toHaveBeenCalledOnce()
     expect(firstOverseerDispose).toHaveBeenCalledOnce()
 
+    integrity = { draftPresent: false, attachmentPresent: false }
     visibility = 'visible'
     await act(async () => {
       document.dispatchEvent(new Event('visibilitychange'))
       await Promise.resolve()
     })
+    await act(async () => { await vi.runAllTimersAsync() })
     expect(openGadget).toHaveBeenCalledTimes(2)
     expect(container.textContent).toContain('Quarterly planning')
+    expect(recordWorkspaceReopen).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'workspace-1',
+      outcome: 'ok',
+      draftState: 'lost',
+      attachmentState: 'not_present',
+    }))
 
     act(() => root!.unmount())
     root = undefined
@@ -247,7 +270,13 @@ describe('useWorkspaceOpen', () => {
       makeOverseer(secondOverseerDispose, secondSubscriptionDispose),
     ]
     const openGadget = vi.fn<() => RpcStub<Overseer>>(() => overseers.shift()!)
-    const authenticatedApi = { openGadget } as unknown as RpcStub<AuthenticatedApi>
+    const recordWorkspaceReopen = vi.fn<
+      (metric: WorkspaceReopenMetric) => Promise<void>
+    >(async () => {})
+    const authenticatedApi = {
+      openGadget,
+      recordWorkspaceReopen,
+    } as unknown as RpcStub<AuthenticatedApi>
 
     function Probe() {
       const state = useWorkspaceOpen({
@@ -276,9 +305,14 @@ describe('useWorkspaceOpen', () => {
     await act(async () => {
       window.dispatchEvent(new Event('pointerdown'))
       await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
     })
     expect(openGadget).toHaveBeenCalledTimes(2)
     expect(container.textContent).toContain('Quarterly planning')
+    expect(recordWorkspaceReopen).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'workspace-1',
+      outcome: 'ok',
+    }))
 
     act(() => root!.unmount())
     root = undefined

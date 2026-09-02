@@ -10,6 +10,8 @@ export type WorkshopObservabilityFields = {
   callbackInitiated: boolean;
   chatId: number;
   commitCount: number;
+  draftState: string;
+  attachmentState: string;
   durableObjectId: string;
   durationMs: number;
   eventName: string;

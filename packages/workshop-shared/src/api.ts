@@ -396,6 +396,23 @@ export const createSpeechInputError = speechInputErrors.create;
 /** Reads the machine-readable code from an expected voice-input failure. */
 export const getSpeechInputErrorCode = speechInputErrors.getCode;
 
+/** Whether client-side composer state survived a workspace reopen. */
+export type WorkspaceReopenDataState = "not_present" | "preserved" | "lost" | "unknown";
+
+/** Client-observed result of reopening a workspace after lifecycle suspension. */
+export type WorkspaceReopenMetric = {
+  /** Workspace whose suspended session was reopened. */
+  workspaceId: string;
+  /** Milliseconds from the wake action until metadata and subscriptions were restored. */
+  durationMs: number;
+  /** Whether the reopen completed or surfaced a connection failure. */
+  outcome: "ok" | "error";
+  /** Whether a locally persisted composer draft survived the reopen. */
+  draftState: WorkspaceReopenDataState;
+  /** Whether an in-memory pending attachment survived the reopen. */
+  attachmentState: WorkspaceReopenDataState;
+};
+
 /** Top-level API exposed to the user after they have authenticated. */
 export interface AuthenticatedApi extends RpcTarget {
   /** Get profile info for the user who is logged in. */
@@ -483,6 +500,9 @@ export interface AuthenticatedApi extends RpcTarget {
 
   /** Resolve UI feature flags for the authenticated user. */
   getUiFeatureFlags(): Promise<UiFeatureFlags>;
+
+  /** Record one bounded, client-observed workspace reopen result for rollout monitoring. */
+  recordWorkspaceReopen(metric: WorkspaceReopenMetric): Promise<void>;
 
   /**
    * Get the user's preferred model, chosen during onboarding. Returns null if the user has not

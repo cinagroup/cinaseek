@@ -1,6 +1,6 @@
 import { RpcStub, RpcTarget, newHttpBatchRpcResponse, newWebSocketRpcSession, RpcSessionOptions } from "capnweb";
 import { validateRpc } from "capnweb-validate";
-import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, WorkersAiSpeechRequest, WorkersAiSpeechSettings, WorkersAiSpeechSettingsUpdate, SpeechInputTranscription, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, LoginAttempt, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, REALTIME_PRESENCE_PROTOCOL, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, WorkersAiSpeechRequest, WorkersAiSpeechSettings, WorkersAiSpeechSettingsUpdate, SpeechInputTranscription, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, LoginAttempt, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, WorkspaceReopenMetric, REALTIME_PRESENCE_PROTOCOL, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
 import type {
   WorkersAiModelInfo,
   WorkersAiTask,
@@ -47,6 +47,7 @@ import { CostControlReconciler } from "./cost-control-reconciler.js";
 export { CostControlReconciler };
 
 const logger = createWorkshopLogger("workshop.server");
+const MAX_WORKSPACE_REOPEN_DURATION_MS = 10 * 60_000;
 
 function realtimeProtocols(request: Request): string[] {
   return (request.headers.get("Sec-WebSocket-Protocol") ?? "")
@@ -164,6 +165,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   private users: DurableObjectNamespace<UserDurableObject>;
 
   #userId: DurableObjectId;
+  #workspaceReopenMetricAuthorizations = new Set<string>();
 
   // Get a stub pointing at the user DO. We create a new stub for every request so that we don't
   // have to worry about detecting when a stub has become broken.
@@ -313,6 +315,30 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     return resolveUiFeatureFlags(this.env, this.#userId.name!);
   }
 
+  recordWorkspaceReopen(metric: WorkspaceReopenMetric): Promise<void> {
+    if (!Number.isFinite(metric.durationMs) || metric.durationMs < 0) {
+      return Promise.reject(new TypeError("Invalid workspace reopen duration."));
+    }
+    try {
+      this.overseers.idFromString(metric.workspaceId);
+    } catch {
+      return Promise.reject(new TypeError("Invalid workspace ID."));
+    }
+    if (!this.#workspaceReopenMetricAuthorizations.has(metric.workspaceId)) {
+      return Promise.reject(new Error("Workspace reopen telemetry was not authorized by an open."));
+    }
+    recordAnalytics(this.ctx, this.env, {
+      event_name: "workspace_reopen_finished",
+      user_id: this.#userId.toString(),
+      gadget_id: metric.workspaceId,
+      duration_ms: Math.round(Math.min(metric.durationMs, MAX_WORKSPACE_REOPEN_DURATION_MS)),
+      outcome: metric.outcome,
+      draft_state: metric.draftState,
+      attachment_state: metric.attachmentState,
+    });
+    return Promise.resolve();
+  }
+
   async #openGadgetInternal(id: string, shareKey?: string,
                             configureObservers?: RpcStub<ObserverConfigCallback>)
       : Promise<NativeRpcStub<Overseer>> {
@@ -394,6 +420,10 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
       gadget_id: id,
       source: shareKey ? "share_key" : "direct",
     });
+    // Keeping this authorization connection-local prevents callers from fabricating metrics for
+    // workspaces this authenticated session has never successfully opened. It remains valid so a
+    // later failed reopen can still report its outcome without opening a second authority path.
+    this.#workspaceReopenMetricAuthorizations.add(id);
     return result;
   }
 

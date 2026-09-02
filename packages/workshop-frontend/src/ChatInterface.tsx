@@ -1926,6 +1926,7 @@ export const ChatInput = ({
   showThinkingTraces = true,
   onToggleThinkingTraces,
   onTransientStateChange,
+  onIntegrityStateChange,
 }: {
   createCapsuleGatekeeper: (
     accountId: number,
@@ -1981,6 +1982,11 @@ export const ChatInput = ({
   onToggleThinkingTraces?: () => void;
   /** Reports attachments or a send in progress, which must survive before session suspension. */
   onTransientStateChange?: (hasTransientState: boolean) => void;
+  /** Reports draft and attachment presence for lifecycle-reopen integrity checks. */
+  onIntegrityStateChange?: (state: {
+    draftPresent: boolean;
+    attachmentPresent: boolean;
+  }) => void;
   /** Show the "Pre-approve actions" menu item (only when there are uncovered candidates). */
   /** Open the pre-approval dialog (owned by the parent). */
   /** Called after a gatekeeper is connected via the attach flow, so the parent can refresh the
@@ -2000,6 +2006,18 @@ export const ChatInput = ({
   }, [isSending, onTransientStateChange, pendingAttachments.length]);
 
   useEffect(() => () => onTransientStateChange?.(false), [onTransientStateChange]);
+
+  useEffect(() => {
+    onIntegrityStateChange?.({
+      draftPresent: inputValue.length > 0,
+      attachmentPresent: pendingAttachments.length > 0,
+    });
+  }, [inputValue.length, onIntegrityStateChange, pendingAttachments.length]);
+
+  useEffect(() => () => onIntegrityStateChange?.({
+    draftPresent: false,
+    attachmentPresent: false,
+  }), [onIntegrityStateChange]);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
   // leaving the chat dismisses it.
   const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
@@ -4499,6 +4517,10 @@ interface ChatInterfaceProps {
   onChatCountChange?: (count: number, hasChatZero: boolean) => void;
   onAgentActiveChange?: (chatId: number, isActive: boolean) => void;
   onComposerTransientStateChange?: (hasTransientState: boolean) => void;
+  onComposerIntegrityStateChange?: (state: {
+    draftPresent: boolean;
+    attachmentPresent: boolean;
+  }) => void;
   // Called after an auto-approval rule is enabled from the chat thread, so the Activity pane's
   // Auto-approval list reflects it without a reload.
   onAutoApproveChange?: () => void;
@@ -4684,6 +4706,7 @@ function ChatInterface({
   onChatCountChange,
   onAgentActiveChange,
   onComposerTransientStateChange,
+  onComposerIntegrityStateChange,
   onAutoApproveChange,
   sidebarMode,
   sidebarWidth = 280,
@@ -7328,6 +7351,8 @@ function ChatInterface({
             onModelChange={handleModelChange}
             showThinkingTraces={showThinkingTraces}
             onToggleThinkingTraces={toggleShowThinkingTraces}
+            onTransientStateChange={onComposerTransientStateChange}
+            onIntegrityStateChange={onComposerIntegrityStateChange}
             minRows={2}
             newChat
             draftStorageKey={currentUser && workspaceId
@@ -8307,6 +8332,7 @@ function ChatInterface({
                     showThinkingTraces={showThinkingTraces}
                     onToggleThinkingTraces={toggleShowThinkingTraces}
                     onTransientStateChange={onComposerTransientStateChange}
+                    onIntegrityStateChange={onComposerIntegrityStateChange}
                     draftStorageKey={currentUser && workspaceId && selectedChatId !== null
                       ? composerDraftStorageKey(
                           currentUser.id,
