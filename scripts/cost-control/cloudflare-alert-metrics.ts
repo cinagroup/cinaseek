@@ -256,6 +256,8 @@ export class CloudflareAlertMetricsClient {
   }
 
   async #request(url: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       return await this.#fetch(url, {
         ...init,
@@ -264,13 +266,15 @@ export class CloudflareAlertMetricsClient {
           "Content-Type": "application/json",
           ...init.headers,
         },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: controller.signal,
       });
     } catch (error) {
       if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
         throw new CloudflareAlertMetricsError(504, "Cloudflare metrics request timed out.");
       }
       throw new CloudflareAlertMetricsError(502, "Could not reach the Cloudflare metrics API.");
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
