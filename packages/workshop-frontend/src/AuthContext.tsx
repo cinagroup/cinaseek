@@ -58,3 +58,20 @@ export function useAuthenticatedApi() {
 export function useOptionalAuthenticatedApi(): AuthContextType | null {
   return useContext(AuthContext)
 }
+
+/**
+ * Render capability-bearing UI only while an authenticated RPC capability is available.
+ *
+ * Workspace deletion intentionally closes the workspace RPC session before routing home. During
+ * that transition React can retain the outgoing route for one render after the root authentication
+ * provider has unmounted. Keeping the boundary outside the capability consumer turns that expected
+ * teardown frame into an empty render instead of calling a strict auth hook without its provider.
+ */
+export function AuthenticatedApiBoundary({
+  children,
+}: {
+  children: (authenticatedApi: RpcStub<AuthenticatedApi>) => ReactNode
+}) {
+  const context = useOptionalAuthenticatedApi()
+  return context ? children(context.authenticatedApi) : null
+}

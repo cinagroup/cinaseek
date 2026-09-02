@@ -15,13 +15,14 @@ import {
   type Icon,
 } from '@phosphor-icons/react'
 import { RpcStub, RpcTarget } from 'capnweb'
-import { useAuthenticatedApi } from './AuthContext'
+import { AuthenticatedApiBoundary } from './AuthContext'
 import { useConnectionLost } from './RpcContext'
 import UserMenu from './components/UserMenu'
 import SiteLogo from './components/SiteLogo'
 
 import {
   REALTIME_PRESENCE_PROTOCOL,
+  AuthenticatedApi,
   GadgetClient,
   AiChatAuthorInfo,
   ConsoleLogSubscriber,
@@ -428,10 +429,21 @@ function NoGadgetPlaceholder({ height }: { height: string }) {
 // ─── component ────────────────────────────────────────────────────────────────
 
 export default function GadgetEditor() {
+  return (
+    <AuthenticatedApiBoundary>
+      {(authenticatedApi) => <AuthenticatedGadgetEditor authenticatedApi={authenticatedApi} />}
+    </AuthenticatedApiBoundary>
+  )
+}
+
+function AuthenticatedGadgetEditor({
+  authenticatedApi,
+}: {
+  authenticatedApi: RpcStub<AuthenticatedApi>
+}) {
   const params = useParams({ strict: false }) as { id?: string }
   const id = params.id
   const navigate = useNavigate()
-  const { authenticatedApi } = useAuthenticatedApi()
 
   const { chat: chatParam, w: workpieceParam } = useSearch({ strict: false }) as
     { chat?: number; w?: number }
