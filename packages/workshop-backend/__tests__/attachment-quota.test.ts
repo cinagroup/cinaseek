@@ -138,4 +138,41 @@ describe("workspace attachment quota ledger", () => {
           .toEqual(legacyData);
     });
   });
+
+  it("matches only size-consistent committed or non-expired staged R2 metadata", async () => {
+    let stub = env.TEST_OVERSEER.getByName("attachment-cost-control-reconciliation");
+    await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
+      let overseer = testOverseer(instance);
+      overseer.env.WORKSPACE_BLOB_MODE = "r2";
+      let committedId = "55555555-5555-4555-8555-555555555555";
+      let stagedId = "66666666-6666-4666-8666-666666666666";
+      let expiredId = "77777777-7777-4777-8777-777777777777";
+      for (let id of [committedId, stagedId, expiredId]) {
+        await overseer.stageChatAttachment(id, {
+          content: new Uint8Array([1, 2, 3]),
+          mimeType: "application/octet-stream",
+        });
+      }
+      let committed = overseer.storage.chatAttachmentContent.get(committedId)!;
+      let staged = overseer.storage.chatAttachmentContent.get(stagedId)!;
+      let expired = overseer.storage.chatAttachmentContent.get(expiredId)!;
+      overseer.storage.chatAttachmentContent.put({
+        ...committed,
+        state: {type: "committed", chatId: 1},
+      });
+      overseer.storage.chatAttachmentContent.put({
+        ...expired,
+        state: {type: "staged", uploadedAt: 0, mimeType: "application/octet-stream"},
+      });
+
+      expect(instance.matchWorkspaceBlobMetadataForCostControl([
+        {key: committed.blobKey!, size: 3},
+        {key: staged.blobKey!, size: 3},
+        {key: expired.blobKey!, size: 3},
+      ])).toEqual([committed.blobKey, staged.blobKey]);
+      expect(instance.matchWorkspaceBlobMetadataForCostControl([
+        {key: committed.blobKey!, size: 4},
+      ])).toEqual([]);
+    });
+  });
 });

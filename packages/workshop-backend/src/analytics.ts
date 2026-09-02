@@ -153,11 +153,50 @@ export type ProductAnalyticsInput =
   | ProductAnalyticsGadgetInput
   | ProductAnalyticsOperationalInput;
 
+function recordCostControlMetric(event: ProductAnalyticsInput): void {
+  switch (event.event_name) {
+    case "workspace_session_started":
+      logger.info("workspace session started", {
+        event: "cost.metric.workspace.session.started",
+        operation: "started",
+      });
+      return;
+    case "workspace_session_finished":
+      logger.info("workspace session finished", {
+        event: "cost.metric.workspace.session.finished",
+        durationMs: event.duration_ms,
+        operation: event.outcome,
+      });
+      return;
+    case "agent_run_finished":
+      logger.info("agent run finished", {
+        event: "cost.metric.agent.run.finished",
+        durationMs: event.duration_ms,
+        operation: event.outcome,
+      });
+      return;
+    case "gadget_interaction":
+      if (event.interaction_type === "code_merged") {
+        logger.info("gadget revision edited", {
+          event: "cost.metric.gadget.revision.edited",
+          operation: "merged",
+        });
+      }
+      return;
+    default:
+      return;
+  }
+}
+
 export function recordAnalytics(
     ctx: ExecutionContext | DurableObjectState,
     env: Cloudflare.Env,
     event: ProductAnalyticsInput): void {
   try {
+    // These low-cardinality counters feed the production alert evaluator. They deliberately omit
+    // user, workspace, session, model, and revision identifiers; the Pipeline remains the richer
+    // attribution source while Workers Observability provides bounded near-real-time aggregates.
+    recordCostControlMetric(event);
     if (!env.PRODUCT_ANALYTICS) {
       return;
     }

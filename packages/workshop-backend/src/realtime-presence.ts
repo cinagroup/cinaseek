@@ -18,6 +18,19 @@ const WORKSPACE_ID_KEY = "workspaceId";
 
 type RealtimeSocketAttachment = RealtimePresenceTicketClaims;
 
+function rejectHandshake(status: number, operation: string): Response {
+  logger.info("realtime handshake rejected", {
+    event: "cost.metric.realtime.handshake.failed", status, operation,
+  });
+  return new Response(status === 401
+    ? "Invalid or expired realtime ticket."
+    : status === 403
+      ? "Realtime workspace mismatch."
+      : status === 409
+        ? "Realtime ticket was already used."
+        : "Realtime presence is unavailable.", {status});
+}
+
 function offeredProtocols(request: Request): string[] {
   return (request.headers.get("Sec-WebSocket-Protocol") ?? "")
     .split(",")
@@ -71,32 +84,43 @@ export class RealtimePresenceDurableObject extends DurableObject<Cloudflare.Env>
 
     let protocols = offeredProtocols(request);
     if (protocols[0] !== REALTIME_PRESENCE_PROTOCOL || !protocols[1]) {
-      return new Response("Realtime protocol and ticket required.", {status: 401});
+      return rejectHandshake(401, "protocol_or_ticket_missing");
     }
     let secret = this.env.REALTIME_TICKET_SECRET;
-    if (!secret) return new Response("Realtime presence is disabled.", {status: 503});
+    if (!secret) {
+      logger.error("realtime ticket secret is missing", {
+        event: "realtime.ticket.config.invalid", operation: "secret_missing",
+      });
+      return rejectHandshake(503, "ticket_secret_missing");
+    }
 
     let claims: RealtimePresenceTicketClaims | null;
     try {
       claims = await verifyRealtimePresenceTicket(secret, protocols[1]);
     } catch (error) {
       logger.error("invalid realtime ticket configuration", {
-        event: "realtime.ticket.config.invalid", error,
+        event: "realtime.ticket.config.invalid", operation: "verification_failed", error,
       });
-      return new Response("Realtime presence is unavailable.", {status: 503});
+      return rejectHandshake(503, "ticket_configuration_invalid");
     }
-    if (!claims) return new Response("Invalid or expired realtime ticket.", {status: 401});
+    if (!claims) return rejectHandshake(401, "ticket_invalid_or_expired");
     if (claims.channel === "console" && this.env.REALTIME_CONSOLE_ENABLED !== "true") {
-      return new Response("Realtime console delivery is disabled.", {status: 503});
+      return rejectHandshake(503, "console_disabled");
     }
 
     let requestedWorkspaceId = new URL(request.url).searchParams.get("workspace");
     if (requestedWorkspaceId !== claims.workspaceId) {
-      return new Response("Realtime workspace mismatch.", {status: 403});
+      logger.error("realtime request and ticket workspaces differ", {
+        event: "realtime.workspace.mismatch", operation: "request_vs_ticket",
+      });
+      return rejectHandshake(403, "request_workspace_mismatch");
     }
     let storedWorkspaceId = await this.ctx.storage.get<string>(WORKSPACE_ID_KEY);
     if (storedWorkspaceId !== undefined && storedWorkspaceId !== claims.workspaceId) {
-      return new Response("Realtime workspace mismatch.", {status: 403});
+      logger.error("realtime ticket and durable object workspaces differ", {
+        event: "realtime.workspace.mismatch", operation: "ticket_vs_stored",
+      });
+      return rejectHandshake(403, "stored_workspace_mismatch");
     }
 
     // A signed ticket is one-use. SQLite's synchronous transaction makes concurrent replays race
@@ -106,7 +130,7 @@ export class RealtimePresenceDurableObject extends DurableObject<Cloudflare.Env>
           "INSERT INTO consumed_tickets (nonce, expires_at) VALUES (?, ?)",
           claims.nonce, claims.expiresAt);
     } catch {
-      return new Response("Realtime ticket was already used.", {status: 409});
+      return rejectHandshake(409, "ticket_replayed");
     }
     this.ctx.storage.sql.exec("DELETE FROM consumed_tickets WHERE expires_at <= ?", Date.now());
     await this.ctx.storage.put(WORKSPACE_ID_KEY, claims.workspaceId);
@@ -115,6 +139,10 @@ export class RealtimePresenceDurableObject extends DurableObject<Cloudflare.Env>
     let [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     server.serializeAttachment(claims satisfies RealtimeSocketAttachment);
     this.ctx.acceptWebSocket(server, [claims.channel]);
+    logger.info("realtime handshake accepted", {
+      event: "cost.metric.realtime.handshake.succeeded",
+      operation: claims.channel,
+    });
 
     if (claims.channel === "presence") {
       await this.#broadcastPresence();

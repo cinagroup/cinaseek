@@ -42,6 +42,9 @@ import { retryOnDoReset, wrapDoStubForTelemetry } from "./do-retry";
 import { WorkersAiCredentialPool } from "./workers-ai-credential-pool.js";
 import { RealtimePresenceDurableObject } from "./realtime-presence.js";
 import { verifyRealtimePresenceTicket } from "./realtime-presence-ticket.js";
+import { CostControlReconciler } from "./cost-control-reconciler.js";
+
+export { CostControlReconciler };
 
 const logger = createWorkshopLogger("workshop.server");
 

@@ -564,6 +564,14 @@ type WorkspaceAttachmentUsage = {
   count: number;
 };
 
+/** One R2 object candidate submitted by the deployment's read-only cost-control reconciler. */
+export type WorkspaceBlobObjectForCostControl = {
+  /** Full immutable R2 key. */
+  key: string;
+  /** Current R2 object size in bytes. */
+  size: number;
+};
+
 // Sentinel gatekeeperId used on ActionRecords that originated from built-in agent tools
 // (e.g. webFetch) rather than from a real gatekeeper. Real gatekeeper IDs are assigned
 // starting at 1, so -1 is a safe out-of-band marker. Only "observation" records ever carry
@@ -4718,6 +4726,9 @@ class OverseerImpl implements AgentHooks {
       });
     } catch (error) {
       if (mode === "r2") {
+        this.logger.error("failed to write staged chat attachment to R2", {
+          event: "chat.attachment.r2.write.failed", operation: "write", error,
+        });
         this.deleteChatAttachmentRecords([id]);
         throw error;
       }
@@ -4768,6 +4779,9 @@ class OverseerImpl implements AgentHooks {
       let object = await bucket.get(content.blobKey);
       if (object) return new Uint8Array(await object.arrayBuffer());
     }
+    this.logger.error("chat attachment body is unavailable", {
+      event: "chat.attachment.r2.read.missing", operation: "read",
+    });
     throw new Error("Chat attachment content is unavailable.");
   }
 
@@ -4775,7 +4789,14 @@ class OverseerImpl implements AgentHooks {
     let bucket = this.env.WORKSPACE_BLOBS;
     if (!bucket || keys.length === 0) return;
     for (let offset = 0; offset < keys.length; offset += WORKSPACE_BLOB_DELETE_BATCH_SIZE) {
-      await bucket.delete(keys.slice(offset, offset + WORKSPACE_BLOB_DELETE_BATCH_SIZE));
+      try {
+        await bucket.delete(keys.slice(offset, offset + WORKSPACE_BLOB_DELETE_BATCH_SIZE));
+      } catch (error) {
+        this.logger.error("failed to delete chat attachments from R2", {
+          event: "chat.attachment.r2.delete.failed", operation: "delete", error,
+        });
+        throw error;
+      }
     }
   }
 
@@ -4787,7 +4808,15 @@ class OverseerImpl implements AgentHooks {
     // collection. R2 listings are strongly consistent, so this cannot skip keys that shifted
     // behind an opaque cursor when the preceding page disappeared.
     while (true) {
-      let page = await bucket.list({prefix, limit: WORKSPACE_BLOB_DELETE_BATCH_SIZE});
+      let page;
+      try {
+        page = await bucket.list({prefix, limit: WORKSPACE_BLOB_DELETE_BATCH_SIZE});
+      } catch (error) {
+        this.logger.error("failed to list workspace attachments for R2 deletion", {
+          event: "chat.attachment.r2.delete.failed", operation: "list", error,
+        });
+        throw error;
+      }
       if (page.objects.length === 0) return;
       await this.deleteChatAttachmentBlobs(page.objects.map(object => object.key));
       if (!page.truncated) return;
@@ -6129,6 +6158,10 @@ class OverseerImpl implements AgentHooks {
         }
         if (usage.reservationId) {
           platformQuotaReservation = {owner: ownerStub, id: usage.reservationId};
+          turnLogger.info("platform usage reservation created", {
+            event: "usage.reservation.created", executionId: usage.reservationId,
+            operation: "created",
+          });
         }
         // Free tier exhausted but the user can continue via their own Cloudflare gateway: route
         // inference through it so the usage bills their account. checkUsageAndBalance already
@@ -6289,6 +6322,11 @@ class OverseerImpl implements AgentHooks {
         let {owner, id} = platformQuotaReservation;
         this.ctx.waitUntil(retryOnDoReset(
             () => owner.settleDailyLlmCall(id, platformInferenceStarted), this.logger)
+            .then(() => this.logger.info("platform usage reservation settled", {
+              event: "usage.reservation.settled",
+              executionId: id,
+              operation: platformInferenceStarted ? "consumed" : "released",
+            }))
             .catch(error => this.logger.warn("failed to settle platform usage reservation", {
               event: "usage.reservation.settle.failed", error,
             })));
@@ -8631,6 +8669,36 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
   /** Mirror hibernatable WebSocket viewers into any legacy RPC presence subscriptions. */
   updateRealtimePresence(participants: PresenceParticipant[]): void {
     this.impl.updateRealtimePresence(participants);
+  }
+
+  /**
+   * Return the submitted R2 keys that still match authoritative attachment metadata. This native
+   * RPC method is reachable only through an explicitly configured service binding; it reveals no
+   * user, chat, filename, MIME, or content data.
+   */
+  matchWorkspaceBlobMetadataForCostControl(
+      objects: WorkspaceBlobObjectForCostControl[],
+  ): string[] {
+    if (objects.length > WORKSPACE_BLOB_DELETE_BATCH_SIZE) {
+      throw new Error("Workspace blob reconciliation batch is too large.");
+    }
+    const prefix = `workspaces/${this.ctx.id}/chat-attachments/`;
+    const stagedCutoff = Date.now() - MAX_STAGED_CHAT_ATTACHMENT_AGE_MS;
+    return objects.flatMap(object => {
+      if (!Number.isSafeInteger(object.size) || object.size < 0 ||
+          !object.key.startsWith(prefix)) {
+        throw new Error("Invalid workspace blob reconciliation candidate.");
+      }
+      const fileId = object.key.slice(prefix.length);
+      validateChatAttachmentId(fileId);
+      const content = this.impl.storage.chatAttachmentContent.get(fileId);
+      if (!content || content.blobKey !== object.key ||
+          (content.size ?? content.data?.byteLength ?? 0) !== object.size) {
+        return [];
+      }
+      if (content.state.type === "staged" && content.state.uploadedAt < stagedCutoff) return [];
+      return [object.key];
+    });
   }
 
   // Initialize a brand-new workspace's storage. (Before git-backed code storage this also wrote

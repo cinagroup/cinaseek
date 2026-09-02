@@ -14,6 +14,31 @@ function testContext() {
 }
 
 describe("recordAnalytics", () => {
+  it("emits bounded cost-control counters without attribution identifiers", () => {
+    let info = vi.spyOn(console, "info").mockImplementation(() => {});
+    let { ctx } = testContext();
+
+    recordAnalytics(ctx, {} as Cloudflare.Env, {
+      event_name: "workspace_session_finished",
+      user_id: "must-not-log-user",
+      gadget_id: "must-not-log-workspace",
+      session_id: "must-not-log-session",
+      duration_ms: 1234,
+      outcome: "connection_lost",
+    });
+
+    expect(info).toHaveBeenCalledOnce();
+    let fields = info.mock.calls[0][0] as Record<string, unknown>;
+    expect(fields).toMatchObject({
+      component: "workshop.analytics",
+      event: "cost.metric.workspace.session.finished",
+      durationMs: 1234,
+      operation: "connection_lost",
+    });
+    expect(JSON.stringify(fields)).not.toContain("must-not-log");
+    info.mockRestore();
+  });
+
   it("hoists common fields and keeps operational dimensions in properties", async () => {
     let sent: ProductAnalyticsRecord[][] = [];
     let send = vi.fn(async (records: ProductAnalyticsRecord[]) => {
