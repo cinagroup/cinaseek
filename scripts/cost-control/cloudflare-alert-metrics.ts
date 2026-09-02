@@ -94,6 +94,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
+}
+
 function assertIsoRange(from: Date, to: Date): void {
   if (!Number.isFinite(from.valueOf()) || !Number.isFinite(to.valueOf()) || from >= to) {
     throw new Error("metrics timeframe must have valid dates with from before to");
@@ -568,10 +572,18 @@ export class CloudflareAlertMetricsClient {
         requests++;
       }
       const info = body.result_info;
-      if (!isRecord(info) || !isFiniteNumber(info.total_pages) || info.total_pages < 0) {
+      if (!isRecord(info) || !isSafeInteger(info.count) || info.count < 0 ||
+          !isSafeInteger(info.page) || info.page !== page ||
+          !isSafeInteger(info.per_page) || info.per_page <= 0 ||
+          !isSafeInteger(info.total_count) || info.total_count < 0 ||
+          info.count !== body.result.length || info.count > info.per_page ||
+          requests > info.total_count) {
         throw new CloudflareAlertMetricsError(502, "Invalid AI Gateway pagination metadata.");
       }
-      if (page >= info.total_pages) return { cost, requests };
+      if (requests === info.total_count) return { cost, requests };
+      if (body.result.length === 0) {
+        throw new CloudflareAlertMetricsError(502, "AI Gateway pagination stopped early.");
+      }
     }
     throw new CloudflareAlertMetricsError(507, "AI Gateway cost query exceeded its page bound.");
   }

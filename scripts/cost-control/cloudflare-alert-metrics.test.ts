@@ -181,12 +181,27 @@ describe("Cloudflare alert metrics client", () => {
       return jsonResponse({
         success: true,
         result: calls === 1 ? [{ cost: 1.25 }, { cost: 0.5 }] : [{ cost: 0.25 }],
-        result_info: { total_pages: 2 },
+        result_info: {
+          count: calls === 1 ? 2 : 1,
+          page: calls,
+          per_page: 2,
+          total_count: 3,
+        },
       });
     });
 
     assert.deepEqual(await client.queryAiGatewayCost(FROM, TO), { cost: 2, requests: 3 });
     assert.equal(calls, 2);
+  });
+
+  it("accepts the official zero-log pagination shape", async () => {
+    const client = new CloudflareAlertMetricsClient(CONFIG, async () => jsonResponse({
+      success: true,
+      result: [],
+      result_info: { count: 0, page: 1, per_page: 50, total_count: 0 },
+    }));
+
+    assert.deepEqual(await client.queryAiGatewayCost(FROM, TO), { cost: 0, requests: 0 });
   });
 
   it("paginates stored Overseer object IDs without exposing deleted objects", async () => {
