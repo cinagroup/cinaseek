@@ -139,6 +139,19 @@ describe("Cloudflare alert metrics client", () => {
     );
   });
 
+  it("invokes an injected fetch without binding the metrics client as its receiver", async () => {
+    let receiver: unknown = "not-called";
+    const fetchImpl = async function(this: unknown): Promise<Response> {
+      receiver = this;
+      return jsonResponse({ success: true, result: { calculations: [] } });
+    } as typeof fetch;
+    const client = new CloudflareAlertMetricsClient(CONFIG, fetchImpl);
+
+    await client.queryLogMetrics(FROM, TO, ["cost.metric.workspace.session.started"]);
+
+    assert.equal(receiver, undefined);
+  });
+
   it("aggregates hourly DO duration and distinct Overseer objects", async () => {
     const client = new CloudflareAlertMetricsClient(CONFIG, async () => jsonResponse({
       data: {

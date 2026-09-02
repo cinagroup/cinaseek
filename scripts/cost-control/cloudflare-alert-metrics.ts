@@ -75,6 +75,7 @@ export type CloudflareAlertMetricsFailureKind =
   | "unsupported_runtime"
   | "access_restricted"
   | "request_shape"
+  | "illegal_receiver"
   | "network"
   | "type_error"
   | "unknown";
@@ -127,6 +128,7 @@ function classifyFetchFailure(error: unknown): CloudflareAlertMetricsFailureKind
   if (/not implemented|not supported|is not a function/.test(message)) return "unsupported_runtime";
   if (/access control|cannot access|not allowed/.test(message)) return "access_restricted";
   if (/expected pattern|invalid url|fetch api cannot load/.test(message)) return "request_shape";
+  if (/illegal invocation|incorrect this|invalid receiver/.test(message)) return "illegal_receiver";
   if (/network|fetch failed|connection|dns/.test(message)) return "network";
   return error.name === "TypeError" ? "type_error" : "unknown";
 }
@@ -298,7 +300,8 @@ export class CloudflareAlertMetricsClient {
       }, REQUEST_TIMEOUT_MS);
     });
     try {
-      const request = this.#fetch(url, {
+      const fetchImpl = this.#fetch;
+      const request = fetchImpl(url, {
         ...init,
         headers: {
           Authorization: `Bearer ${this.#config.apiToken}`,

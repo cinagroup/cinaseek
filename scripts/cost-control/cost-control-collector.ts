@@ -23,6 +23,7 @@ const FAILURE_KINDS = new Set<CloudflareAlertMetricsFailureKind>([
   "unsupported_runtime",
   "access_restricted",
   "request_shape",
+  "illegal_receiver",
   "network",
   "type_error",
   "unknown",
