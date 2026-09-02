@@ -20,7 +20,7 @@ turn, the overseer calls `checkUsageAndBalance`:
 - **Free tier exhausted, connected but balance below `$2`** → blocked, with a prompt to add credits.
 
 The balance shown to users is read live from their Cloudflare AI Gateway billing
-(`/ai-gateway-billing/credit_balance`), cached for 5 minutes. Topping up means adding credits in the
+(`/ai-gateway/billing/credit-balance`), cached for 5 minutes. Topping up means adding credits in the
 [Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/ai/ai-gateway) — the platform never
 holds money.
 

@@ -23,8 +23,12 @@ export interface CloudflareAccount {
   accountName: string;
 }
 
-async function cfRequest<T>(token: string, path: string): Promise<CfEnvelope<T> | null> {
-  const resp = await fetch(`${API_BASE}${path}`, {
+async function cfRequest<T>(
+  token: string,
+  path: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CfEnvelope<T> | null> {
+  const resp = await fetchImpl(`${API_BASE}${path}`, {
     headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
   });
   if (!resp.ok) {
@@ -39,8 +43,12 @@ async function cfRequest<T>(token: string, path: string): Promise<CfEnvelope<T> 
   return data;
 }
 
-async function cfGet<T>(token: string, path: string): Promise<T | null> {
-  return (await cfRequest<T>(token, path))?.result ?? null;
+async function cfGet<T>(
+  token: string,
+  path: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<T | null> {
+  return (await cfRequest<T>(token, path, fetchImpl))?.result ?? null;
 }
 
 // `/accounts` is paginated and defaults to 20 per page, so an unpaginated GET hides every account
@@ -77,11 +85,15 @@ export async function listAccounts(token: string): Promise<CloudflareAccount[]> 
  * Fetch the account's AI Gateway credit balance in USD. Returns null on any upstream failure so
  * callers can distinguish "unknown" from a genuine $0 balance.
  */
-export async function fetchCreditBalance(token: string, accountId: string): Promise<number | null> {
+export async function fetchCreditBalance(
+  token: string,
+  accountId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<number | null> {
   const result = await cfGet<{ balance?: number }>(
-    token, `/accounts/${accountId}/ai-gateway-billing/credit_balance`,
+    token, `/accounts/${accountId}/ai-gateway/billing/credit-balance`, fetchImpl,
   );
   if (!result || typeof result.balance !== "number") return null;
-  // The API reports the balance in cents.
-  return result.balance / 100;
+  // The current AI Gateway Billing API and official SDK expose the credit balance directly in USD.
+  return result.balance;
 }
