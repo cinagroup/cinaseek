@@ -249,8 +249,9 @@ export class CloudflareAlertMetricsClient {
     assertIdentifier(config.overseerNamespaceId, "Overseer namespace id", /^[0-9a-f]{32}$/i);
     assertIdentifier(config.backendService, "backend service", /^[a-z0-9][a-z0-9-]{0,62}$/);
     assertIdentifier(config.aiGatewayId, "AI Gateway id", /^[a-z0-9][a-z0-9_-]{0,63}$/);
-    if (!config.apiToken.trim()) throw new Error("Cloudflare API token is required");
-    this.#config = config;
+    const apiToken = config.apiToken.trim();
+    if (!apiToken) throw new Error("Cloudflare API token is required");
+    this.#config = { ...config, apiToken };
     this.#fetch = fetchImpl;
   }
 

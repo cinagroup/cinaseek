@@ -106,6 +106,21 @@ describe("Cloudflare alert metrics client", () => {
     "Bearer test-token-never-log");
   });
 
+  it("removes surrounding whitespace from a deployment secret before authentication", async () => {
+    let authorization: string | undefined;
+    const client = new CloudflareAlertMetricsClient({
+      ...CONFIG,
+      apiToken: "\r\n  test-token-never-log  \r\n",
+    }, async (_url, init) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
+      return jsonResponse({ success: true, result: { calculations: [] } });
+    });
+
+    await client.queryLogMetrics(FROM, TO, ["cost.metric.workspace.session.started"]);
+
+    assert.equal(authorization, "Bearer test-token-never-log");
+  });
+
   it("aggregates hourly DO duration and distinct Overseer objects", async () => {
     const client = new CloudflareAlertMetricsClient(CONFIG, async () => jsonResponse({
       data: {
