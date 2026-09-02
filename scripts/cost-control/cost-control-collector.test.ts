@@ -135,6 +135,7 @@ describe("cost-control collector", () => {
       async queryOverseerHourlyCost() { throw Object.assign(new Error("secret provider text"), {
         status: 403,
         codes: [9109],
+        failureKind: "same_zone_fetch",
       }); },
       async queryDistinctDynamicWorkers() { return 0; },
       async queryAiGatewayCost() { return { cost: 0, requests: 0 }; },
@@ -154,6 +155,7 @@ describe("cost-control collector", () => {
       source: "do_current_hour",
       status: 403,
       codes: [9109],
+      failureKind: "same_zone_fetch",
     });
     assert.doesNotMatch(JSON.stringify(collected.failures), /secret provider text/);
     assert.equal(collected.sample.workspaceBlobs, undefined);

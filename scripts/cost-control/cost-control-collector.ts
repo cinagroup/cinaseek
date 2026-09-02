@@ -1,5 +1,6 @@
 import {
   CloudflareAlertMetricsClient,
+  type CloudflareAlertMetricsFailureKind,
   type DurableObjectHourlyCost,
   type LogMetricGroup,
   type ReservationMetricEvent,
@@ -13,6 +14,18 @@ const DEFAULT_INGESTION_LAG_MS = 5 * MINUTE_MS;
 const RESERVATION_OVERLAP_MS = 5 * MINUTE_MS;
 const RESERVATION_SETTLEMENT_GRACE_MS = 10 * MINUTE_MS;
 const MAX_RESERVATION_LEDGER_ENTRIES = 2_000;
+const FAILURE_KINDS = new Set<CloudflareAlertMetricsFailureKind>([
+  "timeout",
+  "invalid_header",
+  "same_zone_fetch",
+  "cloudflare_address",
+  "request_context",
+  "unsupported_runtime",
+  "access_restricted",
+  "network",
+  "type_error",
+  "unknown",
+]);
 
 interface DateRange {
   from: Date;
@@ -53,6 +66,8 @@ export interface CostControlSourceFailure {
   status?: number;
   /** Numeric Cloudflare error codes; provider-authored text is intentionally excluded. */
   codes?: readonly number[];
+  /** Allowlisted runtime failure class when no provider response was received. */
+  failureKind?: CloudflareAlertMetricsFailureKind;
 }
 
 /** Complete output from one best-effort metrics collection. */
@@ -174,7 +189,16 @@ function failureFor(source: string, error: unknown): CostControlSourceFailure {
         error.codes.every(code => typeof code === "number")
       ? error.codes
       : undefined;
-    return { source, ...(status === undefined ? {} : { status }), ...(codes ? { codes } : {}) };
+    const failureKind = "failureKind" in error && typeof error.failureKind === "string" &&
+        FAILURE_KINDS.has(error.failureKind as CloudflareAlertMetricsFailureKind)
+      ? error.failureKind as CloudflareAlertMetricsFailureKind
+      : undefined;
+    return {
+      source,
+      ...(status === undefined ? {} : { status }),
+      ...(codes ? { codes } : {}),
+      ...(failureKind ? { failureKind } : {}),
+    };
   }
   return { source };
 }

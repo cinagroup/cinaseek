@@ -122,6 +122,23 @@ describe("Cloudflare alert metrics client", () => {
     assert.equal(authorization, "Bearer test-token-never-log");
   });
 
+  it("classifies request construction failures without exposing their text", async () => {
+    const client = new CloudflareAlertMetricsClient(CONFIG, async () => {
+      throw new TypeError("Invalid header contained test-token-never-log");
+    });
+
+    await assert.rejects(
+      client.queryLogMetrics(FROM, TO, ["cost.metric.workspace.session.started"]),
+      (error: unknown) => {
+        assert.ok(error instanceof CloudflareAlertMetricsError);
+        assert.equal(error.status, 502);
+        assert.equal(error.failureKind, "invalid_header");
+        assert.doesNotMatch(error.message, /test-token|Invalid header/);
+        return true;
+      },
+    );
+  });
+
   it("aggregates hourly DO duration and distinct Overseer objects", async () => {
     const client = new CloudflareAlertMetricsClient(CONFIG, async () => jsonResponse({
       data: {

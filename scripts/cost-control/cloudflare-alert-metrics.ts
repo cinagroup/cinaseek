@@ -65,6 +65,19 @@ export interface ReservationMetricEvent {
   timestamp: number;
 }
 
+/** Secret-free classification for failures raised before an HTTP response exists. */
+export type CloudflareAlertMetricsFailureKind =
+  | "timeout"
+  | "invalid_header"
+  | "same_zone_fetch"
+  | "cloudflare_address"
+  | "request_context"
+  | "unsupported_runtime"
+  | "access_restricted"
+  | "network"
+  | "type_error"
+  | "unknown";
+
 /** Bounded Cloudflare API failure with no provider-authored message or token content. */
 export class CloudflareAlertMetricsError extends Error {
   /** HTTP-like failure status. */
@@ -73,14 +86,19 @@ export class CloudflareAlertMetricsError extends Error {
   /** Numeric provider codes, when present. */
   readonly codes: readonly number[];
 
+  /** Allowlisted runtime failure class when no provider response was received. */
+  readonly failureKind?: CloudflareAlertMetricsFailureKind;
+
   constructor(
     status: number,
     message: string,
     codes: readonly number[] = [],
+    failureKind?: CloudflareAlertMetricsFailureKind,
   ) {
     super(message);
     this.status = status;
     this.codes = codes;
+    this.failureKind = failureKind;
   }
 }
 
@@ -96,6 +114,19 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value);
+}
+
+function classifyFetchFailure(error: unknown): CloudflareAlertMetricsFailureKind {
+  if (!(error instanceof Error)) return "unknown";
+  const message = error.message.toLowerCase();
+  if (/\b1042\b|same[- ]zone/.test(message)) return "same_zone_fetch";
+  if (/\b1024\b|cloudflare-owned/.test(message)) return "cloudflare_address";
+  if (/request context|different request/.test(message)) return "request_context";
+  if (/header|byte string/.test(message)) return "invalid_header";
+  if (/not implemented|not supported|is not a function/.test(message)) return "unsupported_runtime";
+  if (/access control|cannot access|not allowed/.test(message)) return "access_restricted";
+  if (/network|fetch failed|connection|dns/.test(message)) return "network";
+  return error.name === "TypeError" ? "type_error" : "unknown";
 }
 
 function assertIsoRange(from: Date, to: Date): void {
@@ -270,9 +301,19 @@ export class CloudflareAlertMetricsClient {
       });
     } catch (error) {
       if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
-        throw new CloudflareAlertMetricsError(504, "Cloudflare metrics request timed out.");
+        throw new CloudflareAlertMetricsError(
+          504,
+          "Cloudflare metrics request timed out.",
+          [],
+          "timeout",
+        );
       }
-      throw new CloudflareAlertMetricsError(502, "Could not reach the Cloudflare metrics API.");
+      throw new CloudflareAlertMetricsError(
+        502,
+        "Could not reach the Cloudflare metrics API.",
+        [],
+        classifyFetchFailure(error),
+      );
     } finally {
       clearTimeout(timeout);
     }
