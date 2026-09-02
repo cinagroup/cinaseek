@@ -104,7 +104,7 @@ describe("Cloudflare alert metrics client", () => {
     assert.equal(requests[0].init?.headers &&
       (requests[0].init.headers as Record<string, string>).Authorization,
     "Bearer test-token-never-log");
-    assert.ok(requests[0].init?.signal instanceof AbortSignal);
+    assert.equal(requests[0].init?.signal, undefined);
   });
 
   it("removes surrounding whitespace from a deployment secret before authentication", async () => {

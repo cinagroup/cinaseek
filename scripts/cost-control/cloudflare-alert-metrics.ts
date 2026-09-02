@@ -74,6 +74,7 @@ export type CloudflareAlertMetricsFailureKind =
   | "request_context"
   | "unsupported_runtime"
   | "access_restricted"
+  | "request_shape"
   | "network"
   | "type_error"
   | "unknown";
@@ -125,6 +126,7 @@ function classifyFetchFailure(error: unknown): CloudflareAlertMetricsFailureKind
   if (/header|byte string/.test(message)) return "invalid_header";
   if (/not implemented|not supported|is not a function/.test(message)) return "unsupported_runtime";
   if (/access control|cannot access|not allowed/.test(message)) return "access_restricted";
+  if (/expected pattern|invalid url|fetch api cannot load/.test(message)) return "request_shape";
   if (/network|fetch failed|connection|dns/.test(message)) return "network";
   return error.name === "TypeError" ? "type_error" : "unknown";
 }
@@ -287,20 +289,26 @@ export class CloudflareAlertMetricsClient {
   }
 
   async #request(url: string, init: RequestInit): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let didTimeout = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<Response>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        didTimeout = true;
+        reject(new Error("Cloudflare metrics request timeout"));
+      }, REQUEST_TIMEOUT_MS);
+    });
     try {
-      return await this.#fetch(url, {
+      const request = this.#fetch(url, {
         ...init,
         headers: {
           Authorization: `Bearer ${this.#config.apiToken}`,
           "Content-Type": "application/json",
           ...init.headers,
         },
-        signal: controller.signal,
       });
+      return await Promise.race([request, timeoutPromise]);
     } catch (error) {
-      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      if (didTimeout) {
         throw new CloudflareAlertMetricsError(
           504,
           "Cloudflare metrics request timed out.",
@@ -315,7 +323,7 @@ export class CloudflareAlertMetricsClient {
         classifyFetchFailure(error),
       );
     } finally {
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
     }
   }
 
