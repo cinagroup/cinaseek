@@ -25,10 +25,20 @@ const STATE_VERSION = 1;
 const MAX_STATE_BYTES = 256 * 1024;
 const MAX_ACTIVE_RESERVATIONS = 2_000;
 const WEBHOOK_TIMEOUT_MS = 10_000;
+const MAX_ALERT_EMAIL_RECIPIENTS = 10;
 
 interface KvNamespace {
   get<T>(key: string, type: "json"): Promise<T | null>;
   put(key: string, value: string): Promise<void>;
+}
+
+interface AlertEmailSender {
+  send(message: {
+    to: string[];
+    from: string;
+    subject: string;
+    text: string;
+  }): Promise<{ messageId: string }>;
 }
 
 /** Environment bindings for the standalone production cost-control monitor. */
@@ -55,6 +65,12 @@ export interface CostControlWorkerEnv {
   ALERT_WEBHOOK_URL?: string;
   /** Optional bearer token for the incident webhook, stored as a Worker secret. */
   ALERT_WEBHOOK_TOKEN?: string;
+  /** Optional Cloudflare Email Service binding for incident and recovery delivery. */
+  ALERT_EMAIL?: AlertEmailSender;
+  /** Sender on an Email Service-onboarded domain. */
+  ALERT_EMAIL_FROM?: string;
+  /** Comma-separated alert recipients, restricted again by the Email binding allowlist. */
+  ALERT_EMAIL_TO?: string;
   /** Stable, non-secret deployment label included with alert transitions. */
   DEPLOYMENT_NAME?: string;
 }
@@ -191,6 +207,28 @@ function webhookUrl(env: CostControlWorkerEnv): URL | undefined {
   return url;
 }
 
+function isEmailAddress(value: string): boolean {
+  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function emailConfiguration(env: CostControlWorkerEnv): {
+  sender: string;
+  recipients: string[];
+} | undefined {
+  if (!env.ALERT_EMAIL && !env.ALERT_EMAIL_FROM && !env.ALERT_EMAIL_TO) return undefined;
+  if (!env.ALERT_EMAIL || !env.ALERT_EMAIL_FROM || !env.ALERT_EMAIL_TO) {
+    throw new Error("ALERT_EMAIL, ALERT_EMAIL_FROM, and ALERT_EMAIL_TO must be configured together");
+  }
+  const sender = env.ALERT_EMAIL_FROM.trim();
+  const recipients = [...new Set(env.ALERT_EMAIL_TO.split(",").map(value => value.trim()))];
+  if (!isEmailAddress(sender) || recipients.length === 0 ||
+      recipients.length > MAX_ALERT_EMAIL_RECIPIENTS ||
+      recipients.some(recipient => !isEmailAddress(recipient))) {
+    throw new Error("alert email address configuration is invalid");
+  }
+  return { sender, recipients };
+}
+
 function transitionPayload(
   env: CostControlWorkerEnv,
   evaluation: CostControlEvaluation,
@@ -230,6 +268,51 @@ async function notifyWebhook(
   });
   await response.body?.cancel();
   if (!response.ok) throw new Error(`alert webhook returned HTTP ${response.status}`);
+}
+
+async function notifyEmail(
+  env: CostControlWorkerEnv,
+  payloads: ReturnType<typeof transitionPayload>,
+  log: (record: Record<string, unknown>) => void,
+): Promise<void> {
+  const config = emailConfiguration(env);
+  if (!config || payloads.length === 0) return;
+  const transition = payloads.every(payload => payload.transition === payloads[0]?.transition)
+    ? payloads[0]!.transition.toUpperCase()
+    : "CHANGED";
+  const subjectDetail = payloads.length === 1
+    ? payloads[0]!.alertId
+    : `${payloads.length} alert transitions`;
+  const text = payloads.map(payload => [
+    `CinaSeek cost-control alert ${payload.transition.toUpperCase()}`,
+    `Deployment: ${payload.deployment}`,
+    `Alert: ${payload.alertId}`,
+    `Observed at: ${payload.observedAt}`,
+    `Reason: ${payload.reason}`,
+    `Observed: ${JSON.stringify(payload.observed)}`,
+  ].join("\n")).join("\n\n");
+  try {
+    const result = await env.ALERT_EMAIL!.send({
+      to: config.recipients,
+      from: config.sender,
+      subject: `[CinaSeek][${transition}] ${subjectDetail}`,
+      text,
+    });
+    log({
+      event: "cost.alert.delivery.succeeded",
+      channel: "email",
+      transitionCount: payloads.length,
+      messageId: result.messageId,
+    });
+  } catch (error) {
+    log({
+      event: "cost.alert.delivery.failed",
+      channel: "email",
+      transitionCount: payloads.length,
+      errorCode: isRecord(error) && typeof error.code === "string" ? error.code : "unknown",
+    });
+    throw error;
+  }
 }
 
 function serializeState(state: PersistedCostControlState): string {
@@ -290,6 +373,7 @@ export async function runCostControlMonitor(
   for (const payload of payloads) {
     log({ event: `cost.alert.${payload.transition}`, ...payload });
   }
+  await notifyEmail(env, payloads, log);
   await notifyWebhook(env, payloads, dependencies.fetch ?? fetch);
   await env.ALERT_STATE.put(STATE_KEY, serializeState({
     version: STATE_VERSION,

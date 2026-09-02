@@ -96,6 +96,91 @@ describe("cost-control scheduled Worker", () => {
     assert.equal(fixture.writes(), 0);
   });
 
+  it("emails every configured recipient on a firing edge without logging addresses", async () => {
+    const fixture = environment();
+    const messages: Array<{
+      to: string[];
+      from: string;
+      subject: string;
+      text: string;
+    }> = [];
+    fixture.env.ALERT_EMAIL = {
+      async send(message) {
+        messages.push(message);
+        return { messageId: "test-message-id" };
+      },
+    };
+    fixture.env.ALERT_EMAIL_FROM = "alerts@cinaseek.ai";
+    fixture.env.ALERT_EMAIL_TO = "primary@example.test,secondary@example.test";
+    const logs: Record<string, unknown>[] = [];
+
+    await runCostControlMonitor(fixture.env, SCHEDULED_TIME, {
+      client: {} as CloudflareAlertMetricsClient,
+      collect: collector(),
+      log: record => logs.push(record),
+    });
+
+    assert.equal(messages.length, 1);
+    assert.deepEqual(messages[0]!.to, ["primary@example.test", "secondary@example.test"]);
+    assert.equal(messages[0]!.from, "alerts@cinaseek.ai");
+    assert.match(messages[0]!.subject, /\[FIRING\] realtime_security/);
+    assert.match(messages[0]!.text, /realtime_security/);
+    assert.ok(logs.some(log => log.event === "cost.alert.delivery.succeeded"));
+    assert.doesNotMatch(JSON.stringify(logs), /primary@|secondary@/);
+  });
+
+  it("does not commit state when email delivery fails", async () => {
+    const fixture = environment();
+    fixture.env.ALERT_EMAIL = {
+      async send() {
+        throw Object.assign(new Error("recipient detail must not be logged"), {
+          code: "E_INTERNAL_SERVER_ERROR",
+        });
+      },
+    };
+    fixture.env.ALERT_EMAIL_FROM = "alerts@cinaseek.ai";
+    fixture.env.ALERT_EMAIL_TO = "primary@example.test,secondary@example.test";
+    const logs: Record<string, unknown>[] = [];
+
+    await assert.rejects(
+      () => runCostControlMonitor(fixture.env, SCHEDULED_TIME, {
+        client: {} as CloudflareAlertMetricsClient,
+        collect: collector(),
+        log: record => logs.push(record),
+      }),
+      /recipient detail/,
+    );
+
+    assert.equal(fixture.writes(), 0);
+    assert.deepEqual(
+      logs.find(log => log.event === "cost.alert.delivery.failed"),
+      {
+        event: "cost.alert.delivery.failed",
+        channel: "email",
+        transitionCount: 1,
+        errorCode: "E_INTERNAL_SERVER_ERROR",
+      },
+    );
+    assert.doesNotMatch(JSON.stringify(logs), /recipient detail|primary@|secondary@/);
+  });
+
+  it("fails closed when the email binding configuration is incomplete", async () => {
+    const fixture = environment();
+    fixture.env.ALERT_EMAIL = {
+      async send() { return { messageId: "unused" }; },
+    };
+
+    await assert.rejects(
+      () => runCostControlMonitor(fixture.env, SCHEDULED_TIME, {
+        client: {} as CloudflareAlertMetricsClient,
+        collect: collector(),
+        log: () => undefined,
+      }),
+      /must be configured together/,
+    );
+    assert.equal(fixture.writes(), 0);
+  });
+
   it("fails closed on corrupt persisted state", async () => {
     const fixture = environment({ version: 99 });
     await assert.rejects(

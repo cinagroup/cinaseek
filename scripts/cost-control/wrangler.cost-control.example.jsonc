@@ -31,12 +31,24 @@
       "entrypoint": "CostControlReconciler"
     }
   ],
+  "send_email": [
+    {
+      "name": "ALERT_EMAIL",
+      "allowed_destination_addresses": [
+        "replace-with-primary-alert-recipient@example.com",
+        "replace-with-secondary-alert-recipient@example.com"
+      ],
+      "allowed_sender_addresses": ["alerts@replace-with-onboarded-domain.example"]
+    }
+  ],
   "vars": {
     "CLOUDFLARE_ACCOUNT_ID": "REPLACE_WITH_ACCOUNT_ID",
     "BACKEND_SERVICE": "cinaseek-ai-backend",
     "OVERSEER_NAMESPACE_ID": "REPLACE_WITH_OVERSEER_NAMESPACE_ID",
     "AI_GATEWAY_ID": "cinaos-ai",
     "AGENT_MAX_DURATION_MS": "1800000",
+    "ALERT_EMAIL_FROM": "alerts@replace-with-onboarded-domain.example",
+    "ALERT_EMAIL_TO": "replace-with-primary-alert-recipient@example.com,replace-with-secondary-alert-recipient@example.com",
     "DEPLOYMENT_NAME": "cinaseek-ai"
   }
 }

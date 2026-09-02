@@ -6,10 +6,10 @@ release manifest only classifies the Workshop Backend, Router, and gatekeepers, 
 unclassified deployable package would break release generation.
 
 The monitor reads Cloudflare metrics with a dedicated token, stores only alert edge state and
-random reservation IDs in a dedicated KV namespace, and optionally sends incident/recovery JSON to
-an HTTPS webhook. It never stores or emits prompts, user IDs, workspace IDs, filenames, provider
-messages, or credentials. A source failure produces `insufficient_data`; it cannot recover a firing
-alert.
+random reservation IDs in a dedicated KV namespace, and sends incident/recovery transitions through
+a restricted Cloudflare Email Service binding and/or an optional HTTPS webhook. It never stores or
+emits prompts, user IDs, workspace IDs, filenames, provider messages, or credentials. A source
+failure produces `insufficient_data`; it cannot recover a firing alert.
 
 ## Required production configuration
 
@@ -22,6 +22,10 @@ alert.
   `CostControlReconciler` entrypoint (`BACKEND_RECONCILER`).
 - The non-secret account, Backend service, Overseer namespace, AI Gateway, maximum agent duration,
   and deployment label variables shown in `wrangler.cost-control.example.jsonc`.
+- For email delivery, an `ALERT_EMAIL` Email Service binding restricted to the configured sender and
+  recipients, plus `ALERT_EMAIL_FROM` and comma-separated `ALERT_EMAIL_TO` variables. All three must
+  be configured together. Only firing and recovery edges send email; a failed delivery leaves the
+  previous state uncommitted so the next scheduled run retries it.
 - Optional `ALERT_WEBHOOK_URL` and secret `ALERT_WEBHOOK_TOKEN`.
 
 Copy the example to an ignored production Wrangler file, replace its non-secret placeholders, add
