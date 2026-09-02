@@ -1,0 +1,39 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "cinaseek-ai-cost-control",
+  "main": "./cost-control-worker.ts",
+  "compatibility_date": "2026-09-02",
+  "observability": {
+    "enabled": true
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "ALERT_STATE",
+      "id": "REPLACE_WITH_DEDICATED_KV_NAMESPACE_ID"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "WORKSPACE_BLOBS",
+      "bucket_name": "replace-with-workspace-blob-bucket"
+    }
+  ],
+  "services": [
+    {
+      "binding": "BACKEND_RECONCILER",
+      "service": "cinaseek-ai-backend",
+      "entrypoint": "CostControlReconciler"
+    }
+  ],
+  "vars": {
+    "CLOUDFLARE_ACCOUNT_ID": "REPLACE_WITH_ACCOUNT_ID",
+    "BACKEND_SERVICE": "cinaseek-ai-backend",
+    "OVERSEER_NAMESPACE_ID": "REPLACE_WITH_OVERSEER_NAMESPACE_ID",
+    "AI_GATEWAY_ID": "cinaos-ai",
+    "AGENT_MAX_DURATION_MS": "1800000",
+    "DEPLOYMENT_NAME": "cinaseek-ai"
+  }
+}
