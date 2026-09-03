@@ -186,6 +186,12 @@ function metricP95(
   return values.length === 1 && finiteNonNegative(values[0]) ? values[0] : undefined;
 }
 
+function percentile95(values: number[]): number | undefined {
+  if (values.length === 0 || values.some(value => !finiteNonNegative(value))) return undefined;
+  const sorted = values.toSorted((left, right) => left - right);
+  return sorted[Math.ceil(sorted.length * 0.95) - 1];
+}
+
 function mean(values: number[]): number | undefined {
   return values.length === 0 ? undefined : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
@@ -305,11 +311,11 @@ export async function collectCostControlSample(
     ));
   const workspaceReopenBaselinePromise = refreshWorkspaceReopenBaseline
     ? capture("workspace_reopen_baseline", failures, () =>
-        client.queryLogMetrics(
+        client.queryLogDurationValues(
           windows.workspaceReopenBaseline.from,
           windows.workspaceReopenBaseline.to,
-          ["cost.metric.workspace.reopen.finished"],
-          { groupByOperation: true, includeDurationP95: true },
+          "cost.metric.workspace.reopen.finished",
+          "ok",
         ))
     : Promise.resolve(null);
   const realtimePromise = capture("realtime", failures, () =>
@@ -389,7 +395,7 @@ export async function collectCostControlSample(
   const [
     sessions,
     workspaceReopens,
-    workspaceReopenBaseline,
+    workspaceReopenBaselineDurations,
     realtime,
     blobEvents,
     currentDoRows,
@@ -426,12 +432,9 @@ export async function collectCostControlSample(
 
   const sample: CostControlSample = { observedAt: windows.observedAt.toISOString() };
   let nextWorkspaceReopenBaseline = state.workspaceReopenBaseline;
-  if (workspaceReopenBaseline !== undefined && workspaceReopenBaseline !== null) {
-    const p95DurationMs = metricP95(
-      workspaceReopenBaseline,
-      "cost.metric.workspace.reopen.finished",
-      "ok",
-    );
+  if (workspaceReopenBaselineDurations !== undefined &&
+      workspaceReopenBaselineDurations !== null) {
+    const p95DurationMs = percentile95(workspaceReopenBaselineDurations);
     nextWorkspaceReopenBaseline = {
       refreshedAt: windows.observedAt.toISOString(),
       windowFrom: windows.workspaceReopenBaseline.from.toISOString(),
@@ -439,9 +442,10 @@ export async function collectCostControlSample(
       ...(p95DurationMs === undefined ? {} : { p95DurationMs }),
     };
   }
-  const baselineForEvaluation = refreshWorkspaceReopenBaseline && workspaceReopenBaseline === undefined
-    ? undefined
-    : nextWorkspaceReopenBaseline;
+  const baselineForEvaluation =
+    refreshWorkspaceReopenBaseline && workspaceReopenBaselineDurations === undefined
+      ? undefined
+      : nextWorkspaceReopenBaseline;
   if (sessions) {
     sample.workspaceSessions = {
       started: metricCount(sessions, "cost.metric.workspace.session.started"),
