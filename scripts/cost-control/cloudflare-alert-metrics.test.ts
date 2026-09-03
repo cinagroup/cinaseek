@@ -23,6 +23,17 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
+function durationEvent(id: string, durationMs: number) {
+  return {
+    $metadata: { id, service: CONFIG.backendService },
+    source: {
+      event: "cost.metric.workspace.reopen.finished",
+      operation: "ok",
+      durationMs,
+    },
+  };
+}
+
 describe("Cloudflare alert metrics client", () => {
   it("builds one scoped observability aggregation and merges calculation rows", async () => {
     const requests: { url: string; init?: RequestInit }[] = [];
@@ -115,6 +126,110 @@ describe("Cloudflare alert metrics client", () => {
       (requests[0].init.headers as Record<string, string>).Authorization,
     "Bearer test-token-never-log");
     assert.equal(requests[0].init?.signal, undefined);
+  });
+
+  it("paginates unsampled duration events and de-duplicates a page boundary", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const firstPage = Array.from(
+      { length: 2_000 },
+      (_, index) => durationEvent(`event-${index}`, index),
+    );
+    const client = new CloudflareAlertMetricsClient(CONFIG, async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push(body);
+      return jsonResponse({
+        success: true,
+        result: {
+          statistics: { abr_level: 1 },
+          events: {
+            events: body.offset
+              ? [durationEvent("event-1999", 1_999), durationEvent("event-2000", 2_000)]
+              : firstPage,
+          },
+        },
+      });
+    });
+
+    const durations = await client.queryLogDurationValues(
+      FROM,
+      TO,
+      "cost.metric.workspace.reopen.finished",
+      "ok",
+    );
+
+    assert.equal(durations.length, 2_001);
+    assert.equal(durations[0], 0);
+    assert.equal(durations.at(-1), 2_000);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].offset, "event-1999");
+    assert.equal(requests[1].offsetDirection, "next");
+  });
+
+  it("fails closed when a duration event page is adaptively sampled", async () => {
+    const client = new CloudflareAlertMetricsClient(CONFIG, async () => jsonResponse({
+      success: true,
+      result: {
+        statistics: { abr_level: 10 },
+        events: { events: [] },
+      },
+    }));
+
+    await assert.rejects(
+      client.queryLogDurationValues(
+        FROM,
+        TO,
+        "cost.metric.workspace.reopen.finished",
+        "ok",
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof CloudflareAlertMetricsError);
+        assert.equal(error.status, 502);
+        assert.match(error.message, /sampled/);
+        return true;
+      },
+    );
+  });
+
+  it("partitions a multi-day duration query into unsampled daily windows", async () => {
+    const timeframes: Array<{ from: number; to: number }> = [];
+    const client = new CloudflareAlertMetricsClient(CONFIG, async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        timeframe: { from: number; to: number };
+      };
+      timeframes.push(body.timeframe);
+      return jsonResponse({
+        success: true,
+        result: {
+          statistics: { abr_level: 1 },
+          events: {
+            events: [durationEvent(`event-${timeframes.length}`, timeframes.length)],
+          },
+        },
+      });
+    });
+    const from = new Date("2026-08-30T04:00:00.000Z");
+    const to = new Date("2026-09-02T04:00:00.000Z");
+
+    assert.deepEqual(await client.queryLogDurationValues(
+      from,
+      to,
+      "cost.metric.workspace.reopen.finished",
+      "ok",
+    ), [1, 2, 3]);
+    assert.deepEqual(timeframes, [
+      {
+        from: new Date("2026-08-30T04:00:00.000Z").valueOf(),
+        to: new Date("2026-08-31T04:00:00.000Z").valueOf(),
+      },
+      {
+        from: new Date("2026-08-31T04:00:00.000Z").valueOf(),
+        to: new Date("2026-09-01T04:00:00.000Z").valueOf(),
+      },
+      {
+        from: new Date("2026-09-01T04:00:00.000Z").valueOf(),
+        to: new Date("2026-09-02T04:00:00.000Z").valueOf(),
+      },
+    ]);
   });
 
   it("removes surrounding whitespace from a deployment secret before authentication", async () => {

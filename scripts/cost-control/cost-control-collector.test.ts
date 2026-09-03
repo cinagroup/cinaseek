@@ -60,16 +60,6 @@ describe("cost-control collector", () => {
             },
           ];
         }
-        if (events.includes("cost.metric.workspace.reopen.finished")) {
-          baselineQueries++;
-          return [{
-            event: "cost.metric.workspace.reopen.finished",
-            operation: "ok",
-            count: 1_000,
-            durationMs: 0,
-            p95DurationMs: 100,
-          }];
-        }
         if (events.includes("cost.metric.workspace.session.started")) {
           return [
             { event: "cost.metric.workspace.session.started", count: 100, durationMs: 0 },
@@ -104,6 +94,10 @@ describe("cost-control collector", () => {
             durationMs: HOUR_MS,
           },
         ];
+      },
+      async queryLogDurationValues() {
+        baselineQueries++;
+        return [80, 90, 100];
       },
       async queryOverseerHourlyCost(from: Date) {
         return [{
@@ -180,6 +174,7 @@ describe("cost-control collector", () => {
   it("isolates one failed source and leaves its alert input absent", async () => {
     const client = {
       async queryLogMetrics() { return []; },
+      async queryLogDurationValues() { return []; },
       async queryOverseerHourlyCost() { throw Object.assign(new Error("secret provider text"), {
         status: 403,
         codes: [9109],

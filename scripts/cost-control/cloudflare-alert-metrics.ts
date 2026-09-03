@@ -8,6 +8,9 @@ const AI_GATEWAY_PAGE_SIZE = 50;
 const GRAPHQL_GROUP_LIMIT = 10_000;
 const DURABLE_OBJECT_PAGE_SIZE = 10_000;
 const MAX_DURABLE_OBJECT_PAGES = 20;
+const LOG_EVENT_PAGE_SIZE = 2_000;
+const MAX_LOG_EVENT_PAGES_PER_DAY = 25;
+const LOG_EVENT_WINDOW_MS = 24 * 60 * 60_000;
 
 /** Configuration for the least-privilege Cloudflare metrics collector. */
 export interface CloudflareAlertMetricsConfig {
@@ -446,6 +449,124 @@ export class CloudflareAlertMetricsClient {
       ...(durationCalculations ?? []),
       ...(p95Calculations ?? []),
     ]);
+  }
+
+  /**
+   * Read unsampled duration values from bounded daily event pages.
+   *
+   * Long Workers Observability calculations may silently switch to adaptive sampling and erase
+   * sparse events. Event pages expose the sampling level and a stable cursor, so a seven-day
+   * percentile can be computed exactly while failing closed on sampling or an unsafe result size.
+   */
+  async queryLogDurationValues(
+    from: Date,
+    to: Date,
+    eventName: string,
+    operation: string,
+  ): Promise<number[]> {
+    assertIsoRange(from, to);
+    if (!/^[a-z][a-z0-9._-]{0,127}$/.test(eventName) ||
+        !/^[a-z][a-z0-9._-]{0,63}$/.test(operation)) {
+      throw new Error("invalid duration event query");
+    }
+    const url =
+      `${API_BASE}/accounts/${this.#config.accountId}/workers/observability/telemetry/query`;
+    const durations: number[] = [];
+    const seen = new Map<string, number>();
+
+    for (let windowFrom = from.valueOf(); windowFrom < to.valueOf();) {
+      const windowTo = Math.min(windowFrom + LOG_EVENT_WINDOW_MS, to.valueOf());
+      let offset: string | undefined;
+      for (let page = 0; page < MAX_LOG_EVENT_PAGES_PER_DAY; page++) {
+        const result = await this.#api(url, {
+          method: "POST",
+          body: JSON.stringify({
+            queryId: "cinaseek-cost-control-duration-events",
+            view: "events",
+            dry: true,
+            timeframe: { from: windowFrom, to: windowTo },
+            limit: LOG_EVENT_PAGE_SIZE,
+            ...(offset ? { offset, offsetDirection: "next" } : {}),
+            parameters: {
+              datasets: OBSERVABILITY_DATASETS,
+              filterCombination: "and",
+              filters: [
+                {
+                  kind: "filter",
+                  key: "$metadata.service",
+                  operation: "eq",
+                  type: "string",
+                  value: this.#config.backendService,
+                },
+                {
+                  kind: "filter",
+                  key: "event",
+                  operation: "eq",
+                  type: "string",
+                  value: eventName,
+                },
+                {
+                  kind: "filter",
+                  key: "operation",
+                  operation: "eq",
+                  type: "string",
+                  value: operation,
+                },
+              ],
+              limit: LOG_EVENT_PAGE_SIZE,
+            },
+          }),
+        });
+        const statistics = result.statistics;
+        if (!isRecord(statistics) || statistics.abr_level !== 1) {
+          throw new CloudflareAlertMetricsError(
+            502,
+            "Workers Observability duration events were sampled.",
+          );
+        }
+        const eventResult = result.events;
+        if (!isRecord(eventResult) || !Array.isArray(eventResult.events) ||
+            eventResult.events.length > LOG_EVENT_PAGE_SIZE) {
+          throw new CloudflareAlertMetricsError(502, "Invalid duration event response.");
+        }
+
+        let lastId: string | undefined;
+        for (const value of eventResult.events) {
+          if (!isRecord(value) || !isRecord(value.$metadata) || !isRecord(value.source) ||
+              typeof value.$metadata.id !== "string" || value.$metadata.id.length === 0 ||
+              value.$metadata.id.length > 128 ||
+              value.$metadata.service !== this.#config.backendService ||
+              value.source.event !== eventName || value.source.operation !== operation ||
+              !isFiniteNumber(value.source.durationMs) || value.source.durationMs < 0) {
+            throw new CloudflareAlertMetricsError(502, "Invalid duration event.");
+          }
+          const id = value.$metadata.id;
+          const durationMs = value.source.durationMs;
+          const previous = seen.get(id);
+          if (previous !== undefined && previous !== durationMs) {
+            throw new CloudflareAlertMetricsError(502, "Conflicting duplicate duration event.");
+          }
+          if (previous === undefined) {
+            seen.set(id, durationMs);
+            durations.push(durationMs);
+          }
+          lastId = id;
+        }
+        if (eventResult.events.length < LOG_EVENT_PAGE_SIZE) break;
+        if (!lastId || lastId === offset) {
+          throw new CloudflareAlertMetricsError(502, "Duration event pagination stalled.");
+        }
+        if (page === MAX_LOG_EVENT_PAGES_PER_DAY - 1) {
+          throw new CloudflareAlertMetricsError(
+            507,
+            "Duration event query exceeded its safe bound.",
+          );
+        }
+        offset = lastId;
+      }
+      windowFrom = windowTo;
+    }
+    return durations;
   }
 
   /** Read reservation create/settle edges for stale-reservation correlation. */
