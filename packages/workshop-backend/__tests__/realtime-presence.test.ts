@@ -12,9 +12,11 @@ import {
   signRealtimePresenceTicket,
   verifyRealtimePresenceTicket,
 } from "../src/realtime-presence-ticket";
+import type { OverseerDurableObject } from "../src/overseer";
 
 declare module "cloudflare:test" {
   interface ProvidedEnv {
+    TEST_OVERSEER: DurableObjectNamespace<OverseerDurableObject>;
     TEST_REALTIME_PRESENCE: DurableObjectNamespace<RealtimePresenceDurableObject>;
     REALTIME_TICKET_SECRET: string;
     REALTIME_CONSOLE_ENABLED: string;
@@ -75,8 +77,8 @@ describe("realtime presence tickets", () => {
   });
 
   it("rejects a valid ticket offered for a different request workspace", async () => {
-    let ticketWorkspaceId = crypto.randomUUID().replaceAll("-", "").padEnd(64, "a").slice(0, 64);
-    let requestWorkspaceId = crypto.randomUUID().replaceAll("-", "").padEnd(64, "b").slice(0, 64);
+    let ticketWorkspaceId = env.TEST_OVERSEER.newUniqueId().toString();
+    let requestWorkspaceId = env.TEST_OVERSEER.newUniqueId().toString();
     let ticket = await signRealtimePresenceTicket(
         env.REALTIME_TICKET_SECRET, claims(ticketWorkspaceId));
     let response = await SELF.fetch(new Request(
