@@ -497,11 +497,12 @@ export async function collectCostControlSample(
   }
 
   const currentDo = currentDoRows ? onlyHourlyCost(currentDoRows) : undefined;
-  const baselineDo = baselineDoRows.every(rows => rows !== undefined)
-    ? mean(baselineDoRows.flatMap(rows => {
-        const row = onlyHourlyCost(rows!);
-        return row ? [row.gbSecondsPerActiveWorkspace] : [];
-      }))
+  const normalizedBaselineDoRows = baselineDoRows.map(rows =>
+    rows === undefined ? undefined : onlyHourlyCost(rows));
+  const baselineDo = normalizedBaselineDoRows.every(
+    (row): row is DurableObjectHourlyCost => row !== undefined,
+  )
+    ? mean(normalizedBaselineDoRows.map(row => row.gbSecondsPerActiveWorkspace))
     : undefined;
   if (currentDo && baselineDo !== undefined) {
     sample.doGbSecondsPerActiveWorkspace = {

@@ -203,6 +203,36 @@ describe("cost-control collector", () => {
     assert.doesNotMatch(JSON.stringify(collected.failures), /secret provider text/);
     assert.equal(collected.sample.workspaceBlobs, undefined);
   });
+
+  it("requires all seven same-hour DO baseline samples before evaluating growth", async () => {
+    const missingBaselineHour = new Date("2026-08-29T03:00:00.000Z").valueOf();
+    const client = {
+      async queryLogMetrics() { return []; },
+      async queryLogDurationValues() { return []; },
+      async queryOverseerHourlyCost(from: Date) {
+        if (from.valueOf() === missingBaselineHour) return [];
+        return [{
+          hour: from.toISOString(),
+          durationGbSeconds: 10,
+          activeWorkspaces: 1,
+          gbSecondsPerActiveWorkspace: 10,
+        }];
+      },
+      async queryDistinctDynamicWorkers() { return 0; },
+      async queryAiGatewayCost() { return { cost: 0, requests: 0 }; },
+      async queryReservationEvents() { return []; },
+    } as unknown as CloudflareAlertMetricsClient;
+
+    const collected = await collectCostControlSample(
+      client,
+      NOW,
+      { activeReservations: {} },
+      { agentMaxDurationMs: 30 * 60_000 },
+    );
+
+    assert.equal(collected.sample.doGbSecondsPerActiveWorkspace, undefined);
+    assert.deepEqual(collected.failures, []);
+  });
 });
 
 const HOUR_MS = 60 * 60_000;
