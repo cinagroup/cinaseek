@@ -1,4 +1,4 @@
-import { env } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import {
   REALTIME_PRESENCE_PROTOCOL,
@@ -72,6 +72,23 @@ describe("realtime presence tickets", () => {
         claims("workspace", Date.now(), participant, "console"));
     await expect(verifyRealtimePresenceTicket(
         env.REALTIME_TICKET_SECRET, ticket)).resolves.toBeNull();
+  });
+
+  it("rejects a valid ticket offered for a different request workspace", async () => {
+    let ticketWorkspaceId = crypto.randomUUID().replaceAll("-", "").padEnd(64, "a").slice(0, 64);
+    let requestWorkspaceId = crypto.randomUUID().replaceAll("-", "").padEnd(64, "b").slice(0, 64);
+    let ticket = await signRealtimePresenceTicket(
+        env.REALTIME_TICKET_SECRET, claims(ticketWorkspaceId));
+    let response = await SELF.fetch(new Request(
+        `https://example.test/api/realtime-presence?workspace=${requestWorkspaceId}`,
+        {headers: {
+          Upgrade: "websocket",
+          Origin: "https://example.test",
+          "Sec-WebSocket-Protocol": `${REALTIME_PRESENCE_PROTOCOL}, ${ticket}`,
+        }}));
+
+    expect(response.status).toBe(403);
+    await expect(response.text()).resolves.toBe("Realtime workspace mismatch.");
   });
 });
 

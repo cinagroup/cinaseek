@@ -85,8 +85,14 @@ async function routeRealtimePresence(
   }
   try {
     let claims = await verifyRealtimePresenceTicket(env.REALTIME_TICKET_SECRET, protocols[1]);
-    if (!claims || claims.workspaceId !== workspaceId) {
+    if (!claims) {
       return new Response("Invalid or expired realtime ticket.", {status: 401});
+    }
+    if (claims.workspaceId !== workspaceId) {
+      logger.error("realtime request and ticket workspaces differ", {
+        event: "realtime.workspace.mismatch", operation: "request_vs_ticket",
+      });
+      return new Response("Realtime workspace mismatch.", {status: 403});
     }
     if (claims.channel === "console" && env.REALTIME_CONSOLE_ENABLED !== "true") {
       return new Response("Realtime console delivery is disabled.", {status: 503});
