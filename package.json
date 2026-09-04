@@ -13,6 +13,7 @@
     "app:mobile:sync": "pnpm --filter @cinaseek/app-mobile sync",
     "app:mobile:android": "pnpm --filter @cinaseek/app-mobile open:android",
     "app:mobile:ios": "pnpm --filter @cinaseek/app-mobile open:ios",
+    "audit:product-analytics": "node scripts/cost-control/product-analytics-parquet.ts",
     "build": "vp run -r --cache build",
     "deploy:cloudflare": "node scripts/deploy-cloudflare.mjs",
     "run-local": "node scripts/run-local.ts",
@@ -34,6 +35,8 @@
   "devDependencies": {
     "@types/node": "26.1.0",
     "aws4fetch": "^1.0.20",
+    "hyparquet": "1.29.2",
+    "hyparquet-compressors": "1.1.1",
     "jsdom": "^26.1.0",
     "jsonc-parser": "^3.3.1",
     "typescript": "catalog:",
