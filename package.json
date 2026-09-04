@@ -14,6 +14,7 @@
     "app:mobile:android": "pnpm --filter @cinaseek/app-mobile open:android",
     "app:mobile:ios": "pnpm --filter @cinaseek/app-mobile open:ios",
     "audit:product-analytics": "node scripts/cost-control/product-analytics-parquet.ts",
+    "audit:product-analytics:r2": "node scripts/cost-control/product-analytics-r2.ts",
     "build": "vp run -r --cache build",
     "deploy:cloudflare": "node scripts/deploy-cloudflare.mjs",
     "run-local": "node scripts/run-local.ts",

@@ -54,8 +54,21 @@ CinaSeek edited-revision events; it cannot prove that an increase belongs to thi
 the account also runs unrelated Dynamic Workers. Use `dynamic_worker_requested` Pipeline events for
 project attribution and a dedicated account when invoice-level isolation is required.
 
-After downloading finalized Pipeline objects through an independently authorized read-only path,
-audit them locally with:
+The preferred unattended acquisition path is a separate R2 S3 `Object Read only` credential scoped
+only to the product-analytics bucket. Do not add account-wide `Workers R2 Storage Read` to the
+monitor token merely to fetch objects: bucket-scoped object permissions work through the S3 API,
+not Cloudflare's REST API. Set the four process-local variables below, then audit one closed UTC
+partition. The command derives the Cloudflare endpoint from the account ID, performs only S3 List
+and Get requests, enforces the same file/byte bounds as the local parser, and removes its temporary
+downloads in a `finally` block:
+
+    CLOUDFLARE_ACCOUNT_ID=<account-id>
+    CINASEEK_PRODUCT_ANALYTICS_R2_BUCKET=cinaseek-ai-product-analytics
+    CINASEEK_PRODUCT_ANALYTICS_R2_ACCESS_KEY_ID=<bucket-scoped-access-key>
+    CINASEEK_PRODUCT_ANALYTICS_R2_SECRET_ACCESS_KEY=<bucket-scoped-secret-key>
+    pnpm audit:product-analytics:r2 -- --day 2026-09-03
+
+For manually acquired finalized Pipeline objects, audit them locally with:
 
     pnpm audit:product-analytics <file-or-directory> [...]
 
@@ -64,8 +77,9 @@ explicit directory), enforces file/count/total-byte bounds, supports the Pipelin
 de-duplicates by `event_id`, fails on conflicting copies or invalid Dynamic Worker identity fields,
 and reports stable fingerprints instead of raw user, workspace, chat, Worker, or revision IDs. It
 scopes local workpiece/chat counters to their workspace before fingerprinting, so equal counter
-values in different workspaces remain distinct without exposing low-entropy identifiers. It never
-lists or downloads R2 objects itself, so acquisition credentials stay outside the parser.
+values in different workspaces remain distinct without exposing low-entropy identifiers. The local
+parser never lists or downloads R2 objects itself, so acquisition credentials stay in the small
+acquisition wrapper rather than entering the content validator.
 
 The workspace-reopen alert reads a closed 30-minute outcome window and compares it with the latest
 rolling seven-day p95 latency baseline. Because a seven-day Workers Observability scan is materially

@@ -6,9 +6,12 @@ import { pathToFileURL } from "node:url";
 import { asyncBufferFromFile, parquetMetadataAsync, parquetReadObjects } from "hyparquet";
 import { compressors } from "hyparquet-compressors";
 
-const MAX_FILES = 500;
-const MAX_FILE_BYTES = 64 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 512 * 1024 * 1024;
+/** File and byte bounds shared by local and R2-backed product-analytics audits. */
+export const PRODUCT_ANALYTICS_PARQUET_LIMITS = {
+  maxFiles: 500,
+  maxFileBytes: 64 * 1024 * 1024,
+  maxTotalBytes: 512 * 1024 * 1024,
+} as const;
 const MAX_ROWS_PER_FILE = 1_000_000;
 const MAX_TOTAL_ROWS = 5_000_000;
 const EVENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -341,15 +344,23 @@ async function inputFiles(inputs: string[]): Promise<Array<{ path: string; size:
   }
   const uniquePaths = [...new Set(paths)].toSorted();
   if (uniquePaths.length === 0) throw new Error("no Parquet files found");
-  if (uniquePaths.length > MAX_FILES) throw new Error(`more than ${MAX_FILES} Parquet files selected`);
+  if (uniquePaths.length > PRODUCT_ANALYTICS_PARQUET_LIMITS.maxFiles) {
+    throw new Error(
+      `more than ${PRODUCT_ANALYTICS_PARQUET_LIMITS.maxFiles} Parquet files selected`,
+    );
+  }
   const result: Array<{ path: string; size: number }> = [];
   let totalBytes = 0;
   for (const path of uniquePaths) {
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error(`unsafe input file: ${basename(path)}`);
-    if (info.size > MAX_FILE_BYTES) throw new Error(`Parquet file exceeds 64 MiB: ${basename(path)}`);
+    if (info.size > PRODUCT_ANALYTICS_PARQUET_LIMITS.maxFileBytes) {
+      throw new Error(`Parquet file exceeds 64 MiB: ${basename(path)}`);
+    }
     totalBytes += info.size;
-    if (totalBytes > MAX_TOTAL_BYTES) throw new Error("Parquet inputs exceed 512 MiB total");
+    if (totalBytes > PRODUCT_ANALYTICS_PARQUET_LIMITS.maxTotalBytes) {
+      throw new Error("Parquet inputs exceed 512 MiB total");
+    }
     result.push({ path, size: info.size });
   }
   return result;
