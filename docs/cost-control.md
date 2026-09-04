@@ -57,9 +57,14 @@ Durable Object usage is read from Cloudflare's GraphQL analytics datasets:
 - `durableObjectsStorageGroups`
 - `durableObjectsSubrequestsAdaptiveGroups`
 
-Dynamic Worker billing is reconciled against `distinctDynamicWorkerCount`. Product events are not
-allowed to claim exact billable duration or exact distinct-worker counts, because a Worker or
-Durable Object can terminate without running application cleanup code.
+Dynamic Worker billing is reconciled against `distinctDynamicWorkerCount`. Cloudflare currently
+exposes only date/time filters for this dataset, so the value is account-wide: it cannot be narrowed
+to the Workshop parent Worker, dispatch namespace, workspace, or preview/mainline mode. Treat it as
+billing truth, not CinaSeek attribution. On a shared Cloudflare account, correlate a change with
+`dynamic_worker_requested` product events before assigning it to this deployment; use a dedicated
+account when exact per-deployment invoice attribution is required. Product events are not allowed
+to claim exact billable duration or exact distinct-worker counts, because a Worker or Durable
+Object can terminate without running application cleanup code.
 
 References:
 

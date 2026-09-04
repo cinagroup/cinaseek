@@ -46,6 +46,14 @@ be configured as a Cloudflare Workers Observability saved-query alert on
 `realtime.ticket.config.invalid` or `realtime.workspace.mismatch`; the scheduled evaluator provides
 stateful incident/recovery evidence and catches delivery/configuration drift.
 
+The Dynamic Worker growth input is Cloudflare's account-wide billable
+`distinctDynamicWorkerCount`. The provider schema exposes only date/time filters for this dataset,
+not a parent Worker, script, dispatch namespace, workspace, or preview/mainline filter. The monitor
+therefore treats the metric as conservative account spend protection and correlates it with
+CinaSeek edited-revision events; it cannot prove that an increase belongs to this deployment when
+the account also runs unrelated Dynamic Workers. Use `dynamic_worker_requested` Pipeline events for
+project attribution and a dedicated account when invoice-level isolation is required.
+
 The workspace-reopen alert reads a closed 30-minute outcome window and compares it with the latest
 rolling seven-day p95 latency baseline. Because a seven-day Workers Observability scan is materially
 larger than an outcome-window query, the baseline is refreshed at most once per UTC day and cached
