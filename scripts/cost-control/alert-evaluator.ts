@@ -20,6 +20,8 @@ export interface CostControlAlertState {
   unitCostConsecutiveBreachHours: number;
   /** Last closed hourly window already incorporated into the consecutive-hour counter. */
   lastUnitCostWindowId?: string;
+  /** Last conclusive R2 attachment-read latency state; absence of traffic never clears firing. */
+  workspaceBlobReadLatencyStatus?: "ok" | "firing";
 }
 
 /** One closed-window sample consumed by the deterministic alert evaluator. */
@@ -42,8 +44,17 @@ export interface CostControlSample {
   realtimeSecurity?: { ticketConfigurationErrors: number; crossWorkspaceMismatches: number };
   /** Realtime handshake outcomes over the closed 15-minute window. */
   realtimeHandshakes?: { successful: number; failed: number };
-  /** Workspace blob failures and reconciled orphan bytes. */
-  workspaceBlobs?: { mirrorFailures: number; deletionFailures: number; orphanBytes: number };
+  /** Workspace blob failures, reconciled orphan bytes, and attachment-read latency. */
+  workspaceBlobs?: {
+    mirrorFailures: number;
+    writeFailures: number;
+    readFailures: number;
+    deletionFailures: number;
+    orphanBytes: number;
+    successfulReads: number;
+    p95ReadDurationMs?: number;
+    baselineP95ReadDurationMs?: number;
+  };
   /** Current and previous seven-day Dynamic Worker and edited-revision counts. */
   dynamicWorkers?: {
     currentDistinct: number;
@@ -312,32 +323,106 @@ function evaluateRealtimeHandshakes(sample: CostControlSample): CostControlAlert
       );
 }
 
-function evaluateWorkspaceBlobs(sample: CostControlSample): CostControlAlertResult {
+function evaluateWorkspaceBlobs(
+  sample: CostControlSample,
+  state: CostControlAlertState,
+): {
+  result: CostControlAlertResult;
+  latencyStatus?: "ok" | "firing";
+} {
   const values = sample.workspaceBlobs;
   if (!values || !validCounts([
     values.mirrorFailures,
+    values.writeFailures,
+    values.readFailures,
     values.deletionFailures,
     values.orphanBytes,
+    values.successfulReads,
   ])) {
-    return result(
-      "workspace_blob_integrity",
-      "insufficient_data",
-      "Workspace blob integrity sample is absent or invalid.",
-    );
+    return {
+      result: result(
+        "workspace_blob_integrity",
+        "insufficient_data",
+        "Workspace blob integrity sample is absent or invalid.",
+      ),
+      latencyStatus: state.workspaceBlobReadLatencyStatus,
+    };
   }
-  const observed = {
+  const observed: Record<string, number> = {
     mirrorFailures: values.mirrorFailures,
+    writeFailures: values.writeFailures,
+    readFailures: values.readFailures,
     deletionFailures: values.deletionFailures,
     orphanBytes: values.orphanBytes,
+    successfulReads: values.successfulReads,
   };
-  return values.mirrorFailures + values.deletionFailures + values.orphanBytes > 0
-    ? result(
+  let latencyStatus = state.workspaceBlobReadLatencyStatus;
+  let latencyInconclusive = false;
+  if (values.successfulReads > 0) {
+    const p95 = values.p95ReadDurationMs;
+    const baselineP95 = values.baselineP95ReadDurationMs;
+    const ratio = p95 === undefined || baselineP95 === undefined
+      ? undefined
+      : growthRatio(p95, baselineP95);
+    if (ratio === undefined) {
+      latencyInconclusive = true;
+    } else {
+      Object.assign(observed, {
+        p95ReadDurationMs: p95,
+        baselineP95ReadDurationMs: baselineP95,
+        readLatencyRatio: ratio,
+      });
+      latencyStatus = ratio > 1.2 ? "firing" : "ok";
+    }
+  }
+
+  if (values.mirrorFailures + values.writeFailures + values.readFailures +
+      values.deletionFailures + values.orphanBytes > 0) {
+    return {
+      result: result(
         "workspace_blob_integrity",
         "firing",
-        "Workspace blob mirror/deletion failures or reconciled orphan bytes are above zero.",
+        "Workspace blob write/read/delete failures or reconciled orphan bytes are above zero.",
         observed,
-      )
-    : result("workspace_blob_integrity", "ok", "Workspace blob integrity checks are clean.", observed);
+      ),
+      latencyStatus,
+    };
+  }
+  if (latencyInconclusive) {
+    return {
+      result: result(
+        "workspace_blob_integrity",
+        "insufficient_data",
+        "Attachment-read latency requires finite p95 values and a positive seven-day baseline.",
+        observed,
+      ),
+      latencyStatus,
+    };
+  }
+  if (latencyStatus === "firing") {
+    return {
+      result: result(
+        "workspace_blob_integrity",
+        "firing",
+        values.successfulReads > 0
+          ? "Attachment-read p95 latency is more than 20% above the seven-day baseline."
+          : "Attachment-read latency remains firing until a conclusive read window.",
+        observed,
+      ),
+      latencyStatus,
+    };
+  }
+  return {
+    result: result(
+      "workspace_blob_integrity",
+      "ok",
+      values.successfulReads > 0
+        ? "Workspace blob integrity and attachment-read latency are within thresholds."
+        : "Workspace blob integrity checks are clean; no attachment read occurred in this window.",
+      observed,
+    ),
+    latencyStatus,
+  };
 }
 
 function evaluateDynamicWorkers(sample: CostControlSample): CostControlAlertResult {
@@ -521,13 +606,14 @@ export function evaluateCostControlAlerts(
   if (previousState.version !== 1) throw new Error("unsupported alert state version");
 
   const unitCost = evaluateUnitCost(sample, previousState);
+  const workspaceBlobs = evaluateWorkspaceBlobs(sample, previousState);
   const results = [
     evaluateDoCost(sample),
     evaluateWorkspaceSessions(sample),
     evaluateWorkspaceReopens(sample),
     evaluateRealtimeSecurity(sample),
     evaluateRealtimeHandshakes(sample),
-    evaluateWorkspaceBlobs(sample),
+    workspaceBlobs.result,
     evaluateDynamicWorkers(sample),
     evaluateUsageReservations(sample),
     unitCost.result,
@@ -553,6 +639,9 @@ export function evaluateCostControlAlerts(
       lastStatuses: nextStatuses,
       unitCostConsecutiveBreachHours: unitCost.breachHours,
       ...(unitCost.windowId ? { lastUnitCostWindowId: unitCost.windowId } : {}),
+      ...(workspaceBlobs.latencyStatus
+        ? { workspaceBlobReadLatencyStatus: workspaceBlobs.latencyStatus }
+        : {}),
     },
   };
 }

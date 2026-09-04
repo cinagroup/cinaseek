@@ -18,6 +18,8 @@ describe("cost-control collector", () => {
     assert.equal(windows.workspaceSessions.to.toISOString(), "2026-09-02T04:30:00.000Z");
     assert.equal(windows.workspaceReopenBaseline.from.toISOString(), "2026-08-26T04:00:00.000Z");
     assert.equal(windows.workspaceReopenBaseline.to.toISOString(), "2026-09-02T04:00:00.000Z");
+    assert.equal(windows.attachmentReadBaseline.from.toISOString(), "2026-08-26T04:15:00.000Z");
+    assert.equal(windows.attachmentReadBaseline.to.toISOString(), "2026-09-02T04:15:00.000Z");
     assert.equal(windows.hour.from.toISOString(), "2026-09-02T03:00:00.000Z");
     assert.equal(windows.hour.to.toISOString(), "2026-09-02T04:00:00.000Z");
     assert.equal(windows.baselineHours[0].from.toISOString(), "2026-08-26T03:00:00.000Z");
@@ -34,6 +36,7 @@ describe("cost-control collector", () => {
 
   it("builds a complete healthy sample and carries the reservation ledger", async () => {
     let baselineQueries = 0;
+    let currentReadQueries = 0;
     const client = {
       async queryLogMetrics(from: Date, to: Date, events: string[]) {
         if (events.includes("realtime.ticket.config.invalid")) {
@@ -42,7 +45,14 @@ describe("cost-control collector", () => {
             { event: "cost.metric.realtime.handshake.failed", count: 5, durationMs: 0 },
           ];
         }
-        if (events.includes("chat.attachment.r2.mirror.failed")) return [];
+        if (events.includes("chat.attachment.r2.mirror.failed")) {
+          return [{
+            event: "chat.attachment.r2.read.completed",
+            operation: "read",
+            count: 2,
+            durationMs: 0,
+          }];
+        }
         if (events.includes("workspace.reopen.data_lost")) {
           return [
             {
@@ -95,9 +105,16 @@ describe("cost-control collector", () => {
           },
         ];
       },
-      async queryLogDurationValues() {
+      async queryLogDurationValues(from: Date, to: Date, event: string) {
+        if (event === "chat.attachment.r2.read.completed" &&
+            to.valueOf() - from.valueOf() === 15 * 60_000) {
+          currentReadQueries++;
+          return [40, 50];
+        }
         baselineQueries++;
-        return [80, 90, 100];
+        return event === "chat.attachment.r2.read.completed"
+          ? [40, 50, 60]
+          : [80, 90, 100];
       },
       async queryOverseerHourlyCost(from: Date) {
         return [{
@@ -145,8 +162,13 @@ describe("cost-control collector", () => {
     assert.deepEqual(collected.sample.realtimeHandshakes, { successful: 1_000, failed: 5 });
     assert.deepEqual(collected.sample.workspaceBlobs, {
       mirrorFailures: 0,
+      writeFailures: 0,
+      readFailures: 0,
       deletionFailures: 0,
       orphanBytes: 0,
+      successfulReads: 2,
+      p95ReadDurationMs: 50,
+      baselineP95ReadDurationMs: 60,
     });
     assert.deepEqual(collected.sample.dynamicWorkers, {
       currentDistinct: 110,
@@ -159,7 +181,9 @@ describe("cost-control collector", () => {
     assert.ok(Math.abs((collected.sample.unitCost?.perSuccessfulRun?.baseline ?? 0) - 0.1) < 1e-12);
     assert.equal(Object.keys(collected.nextState.activeReservations).length, 1);
     assert.equal(collected.nextState.workspaceReopenBaseline?.p95DurationMs, 100);
-    assert.equal(baselineQueries, 1);
+    assert.equal(collected.nextState.attachmentReadBaseline?.p95DurationMs, 60);
+    assert.equal(baselineQueries, 2);
+    assert.equal(currentReadQueries, 1);
 
     const repeated = await collectCostControlSample(
       client,
@@ -168,7 +192,9 @@ describe("cost-control collector", () => {
       { agentMaxDurationMs: 30 * 60_000, queryWorkspaceOrphanBytes: async () => 0 },
     );
     assert.equal(repeated.sample.workspaceReopens?.baselineP95DurationMs, 100);
-    assert.equal(baselineQueries, 1);
+    assert.equal(repeated.sample.workspaceBlobs?.baselineP95ReadDurationMs, 60);
+    assert.equal(baselineQueries, 2);
+    assert.equal(currentReadQueries, 2);
   });
 
   it("isolates one failed source and leaves its alert input absent", async () => {

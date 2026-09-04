@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OverseerDurableObject } from "../src/overseer.js";
 
 declare module "cloudflare:workers" {
@@ -114,7 +114,15 @@ describe("workspace attachment quota ledger", () => {
         ...r2Record,
         state: {type: "committed", chatId: 7},
       });
+      let info = vi.spyOn(console, "info").mockImplementation(() => {});
       expect(await overseer.getChatAttachmentData(7, r2Id)).toEqual(r2Data);
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        component: "workshop.overseer",
+        event: "chat.attachment.r2.read.completed",
+        operation: "read",
+        durationMs: expect.any(Number),
+      }));
+      info.mockRestore();
 
       let legacyId = "44444444-4444-4444-8444-444444444444";
       let legacyData = new Uint8Array([10, 11]);

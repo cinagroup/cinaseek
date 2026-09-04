@@ -4751,12 +4751,32 @@ class OverseerImpl implements AgentHooks {
     });
   }
 
+  async #readChatAttachmentObject(
+      bucket: R2Bucket, blobKey: string): Promise<Uint8Array | undefined> {
+    let startedAt = Date.now();
+    try {
+      let object = await bucket.get(blobKey);
+      if (!object) return undefined;
+      let data = new Uint8Array(await object.arrayBuffer());
+      this.logger.info("read chat attachment from R2", {
+        event: "chat.attachment.r2.read.completed", operation: "read",
+        durationMs: Date.now() - startedAt,
+      });
+      return data;
+    } catch (error) {
+      this.logger.error("failed to read chat attachment from R2", {
+        event: "chat.attachment.r2.read.failed", operation: "read", error,
+      });
+      throw error;
+    }
+  }
+
   async #readChatAttachmentContent(content: ChatAttachmentContentRecord): Promise<Uint8Array> {
     let mode = this.#workspaceBlobMode();
     let bucket = this.env.WORKSPACE_BLOBS;
     if (mode === "r2" && bucket && content.blobKey) {
-      let object = await bucket.get(content.blobKey);
-      if (object) return new Uint8Array(await object.arrayBuffer());
+      let data = await this.#readChatAttachmentObject(bucket, content.blobKey);
+      if (data) return data;
     }
 
     if (content.data) {
@@ -4776,8 +4796,8 @@ class OverseerImpl implements AgentHooks {
     }
 
     if (bucket && content.blobKey) {
-      let object = await bucket.get(content.blobKey);
-      if (object) return new Uint8Array(await object.arrayBuffer());
+      let data = await this.#readChatAttachmentObject(bucket, content.blobKey);
+      if (data) return data;
     }
     this.logger.error("chat attachment body is unavailable", {
       event: "chat.attachment.r2.read.missing", operation: "read",

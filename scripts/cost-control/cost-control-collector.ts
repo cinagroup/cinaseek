@@ -44,6 +44,8 @@ export interface CostControlWindows {
   workspaceSessions: DateRange;
   /** Seven-day rolling baseline ending where the workspace-reopen window begins. */
   workspaceReopenBaseline: DateRange;
+  /** Seven-day rolling baseline ending where the attachment-read window begins. */
+  attachmentReadBaseline: DateRange;
   /** Last complete UTC hour. */
   hour: DateRange;
   /** Same UTC hour on each of the previous seven days. */
@@ -69,6 +71,17 @@ export interface CostControlCollectorState {
     /** Exclusive end of the queried rolling window. */
     windowTo: string;
     /** Successful-reopen p95; absent when the completed window had no samples. */
+    p95DurationMs?: number;
+  };
+  /** Daily-refreshed seven-day R2 attachment-read latency baseline. */
+  attachmentReadBaseline?: {
+    /** Evaluation timestamp of the successful refresh. */
+    refreshedAt: string;
+    /** Inclusive start of the queried rolling window. */
+    windowFrom: string;
+    /** Exclusive end of the queried rolling window. */
+    windowTo: string;
+    /** Successful R2 attachment-read p95; absent when the completed window had no samples. */
     p95DurationMs?: number;
   };
 }
@@ -146,6 +159,10 @@ export function planCostControlWindows(
     workspaceReopenBaseline: {
       from: new Date(workspaceSessions.from.valueOf() - 7 * DAY_MS),
       to: workspaceSessions.from,
+    },
+    attachmentReadBaseline: {
+      from: new Date(realtimeEnd.valueOf() - 15 * MINUTE_MS - 7 * DAY_MS),
+      to: new Date(realtimeEnd.valueOf() - 15 * MINUTE_MS),
     },
     hour,
     baselineHours,
@@ -270,6 +287,8 @@ const REALTIME_EVENTS = [
 const BLOB_EVENTS = [
   "chat.attachment.r2.mirror.failed",
   "chat.attachment.r2.write.failed",
+  "chat.attachment.r2.read.completed",
+  "chat.attachment.r2.read.failed",
   "chat.attachment.r2.read.missing",
   "chat.attachment.r2.delete.failed",
 ];
@@ -294,6 +313,9 @@ export async function collectCostControlSample(
   const refreshWorkspaceReopenBaseline =
     state.workspaceReopenBaseline === undefined ||
     utcDate(new Date(state.workspaceReopenBaseline.refreshedAt)) !== utcDate(windows.observedAt);
+  const refreshAttachmentReadBaseline =
+    state.attachmentReadBaseline === undefined ||
+    utcDate(new Date(state.attachmentReadBaseline.refreshedAt)) !== utcDate(windows.observedAt);
 
   const sessionsPromise = capture("workspace_sessions", failures, () =>
     client.queryLogMetrics(
@@ -326,7 +348,28 @@ export async function collectCostControlSample(
       { groupByOperation: true },
     ));
   const blobPromise = capture("workspace_blob_events", failures, () =>
-    client.queryLogMetrics(windows.realtime.from, windows.realtime.to, BLOB_EVENTS));
+    client.queryLogMetrics(
+      windows.realtime.from,
+      windows.realtime.to,
+      BLOB_EVENTS,
+      { groupByOperation: true },
+    ));
+  const attachmentReadDurationsPromise = capture("workspace_blob_read_durations", failures, () =>
+    client.queryLogDurationValues(
+      windows.realtime.from,
+      windows.realtime.to,
+      "chat.attachment.r2.read.completed",
+      "read",
+    ));
+  const attachmentReadBaselinePromise = refreshAttachmentReadBaseline
+    ? capture("workspace_blob_read_baseline", failures, () =>
+        client.queryLogDurationValues(
+          windows.attachmentReadBaseline.from,
+          windows.attachmentReadBaseline.to,
+          "chat.attachment.r2.read.completed",
+          "read",
+        ))
+    : Promise.resolve(null);
   const currentDoPromise = capture("do_current_hour", failures, () =>
     client.queryOverseerHourlyCost(windows.hour.from, windows.hour.to));
   const baselineDoPromise = Promise.all(windows.baselineHours.map((range, index) =>
@@ -398,6 +441,8 @@ export async function collectCostControlSample(
     workspaceReopenBaselineDurations,
     realtime,
     blobEvents,
+    attachmentReadDurations,
+    attachmentReadBaselineDurations,
     currentDoRows,
     baselineDoRows,
     currentHourly,
@@ -416,6 +461,8 @@ export async function collectCostControlSample(
     workspaceReopenBaselinePromise,
     realtimePromise,
     blobPromise,
+    attachmentReadDurationsPromise,
+    attachmentReadBaselinePromise,
     currentDoPromise,
     baselineDoPromise,
     currentHourlyPromise,
@@ -446,6 +493,21 @@ export async function collectCostControlSample(
     refreshWorkspaceReopenBaseline && workspaceReopenBaselineDurations === undefined
       ? undefined
       : nextWorkspaceReopenBaseline;
+  let nextAttachmentReadBaseline = state.attachmentReadBaseline;
+  if (attachmentReadBaselineDurations !== undefined &&
+      attachmentReadBaselineDurations !== null) {
+    const p95DurationMs = percentile95(attachmentReadBaselineDurations);
+    nextAttachmentReadBaseline = {
+      refreshedAt: windows.observedAt.toISOString(),
+      windowFrom: windows.attachmentReadBaseline.from.toISOString(),
+      windowTo: windows.attachmentReadBaseline.to.toISOString(),
+      ...(p95DurationMs === undefined ? {} : { p95DurationMs }),
+    };
+  }
+  const attachmentReadBaselineForEvaluation =
+    refreshAttachmentReadBaseline && attachmentReadBaselineDurations === undefined
+      ? undefined
+      : nextAttachmentReadBaseline;
   if (sessions) {
     sample.workspaceSessions = {
       started: metricCount(sessions, "cost.metric.workspace.session.started"),
@@ -486,13 +548,26 @@ export async function collectCostControlSample(
     };
   }
   if (blobEvents && orphanBytes !== undefined && finiteNonNegative(orphanBytes)) {
+    const successfulReads = metricCount(
+      blobEvents,
+      "chat.attachment.r2.read.completed",
+      "read",
+    );
+    const p95ReadDurationMs = attachmentReadDurations === undefined
+      ? undefined
+      : percentile95(attachmentReadDurations);
+    const baselineP95ReadDurationMs = attachmentReadBaselineForEvaluation?.p95DurationMs;
     sample.workspaceBlobs = {
-      mirrorFailures:
-        metricCount(blobEvents, "chat.attachment.r2.mirror.failed") +
-        metricCount(blobEvents, "chat.attachment.r2.write.failed") +
+      mirrorFailures: metricCount(blobEvents, "chat.attachment.r2.mirror.failed"),
+      writeFailures: metricCount(blobEvents, "chat.attachment.r2.write.failed"),
+      readFailures:
+        metricCount(blobEvents, "chat.attachment.r2.read.failed") +
         metricCount(blobEvents, "chat.attachment.r2.read.missing"),
       deletionFailures: metricCount(blobEvents, "chat.attachment.r2.delete.failed"),
       orphanBytes,
+      successfulReads,
+      ...(p95ReadDurationMs === undefined ? {} : { p95ReadDurationMs }),
+      ...(baselineP95ReadDurationMs === undefined ? {} : { baselineP95ReadDurationMs }),
     };
   }
 
@@ -613,6 +688,9 @@ export async function collectCostControlSample(
       ...(nextWorkspaceReopenBaseline === undefined
         ? {}
         : { workspaceReopenBaseline: nextWorkspaceReopenBaseline }),
+      ...(nextAttachmentReadBaseline === undefined
+        ? {}
+        : { attachmentReadBaseline: nextAttachmentReadBaseline }),
     },
     failures,
   };

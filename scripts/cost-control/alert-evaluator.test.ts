@@ -22,7 +22,16 @@ function healthySample(): CostControlSample {
     },
     realtimeSecurity: { ticketConfigurationErrors: 0, crossWorkspaceMismatches: 0 },
     realtimeHandshakes: { successful: 995, failed: 5 },
-    workspaceBlobs: { mirrorFailures: 0, deletionFailures: 0, orphanBytes: 0 },
+    workspaceBlobs: {
+      mirrorFailures: 0,
+      writeFailures: 0,
+      readFailures: 0,
+      deletionFailures: 0,
+      orphanBytes: 0,
+      successfulReads: 10,
+      p95ReadDurationMs: 120,
+      baselineP95ReadDurationMs: 100,
+    },
     dynamicWorkers: {
       currentDistinct: 125,
       baselineDistinct: 100,
@@ -75,7 +84,16 @@ describe("cost-control alert evaluator", () => {
     };
     sample.realtimeSecurity = { ticketConfigurationErrors: 1, crossWorkspaceMismatches: 0 };
     sample.realtimeHandshakes = { successful: 994, failed: 6 };
-    sample.workspaceBlobs = { mirrorFailures: 0, deletionFailures: 1, orphanBytes: 0 };
+    sample.workspaceBlobs = {
+      mirrorFailures: 0,
+      writeFailures: 0,
+      readFailures: 0,
+      deletionFailures: 1,
+      orphanBytes: 0,
+      successfulReads: 10,
+      p95ReadDurationMs: 120,
+      baselineP95ReadDurationMs: 100,
+    };
     sample.dynamicWorkers = {
       currentDistinct: 126,
       baselineDistinct: 100,
@@ -130,6 +148,61 @@ describe("cost-control alert evaluator", () => {
         ({ id }) => id === "workspace_reopen_slo",
       )?.reason,
       "Workspace reopen p95 latency is more than 20% above the seven-day baseline.",
+    );
+  });
+
+  it("fires on attachment-read p95 regression and requires a conclusive read to recover", () => {
+    const slow = healthySample();
+    slow.workspaceBlobs!.p95ReadDurationMs = 121;
+    const fired = evaluateCostControlAlerts(slow);
+    const blobResult = fired.results.find(({ id }) => id === "workspace_blob_integrity");
+    assert.equal(blobResult?.status, "firing");
+    assert.equal(
+      blobResult?.reason,
+      "Attachment-read p95 latency is more than 20% above the seven-day baseline.",
+    );
+    assert.equal(fired.nextState.workspaceBlobReadLatencyStatus, "firing");
+
+    const noReads = healthySample();
+    noReads.workspaceBlobs = {
+      mirrorFailures: 0,
+      writeFailures: 0,
+      readFailures: 0,
+      deletionFailures: 0,
+      orphanBytes: 0,
+      successfulReads: 0,
+    };
+    const retained = evaluateCostControlAlerts(noReads, fired.nextState);
+    assert.equal(
+      retained.results.find(({ id }) => id === "workspace_blob_integrity")?.status,
+      "firing",
+    );
+    assert.deepEqual(retained.transitions, []);
+
+    const recovered = evaluateCostControlAlerts(healthySample(), retained.nextState);
+    assert.deepEqual(
+      recovered.transitions.filter(({ id }) => id === "workspace_blob_integrity")
+        .map(({ id, type }) => ({ id, type })),
+      [{ id: "workspace_blob_integrity", type: "recovered" }],
+    );
+    assert.equal(recovered.nextState.workspaceBlobReadLatencyStatus, "ok");
+  });
+
+  it("fires immediately on an R2 read failure even without a latency sample", () => {
+    const sample = healthySample();
+    sample.workspaceBlobs = {
+      mirrorFailures: 0,
+      writeFailures: 0,
+      readFailures: 1,
+      deletionFailures: 0,
+      orphanBytes: 0,
+      successfulReads: 0,
+    };
+    assert.equal(
+      evaluateCostControlAlerts(sample).results.find(
+        ({ id }) => id === "workspace_blob_integrity",
+      )?.status,
+      "firing",
     );
   });
 

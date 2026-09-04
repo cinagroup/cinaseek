@@ -117,7 +117,10 @@ function parseAlertState(value: unknown): CostControlAlertState {
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.lastStatuses) ||
       !Number.isSafeInteger(value.unitCostConsecutiveBreachHours) ||
       (value.unitCostConsecutiveBreachHours as number) < 0 ||
-      (value.lastUnitCostWindowId !== undefined && !isIsoTimestamp(value.lastUnitCostWindowId))) {
+      (value.lastUnitCostWindowId !== undefined && !isIsoTimestamp(value.lastUnitCostWindowId)) ||
+      (value.workspaceBlobReadLatencyStatus !== undefined &&
+       value.workspaceBlobReadLatencyStatus !== "ok" &&
+       value.workspaceBlobReadLatencyStatus !== "firing")) {
     throw new Error("persisted alert state is invalid");
   }
   const lastStatuses: CostControlAlertState["lastStatuses"] = {};
@@ -134,6 +137,12 @@ function parseAlertState(value: unknown): CostControlAlertState {
     ...(value.lastUnitCostWindowId === undefined
       ? {}
       : { lastUnitCostWindowId: value.lastUnitCostWindowId as string }),
+    ...(value.workspaceBlobReadLatencyStatus === undefined
+      ? {}
+      : {
+          workspaceBlobReadLatencyStatus:
+            value.workspaceBlobReadLatencyStatus as "ok" | "firing",
+        }),
   };
 }
 
@@ -166,6 +175,18 @@ function parseCollectorState(value: unknown): CostControlCollectorState {
          !Number.isFinite(baseline.p95DurationMs) || baseline.p95DurationMs < 0)))) {
     throw new Error("persisted workspace reopen baseline is invalid");
   }
+  const attachmentReadBaseline = value.attachmentReadBaseline;
+  if (attachmentReadBaseline !== undefined && (!isRecord(attachmentReadBaseline) ||
+      !isIsoTimestamp(attachmentReadBaseline.refreshedAt) ||
+      !isIsoTimestamp(attachmentReadBaseline.windowFrom) ||
+      !isIsoTimestamp(attachmentReadBaseline.windowTo) ||
+      Date.parse(attachmentReadBaseline.windowFrom) >= Date.parse(attachmentReadBaseline.windowTo) ||
+      (attachmentReadBaseline.p95DurationMs !== undefined &&
+       (typeof attachmentReadBaseline.p95DurationMs !== "number" ||
+        !Number.isFinite(attachmentReadBaseline.p95DurationMs) ||
+        attachmentReadBaseline.p95DurationMs < 0)))) {
+    throw new Error("persisted attachment read baseline is invalid");
+  }
   return {
     activeReservations,
     ...(value.lastReservationScanAt === undefined
@@ -181,6 +202,18 @@ function parseCollectorState(value: unknown): CostControlCollectorState {
             ...(baseline.p95DurationMs === undefined
               ? {}
               : { p95DurationMs: baseline.p95DurationMs as number }),
+          },
+        }),
+    ...(attachmentReadBaseline === undefined
+      ? {}
+      : {
+          attachmentReadBaseline: {
+            refreshedAt: attachmentReadBaseline.refreshedAt as string,
+            windowFrom: attachmentReadBaseline.windowFrom as string,
+            windowTo: attachmentReadBaseline.windowTo as string,
+            ...(attachmentReadBaseline.p95DurationMs === undefined
+              ? {}
+              : { p95DurationMs: attachmentReadBaseline.p95DurationMs as number }),
           },
         }),
   };
