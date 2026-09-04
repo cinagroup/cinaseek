@@ -246,11 +246,17 @@ export function analyzeProductAnalyticsRows(
       continue;
     }
     dynamicRequests++;
+    // Workpiece and chat IDs are counters local to one Overseer workspace. Fingerprinting the
+    // bare integer both collapses distinct cross-workspace entities and makes a low-entropy ID
+    // susceptible to dictionary reversal. Bind each local ID to its high-entropy workspace ID.
     const workspace = fingerprint(event.workspaceId);
-    const workpiece = fingerprint(String(workpieceId));
+    const workpieceIdentity = `${event.workspaceId}:workpiece:${workpieceId}`;
+    const workpiece = fingerprint(workpieceIdentity);
     const worker = fingerprint(workerId);
     const version = fingerprint(executionVersion);
-    const chat = chatId === undefined ? undefined : fingerprint(String(chatId));
+    const chat = chatId === undefined
+      ? undefined
+      : fingerprint(`${event.workspaceId}:chat:${chatId}`);
     const key = [workspace, workpiece, mode, worker, version, chat ?? ""].join("|");
     const existing = observationCounts.get(key);
     if (existing) existing.requests++;
@@ -264,7 +270,7 @@ export function analyzeProductAnalyticsRows(
       requests: 1,
     });
     workspaceIds.add(event.workspaceId);
-    workpieceIds.add(String(workpieceId));
+    workpieceIds.add(workpieceIdentity);
     workerIds.add(workerId);
     executionVersions.add(executionVersion);
     (mode === "mainline" ? mainlineWorkerIds : previewWorkerIds).add(workerId);

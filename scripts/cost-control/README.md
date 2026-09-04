@@ -63,7 +63,9 @@ The command accepts only regular `.parquet` files (or the immediate `.parquet` c
 explicit directory), enforces file/count/total-byte bounds, supports the Pipeline's Zstd output,
 de-duplicates by `event_id`, fails on conflicting copies or invalid Dynamic Worker identity fields,
 and reports stable fingerprints instead of raw user, workspace, chat, Worker, or revision IDs. It
-never lists or downloads R2 objects itself, so acquisition credentials stay outside the parser.
+scopes local workpiece/chat counters to their workspace before fingerprinting, so equal counter
+values in different workspaces remain distinct without exposing low-entropy identifiers. It never
+lists or downloads R2 objects itself, so acquisition credentials stay outside the parser.
 
 The workspace-reopen alert reads a closed 30-minute outcome window and compares it with the latest
 rolling seven-day p95 latency baseline. Because a seven-day Workers Observability scan is materially

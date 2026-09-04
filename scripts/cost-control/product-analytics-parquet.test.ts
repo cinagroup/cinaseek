@@ -89,6 +89,40 @@ test("groups mainline and preview identities independently", () => {
   assert.ok(report.dynamicWorkers.observations.find(entry => entry.mode === "preview")?.chat);
 });
 
+test("scopes workpiece and chat identities to their workspace", () => {
+  const first = row({
+    properties: JSON.stringify({
+      worker_id: "first-preview-worker",
+      workpiece_id: 0,
+      execution_version: "first-preview-version",
+      mode: "preview",
+      chat_id: 0,
+    }),
+  });
+  const second = row({
+    event_id: "55555555-5555-4555-8555-555555555555",
+    gadget_id: "second-private-workspace",
+    properties: JSON.stringify({
+      worker_id: "second-preview-worker",
+      workpiece_id: 0,
+      execution_version: "second-preview-version",
+      mode: "preview",
+      chat_id: 0,
+    }),
+  });
+  const report = analyzeProductAnalyticsRows([first, second], FILES);
+  assert.equal(report.valid, true);
+  assert.equal(report.dynamicWorkers.workspaces, 2);
+  assert.equal(report.dynamicWorkers.workpieces, 2);
+  assert.equal(new Set(report.dynamicWorkers.observations.map(entry => entry.workpiece)).size, 2);
+  assert.equal(new Set(report.dynamicWorkers.observations.map(entry => entry.chat)).size, 2);
+
+  const serialized = JSON.stringify(report);
+  assert.equal(serialized.includes("second-private-workspace"), false);
+  // A bare counter fingerprint would be stable across workspaces and can be dictionary-reversed.
+  assert.equal(serialized.includes("sha256:5feceb66ffc86f38"), false);
+});
+
 test("accepts Parquet null for an optional gadget id", () => {
   const report = analyzeProductAnalyticsRows([row({
     event_name: "user_authenticated",
