@@ -1,5 +1,5 @@
-import { env, SELF } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { env, evictDurableObject, SELF } from "cloudflare:test";
+import { describe, expect, it, onTestFinished } from "vitest";
 import {
   REALTIME_PRESENCE_PROTOCOL,
   type PresenceParticipant,
@@ -98,6 +98,8 @@ describe("RealtimePresenceDurableObject", () => {
   it("accepts a signed ticket once and emits a full roster", async () => {
     let workspaceId = crypto.randomUUID().replaceAll("-", "").padEnd(64, "0").slice(0, 64);
     let stub = env.TEST_REALTIME_PRESENCE.getByName(workspaceId);
+    // Drain asynchronous close callbacks before Vitest tears down its console RPC.
+    onTestFinished(() => evictDurableObject(stub, {webSockets: "close"}));
     await stub.syncLegacyPresence(workspaceId, []);
     let ticket = await signRealtimePresenceTicket(
         env.REALTIME_TICKET_SECRET, claims(workspaceId));
@@ -119,12 +121,15 @@ describe("RealtimePresenceDurableObject", () => {
 
     let replay = await stub.fetch(request);
     expect(replay.status).toBe(409);
+    // Consume the response so its in-flight request cannot hold graceful eviction open.
+    await expect(replay.text()).resolves.toBe("Realtime ticket was already used.");
     socket.close(1000, "test complete");
   });
 
   it("fans one authoritative roster snapshot out across a canary-sized socket cohort", async () => {
     let workspaceId = crypto.randomUUID().replaceAll("-", "").padEnd(64, "a").slice(0, 64);
     let stub = env.TEST_REALTIME_PRESENCE.getByName(workspaceId);
+    onTestFinished(() => evictDurableObject(stub, {webSockets: "close"}));
     await stub.syncLegacyPresence(workspaceId, []);
     let sockets: WebSocket[] = [];
     let finalMessagePromise: Promise<string> | undefined;
@@ -161,6 +166,7 @@ describe("RealtimePresenceDurableObject", () => {
   it("isolates console fan-out from presence and serializes event timestamps", async () => {
     let workspaceId = crypto.randomUUID().replaceAll("-", "").padEnd(64, "c").slice(0, 64);
     let stub = env.TEST_REALTIME_PRESENCE.getByName(workspaceId);
+    onTestFinished(() => evictDurableObject(stub, {webSockets: "close"}));
     let ticket = await signRealtimePresenceTicket(
         env.REALTIME_TICKET_SECRET,
         claims(workspaceId, Date.now(), PARTICIPANT, "console"));

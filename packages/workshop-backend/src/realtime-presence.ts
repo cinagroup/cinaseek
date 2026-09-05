@@ -167,9 +167,26 @@ export class RealtimePresenceDurableObject extends DurableObject<Cloudflare.Env>
       reason: string,
       _wasClean: boolean,
   ): Promise<void> {
-    let presence = this.#attachment(socket)?.channel === "presence";
-    socket.close(code, reason);
-    if (presence) await this.#presenceChanged(socket);
+    let channel = this.#attachment(socket)?.channel;
+    try {
+      // These are local status sentinels, not codes permitted in a Close frame (RFC 6455).
+      // Still complete the handshake on our pre-auto-reply compatibility date.
+      if (code === 1005 || code === 1006 || code === 1015) {
+        socket.close();
+      } else {
+        socket.close(code, reason);
+      }
+    } catch (error) {
+      logger.warn("failed to close realtime socket", {
+        event: "realtime.socket.close.failed", error,
+      });
+    } finally {
+      if (channel === "presence") await this.#presenceChanged(socket);
+    }
+    logger.info("realtime socket close handled", {
+      event: "realtime.socket.close.handled", status: code,
+      operation: channel,
+    });
   }
 
   async webSocketError(socket: WebSocket, error: unknown): Promise<void> {
