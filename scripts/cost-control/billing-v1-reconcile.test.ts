@@ -17,7 +17,8 @@ function isoDay(index: number): string {
 
 function attribution(cost = 1): BillingAttributionInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    scope: "account_metered_usage",
     currency: "USD",
     days: Array.from({ length: 14 }, (_, index) => ({
       day: isoDay(index),
@@ -63,8 +64,11 @@ test("uses one read-only current-period request and returns a sanitized valid re
   });
   assert.equal(calls, 1);
   assert.equal(report.valid, true);
+  assert.equal(report.schemaVersion, 2);
+  assert.equal(report.scope, "account_metered_usage");
+  assert.equal(report.projectAttributionVerified, false);
   assert.equal(report.days.length, 14);
-  assert.equal(report.days[0]?.deviationRatio, 0.1);
+  assert.ok(Math.abs(report.days[0]!.deviationRatio! - 0.1) < 1e-12);
   assert.equal(report.providerRowsConsidered, 14);
   const serialized = JSON.stringify(report);
   for (const secret of [TOKEN, "must-not-appear", ACCOUNT_ID]) {
@@ -80,9 +84,12 @@ test("fails the fixed gate when any daily deviation exceeds fifteen percent", ()
 });
 
 test("accepts the exact fifteen-percent boundary", () => {
-  const report = reconcileBillingV1(attribution(1.15), provider(), ACCOUNT_ID, NOW);
-  assert.equal(report.valid, true);
-  assert.equal(report.days.every(day => day.deviationRatio === 0.15), true);
+  for (const [cost, billed] of [[1.15, 1], [3.45, 3], [2.55, 3], [0.115, 0.1]]) {
+    const rows = Array.from({ length: 14 }, (_, index) => billingRow(index, billed));
+    const report = reconcileBillingV1(attribution(cost), provider(rows), ACCOUNT_ID, NOW);
+    assert.equal(report.valid, true);
+    assert.equal(report.days.every(day => Math.abs(day.deviationRatio! - 0.15) < 1e-12), true);
+  }
 });
 
 test("keeps aggregate deviation non-negative when usage adjustments are negative", () => {
@@ -122,5 +129,127 @@ test("bounds provider failures to status and numeric codes", async () => {
       assert.equal(error.message.includes(TOKEN), false);
       return true;
     },
+  );
+});
+
+test("rejects legacy, missing, and deployment-only scope before any provider request", async () => {
+  for (const change of [
+    { schemaVersion: 1 },
+    { scope: undefined },
+    { scope: "deployment" },
+    { scope: "full_invoice" },
+  ]) {
+    let calls = 0;
+    await assert.rejects(collectAndReconcileBillingV1(
+      { ...attribution(), ...change }, ACCOUNT_ID, TOKEN, {
+        now: NOW,
+        fetch: async () => { calls++; return Response.json(provider()); },
+      },
+    ), /schemaVersion 2 and scope account_metered_usage/);
+    assert.equal(calls, 0);
+  }
+});
+
+test("rejects incomplete representative windows before fetching billing data", async () => {
+  let calls = 0;
+  const input = attribution();
+  input.days.pop();
+  await assert.rejects(collectAndReconcileBillingV1(input, ACCOUNT_ID, TOKEN, {
+    now: NOW,
+    fetch: async () => { calls++; return Response.json(provider()); },
+  }), /14-31 consecutive closed/);
+  assert.equal(calls, 0);
+});
+
+test("matching a shared account never asserts that the deployment allocation is verified", () => {
+  const rows = Array.from({ length: 14 }, (_, index) => [
+    billingRow(index, 0.2), billingRow(index, 0.8),
+  ]).flat();
+  const report = reconcileBillingV1(
+    { ...attribution(), projectAttributionVerified: true }, provider(rows), ACCOUNT_ID, NOW,
+  );
+  assert.equal(report.valid, true);
+  assert.equal(report.scope, "account_metered_usage");
+  assert.equal(report.projectAttributionVerified, false);
+  assert.equal(report.providerRowsConsidered, 28);
+  assert.equal(report.totals.billedCostUsd, 14);
+});
+
+test("does not round away cost or ratio deviations just above fifteen percent", () => {
+  for (const [cost, billed] of [[1.1500004, 1], [115.00001, 100]]) {
+    const rows = Array.from({ length: 14 }, (_, index) => billingRow(index, billed));
+    const report = reconcileBillingV1(attribution(cost), provider(rows), ACCOUNT_ID, NOW);
+    assert.equal(report.valid, false);
+    assert.equal(report.days[0]?.attributedCostUsd, cost);
+    assert.ok(report.days[0]!.deviationRatio! > 0.15);
+    assert.equal(report.days.every(day => !day.withinTolerance), true);
+  }
+});
+
+test("nonzero sub-microdollar values never become a zero-cost match", () => {
+  for (const [cost, billed] of [[1e-8, 0], [0, 1e-8]]) {
+    const rows = Array.from({ length: 14 }, (_, index) => billingRow(index, billed));
+    const report = reconcileBillingV1(attribution(cost), provider(rows), ACCOUNT_ID, NOW);
+    assert.equal(report.valid, false);
+    assert.equal(report.days[0]?.attributedCostUsd, cost);
+    assert.equal(report.days[0]?.billedCostUsd, billed);
+    assert.equal(report.days[0]?.withinTolerance, false);
+  }
+});
+
+test("explicit zero billed rows can match true zero attribution", () => {
+  const rows = Array.from({ length: 14 }, (_, index) => billingRow(index, 0));
+  const report = reconcileBillingV1(attribution(0), provider(rows), ACCOUNT_ID, NOW);
+  assert.equal(report.valid, true);
+  assert.equal(report.days[0]?.deviationRatio, undefined);
+  assert.equal(report.projectAttributionVerified, false);
+});
+
+test("a passing aggregate cannot conceal one failing day", () => {
+  const input = attribution();
+  input.days[0].attributedCostUsd = 1.2;
+  const report = reconcileBillingV1(input, provider(), ACCOUNT_ID, NOW);
+  assert.equal(report.valid, false);
+  assert.ok(report.totals.deviationRatio! < 0.15);
+  assert.deepEqual(report.issues, ["daily_deviation_above_15_percent:2026-09-02"]);
+});
+
+test("rejects numeric overflow instead of serializing an infinite result as null", () => {
+  const rows = [billingRow(0, Number.MAX_VALUE), billingRow(0, Number.MAX_VALUE)];
+  assert.throws(
+    () => reconcileBillingV1(attribution(), provider(rows), ACCOUNT_ID, NOW),
+    /finite numeric range/,
+  );
+});
+
+test("sums decimal usage rows exactly before comparing the lower fifteen-percent boundary", () => {
+  const rows = Array.from({ length: 14 }, (_, index) => [
+    billingRow(index, 0.1), billingRow(index, 0.1), billingRow(index, 0.1),
+  ]).flat();
+  const report = reconcileBillingV1(attribution(0.255), provider(rows), ACCOUNT_ID, NOW);
+  assert.equal(report.valid, true);
+  assert.equal(report.days[0]?.billedCostUsd, 0.3);
+  assert.equal(report.days[0]?.deviationRatio, 0.15);
+  assert.equal(report.totals.billedCostUsd, 4.2);
+});
+
+test("decimal adjustments cancel to true zero rather than a floating-point residue", () => {
+  const rows = Array.from({ length: 14 }, (_, index) => [
+    billingRow(index, 0.3), billingRow(index, -0.2), billingRow(index, -0.1),
+  ]).flat();
+  const report = reconcileBillingV1(attribution(0), provider(rows), ACCOUNT_ID, NOW);
+  assert.equal(report.valid, true);
+  assert.equal(report.days[0]?.billedCostUsd, 0);
+  assert.equal(report.days[0]?.deviationRatio, undefined);
+});
+
+test("retains the smallest finite cost and rejects an unrepresentable report ratio", () => {
+  const rows = Array.from({ length: 14 }, (_, index) => billingRow(index, Number.MIN_VALUE));
+  const matching = reconcileBillingV1(attribution(Number.MIN_VALUE), provider(rows), ACCOUNT_ID, NOW);
+  assert.equal(matching.valid, true);
+  assert.equal(matching.days[0]?.billedCostUsd, Number.MIN_VALUE);
+  assert.throws(
+    () => reconcileBillingV1(attribution(1), provider(rows), ACCOUNT_ID, NOW),
+    /finite numeric range/,
   );
 });

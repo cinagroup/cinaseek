@@ -11,19 +11,25 @@ const MAX_INPUT_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const MAX_PROVIDER_ROWS = 20_000;
 const TOLERANCE_RATIO = 0.15;
+const BILLING_SCOPE = "account_metered_usage";
+// The smallest finite Number is 5e-324. This scale represents every finite input Number's
+// canonical decimal spelling exactly, including scientific notation, without a money quantum.
+const DECIMAL_PLACES = 324;
 
-/** One closed UTC day's deployment-attributed cost. */
+/** One closed UTC day's account-wide metered-usage attribution. */
 export interface DailyAttributedCost {
   /** UTC date in YYYY-MM-DD format. */
   day: string;
-  /** Cost attributed from authoritative platform metrics and product-event drivers. */
+  /** Whole-account metered cost, not one deployment's share or non-usage invoice charges. */
   attributedCostUsd: number;
 }
 
-/** Strict input contract for the fourteen-day invoice reconciliation. */
+/** Explicit account-wide input contract; deployment-only inputs must not enter this comparison. */
 export interface BillingAttributionInput {
   /** Version of the attribution input contract. */
-  schemaVersion: 1;
+  schemaVersion: 2;
+  /** Must match the account-wide metered-usage scope of the provider endpoint. */
+  scope: typeof BILLING_SCOPE;
   /** Billing currency; the production acceptance route currently requires USD. */
   currency: "USD";
   /** At least fourteen consecutive, closed UTC days. */
@@ -34,7 +40,7 @@ export interface BillingAttributionInput {
 export interface DailyBillingReconciliation {
   /** Closed UTC date. */
   day: string;
-  /** Locally attributed deployment cost. */
+  /** Locally attributed whole-account metered cost. */
   attributedCostUsd: number;
   /** Sum of Cloudflare V1 `BilledCost` usage rows for the day. */
   billedCostUsd?: number;
@@ -44,10 +50,14 @@ export interface DailyBillingReconciliation {
   withinTolerance: boolean;
 }
 
-/** Privacy-preserving fourteen-day billing reconciliation report. */
+/** Account metered-usage comparison, not proof of deployment allocation or the full invoice. */
 export interface BillingV1ReconciliationReport {
   /** Version of the reconciliation report contract. */
-  schemaVersion: 1;
+  schemaVersion: 2;
+  /** All usage rows for the requested account, never an inferred project scope. */
+  scope: typeof BILLING_SCOPE;
+  /** Always false: V1 does not supply the project's independent allocation evidence. */
+  projectAttributionVerified: false;
   /** Fixed acceptance threshold; callers cannot weaken it. */
   toleranceRatio: 0.15;
   /** Sanitized daily comparisons. */
@@ -60,7 +70,7 @@ export interface BillingV1ReconciliationReport {
   };
   /** Number of account usage rows included without retaining their identifiers or descriptions. */
   providerRowsConsidered: number;
-  /** True only when every requested day has evidence and is within 15%. */
+  /** True only for account-level daily arithmetic/coverage; not overall production acceptance. */
   valid: boolean;
   /** Bounded failure classes without provider-authored text or account metadata. */
   issues: string[];
@@ -79,8 +89,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function rounded(value: number): number {
-  return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
+function finiteValue(value: number): number {
+  if (!Number.isFinite(value)) throw new Error("billing calculation exceeds finite numeric range");
+  return value;
+}
+
+function costUnits(value: number): bigint {
+  const [mantissa, exponent = "0"] = value.toString().split("e");
+  const [whole, fraction = ""] = mantissa.split(".");
+  return BigInt(whole + fraction) * 10n ** BigInt(DECIMAL_PLACES + Number(exponent) - fraction.length);
+}
+
+function costNumber(units: bigint): number {
+  return finiteValue(Number(`${units}e-${DECIMAL_PLACES}`));
+}
+
+function absoluteUnits(units: bigint): bigint {
+  return units < 0n ? -units : units;
 }
 
 function parseDay(value: string): number {
@@ -93,7 +118,10 @@ function parseDay(value: string): number {
 }
 
 function parseAttribution(value: unknown, now: Date): BillingAttributionInput {
-  if (!isRecord(value) || value.schemaVersion !== 1 || value.currency !== "USD" ||
+  if (!isRecord(value) || value.schemaVersion !== 2 || value.scope !== BILLING_SCOPE) {
+    throw new Error("attribution requires schemaVersion 2 and scope account_metered_usage");
+  }
+  if (value.currency !== "USD" ||
       !Array.isArray(value.days) || value.days.length < MINIMUM_DAYS ||
       value.days.length > MAXIMUM_DAYS || !Number.isFinite(now.valueOf())) {
     throw new Error("attribution must contain 14-31 consecutive closed USD days");
@@ -106,7 +134,7 @@ function parseAttribution(value: unknown, now: Date): BillingAttributionInput {
         item.attributedCostUsd > 1_000_000_000) {
       throw new Error("attribution contains an invalid daily cost");
     }
-    return { day: item.day, attributedCostUsd: rounded(item.attributedCostUsd) };
+    return { day: item.day, attributedCostUsd: item.attributedCostUsd };
   });
   const timestamps = days.map(item => parseDay(item.day));
   for (let index = 0; index < timestamps.length; index++) {
@@ -115,7 +143,7 @@ function parseAttribution(value: unknown, now: Date): BillingAttributionInput {
       throw new Error("attribution days must be consecutive and sorted");
     }
   }
-  return { schemaVersion: 1, currency: "USD", days };
+  return { schemaVersion: 2, scope: BILLING_SCOPE, currency: "USD", days };
 }
 
 function parseProviderRow(value: unknown): BillingV1Row {
@@ -153,7 +181,7 @@ function providerRows(value: unknown): BillingV1Row[] {
   return value.result.map(parseProviderRow);
 }
 
-/** Reconcile validated attribution against raw Cloudflare Billing V1 rows. */
+/** Compare whole-account metered attribution with V1 rows without inferring project allocation. */
 export function reconcileBillingV1(
   attributionValue: unknown,
   providerValue: unknown,
@@ -164,7 +192,7 @@ export function reconcileBillingV1(
   const attribution = parseAttribution(attributionValue, now);
   const rows = providerRows(providerValue);
   const requestedDays = new Set(attribution.days.map(item => item.day));
-  const billedByDay = new Map<string, number>();
+  const billedByDay = new Map<string, bigint>();
   const observedDays = new Set<string>();
   const issues: string[] = [];
   let considered = 0;
@@ -183,7 +211,7 @@ export function reconcileBillingV1(
       continue;
     }
     observedDays.add(day);
-    billedByDay.set(day, (billedByDay.get(day) ?? 0) + row.billedCost);
+    billedByDay.set(day, (billedByDay.get(day) ?? 0n) + costUnits(row.billedCost));
     considered++;
   }
 
@@ -192,27 +220,34 @@ export function reconcileBillingV1(
       issues.push(`missing_billing_day:${item.day}`);
       return { ...item, withinTolerance: false };
     }
-    const billedCostUsd = rounded(billedByDay.get(item.day) ?? 0);
-    if (billedCostUsd === 0) {
+    const billedUnits = billedByDay.get(item.day) ?? 0n;
+    const billedCostUsd = costNumber(billedUnits);
+    if (billedUnits === 0n) {
       const withinTolerance = item.attributedCostUsd === 0;
       if (!withinTolerance) issues.push(`zero_billed_cost_mismatch:${item.day}`);
       return { ...item, billedCostUsd, withinTolerance };
     }
-    const deviationRatio = rounded(
-      Math.abs(item.attributedCostUsd - billedCostUsd) / Math.abs(billedCostUsd),
+    // The gate uses exact decimal units, not a rounded ratio or binary floating-point subtraction.
+    const difference = absoluteUnits(costUnits(item.attributedCostUsd) - billedUnits);
+    const withinTolerance = difference * 100n <= absoluteUnits(billedUnits) * 15n;
+    const deviationRatio = finiteValue(
+      costNumber(difference) / Math.abs(billedCostUsd),
     );
-    const withinTolerance = deviationRatio <= TOLERANCE_RATIO;
     if (!withinTolerance) issues.push(`daily_deviation_above_15_percent:${item.day}`);
     return { ...item, billedCostUsd, deviationRatio, withinTolerance };
   });
-  const attributedTotal = rounded(days.reduce((total, item) => total + item.attributedCostUsd, 0));
-  const billedTotal = rounded(days.reduce((total, item) => total + (item.billedCostUsd ?? 0), 0));
+  const attributedTotalUnits = days.reduce((total, item) => total + costUnits(item.attributedCostUsd), 0n);
+  const billedTotalUnits = days.reduce((total, item) => total + (billedByDay.get(item.day) ?? 0n), 0n);
+  const attributedTotal = costNumber(attributedTotalUnits);
+  const billedTotal = costNumber(billedTotalUnits);
   const totalDeviation = billedTotal === 0
     ? undefined
-    : rounded(Math.abs(attributedTotal - billedTotal) / Math.abs(billedTotal));
+    : finiteValue(costNumber(absoluteUnits(attributedTotalUnits - billedTotalUnits)) / Math.abs(billedTotal));
   const uniqueIssues = [...new Set(issues)];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    scope: BILLING_SCOPE,
+    projectAttributionVerified: false,
     toleranceRatio: TOLERANCE_RATIO,
     days,
     totals: {
@@ -235,6 +270,8 @@ export async function collectAndReconcileBillingV1(
 ): Promise<BillingV1ReconciliationReport> {
   if (!ACCOUNT_ID.test(accountId)) throw new Error("invalid Cloudflare account ID");
   if (!apiToken.trim()) throw new Error("Cloudflare Billing Read token is required");
+  const now = options.now ?? new Date();
+  const attribution = parseAttribution(attributionValue, now);
   const request = options.fetch ?? fetch;
   const response = await request(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/billable-usage`,
@@ -259,7 +296,7 @@ export async function collectAndReconcileBillingV1(
       `Cloudflare Billing V1 failed with status ${response.status} and codes ${JSON.stringify(providerCodes(value))}`,
     );
   }
-  return reconcileBillingV1(attributionValue, value, accountId, options.now);
+  return reconcileBillingV1(attribution, value, accountId, now);
 }
 
 async function attributionFile(path: string): Promise<unknown> {
@@ -297,7 +334,8 @@ function parseArgs(argv: string[]): { attribution?: string; help: boolean } {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.error("Usage: pnpm audit:billing:v1 -- --attribution <daily-costs.json>");
+    console.error("Usage: pnpm audit:billing:v1 -- --attribution <account-metered-costs.json>");
+    console.error("Requires schemaVersion 2 and scope account_metered_usage; does not verify project attribution.");
     return;
   }
   if (!args.attribution) throw new Error("--attribution <daily-costs.json> is required");

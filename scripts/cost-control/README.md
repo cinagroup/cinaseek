@@ -81,20 +81,36 @@ values in different workspaces remain distinct without exposing low-entropy iden
 parser never lists or downloads R2 objects itself, so acquisition credentials stay in the small
 acquisition wrapper rather than entering the content validator.
 
-After at least fourteen consecutive closed UTC days have a daily attribution report, reconcile the
-fixed 15% gate against Cloudflare's current-period V1 `BilledCost` rows with:
+After at least fourteen consecutive closed UTC days have a **whole-account metered-usage**
+attribution report, compare daily costs against Cloudflare's current-period V1 `BilledCost` rows:
 
     CLOUDFLARE_ACCOUNT_ID=<account-id>
     CINASEEK_AI_GATEWAY_TOKEN=<token-with-Billing-Read>
-    pnpm audit:billing:v1 -- --attribution <daily-costs.json>
+    pnpm audit:billing:v1 -- --attribution <account-metered-costs.json>
 
-The input contract is `{ "schemaVersion": 1, "currency": "USD", "days": [{ "day":
-"YYYY-MM-DD", "attributedCostUsd": 0 }] }`. The command requires 14-31 sorted consecutive closed
-days, makes one GET without a custom time range (avoiding the provider's billing-anchor trap),
-requires an explicit provider row for every day, and enforces the runbook's 15% threshold on every
-day. Its report omits account names, zone data, subscriptions, charge descriptions, and raw provider
-messages. This verifies arithmetic and invoice coverage; the attribution input must still come from
-the authoritative Cloudflare metrics and privacy-preserving product-event process in
+The input contract is `{ "schemaVersion": 2, "scope": "account_metered_usage", "currency": "USD",
+"days": [{ "day": "YYYY-MM-DD", "attributedCostUsd": 0 }] }`. The example shows the shape of one
+day, not an acceptable one-day or fabricated zero-cost acceptance input. Version 1, missing scope,
+deployment-only scope, and incomplete windows are rejected before any HTTP request. Migrate old
+inputs only after proving their costs cover the whole account; adding the scope field alone does
+not turn project costs into account costs.
+
+The command requires 14-31 sorted consecutive closed days, makes one GET without a custom time range
+(avoiding the provider's billing-anchor trap), requires an explicit provider row for every day, and
+enforces the fixed 15% threshold using exact decimal sums and comparisons of the parsed JSON
+numbers, without rounding money or comparing an approximate display ratio. A passing
+aggregate cannot hide a failing day. Its schema-version-2 report omits account names, zone data,
+subscriptions, charge descriptions, and raw provider messages. `valid` describes only account
+metered-usage arithmetic and coverage; `scope` is always `account_metered_usage` and
+`projectAttributionVerified` is always `false`.
+
+[Cloudflare V1](https://developers.cloudflare.com/api/resources/billing/subresources/usage/methods/get_account_usage_v1/)
+returns account metered usage, not a Worker/bucket/project allocation or the full invoice.
+For shared accounts, retain an independently evidenced account-total reconciliation, project
+allocation policy, and unattributed residuals before claiming the runbook's project-level gate.
+Do not compare CinaSeek-only cost with every account charge, silently discard another project's
+usage, or treat this CLI's exit code as full production acceptance. Those attribution inputs still
+must come from the authoritative metrics and privacy-preserving product-event process in
 `docs/cost-control.md`.
 
 The workspace-reopen alert reads a closed 30-minute outcome window and compares it with the latest
