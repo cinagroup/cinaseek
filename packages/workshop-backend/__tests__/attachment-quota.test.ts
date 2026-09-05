@@ -3,10 +3,11 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import type { OverseerDurableObject } from "../src/overseer.js";
 
-declare module "cloudflare:workers" {
-  interface ProvidedEnv {
-    TEST_OVERSEER: DurableObjectNamespace<OverseerDurableObject>;
-    WORKSPACE_BLOBS: R2Bucket;
+declare global {
+  namespace Cloudflare {
+    interface Env {
+      TEST_OVERSEER: DurableObjectNamespace<OverseerDurableObject>;
+    }
   }
 }
 
@@ -46,6 +47,22 @@ function testOverseer(instance: OverseerDurableObject): TestOverseer {
 async function objectBytes(bucket: R2Bucket, key: string): Promise<Uint8Array | undefined> {
   let object = await bucket.get(key);
   return object ? new Uint8Array(await object.arrayBuffer()) : undefined;
+}
+
+async function withAttachmentEnv(
+  instance: OverseerDurableObject,
+  settings: Partial<Pick<Cloudflare.Env,
+    "WORKSPACE_BLOB_MODE" | "WORKSPACE_ATTACHMENT_LIMIT_BYTES" | "WORKSPACE_ATTACHMENT_LIMIT_COUNT">>,
+  callback: (overseer: TestOverseer) => Promise<void>,
+): Promise<void> {
+  let overseer = testOverseer(instance);
+  let originalEnv = overseer.env;
+  overseer.env = {...originalEnv, ...settings};
+  try {
+    await callback(overseer);
+  } finally {
+    overseer.env = originalEnv;
+  }
 }
 
 describe("workspace attachment quota ledger", () => {
@@ -144,6 +161,229 @@ describe("workspace attachment quota ledger", () => {
       expect(promoted.blobKey).toBeTruthy();
       expect(await objectBytes(overseer.env.WORKSPACE_BLOBS, promoted.blobKey!))
           .toEqual(legacyData);
+    });
+  });
+
+  it.each(["disabled", "mirror", "r2"] as const)(
+    "accepts the exact byte limit and rejects one extra byte before writing in %s mode",
+    async mode => {
+      let stub = env.TEST_OVERSEER.getByName("attachment-byte-boundary-" + mode);
+      await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
+        await withAttachmentEnv(instance, {
+          WORKSPACE_BLOB_MODE: mode,
+          WORKSPACE_ATTACHMENT_LIMIT_BYTES: "3",
+          WORKSPACE_ATTACHMENT_LIMIT_COUNT: "2",
+        }, async overseer => {
+          let id = crypto.randomUUID();
+          let rejectedId = crypto.randomUUID();
+          let put = vi.spyOn(overseer.env.WORKSPACE_BLOBS, "put");
+          try {
+            await overseer.stageChatAttachment(id, {
+              content: new Uint8Array([1, 2, 3]), mimeType: "application/octet-stream",
+            });
+            let record = overseer.storage.chatAttachmentContent.get(id);
+            await expect(overseer.stageChatAttachment(rejectedId, {
+              content: new Uint8Array([4]), mimeType: "application/octet-stream",
+            })).rejects.toThrow("attachment storage limit");
+            expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 3, count: 1});
+            expect(overseer.storage.chatAttachmentContent.get(id)).toEqual(record);
+            expect(overseer.storage.chatAttachmentContent.get(rejectedId)).toBeUndefined();
+            expect(put).toHaveBeenCalledTimes(mode === "disabled" ? 0 : 1);
+          } finally {
+            put.mockRestore();
+          }
+        });
+      });
+    },
+  );
+
+  it.each(["disabled", "mirror", "r2"] as const)(
+    "counts empty attachments and rejects the next object before writing in %s mode",
+    async mode => {
+      let stub = env.TEST_OVERSEER.getByName("attachment-count-boundary-" + mode);
+      await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
+        await withAttachmentEnv(instance, {
+          WORKSPACE_BLOB_MODE: mode,
+          WORKSPACE_ATTACHMENT_LIMIT_BYTES: "3",
+          WORKSPACE_ATTACHMENT_LIMIT_COUNT: "1",
+        }, async overseer => {
+          let id = crypto.randomUUID();
+          let rejectedId = crypto.randomUUID();
+          let put = vi.spyOn(overseer.env.WORKSPACE_BLOBS, "put");
+          try {
+            await overseer.stageChatAttachment(id, {
+              content: new Uint8Array(), mimeType: "application/octet-stream",
+            });
+            let record = overseer.storage.chatAttachmentContent.get(id);
+            await expect(overseer.stageChatAttachment(rejectedId, {
+              content: new Uint8Array(), mimeType: "application/octet-stream",
+            })).rejects.toThrow("attachment count limit");
+            expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 0, count: 1});
+            expect(overseer.storage.chatAttachmentContent.get(id)).toEqual(record);
+            expect(overseer.storage.chatAttachmentContent.get(rejectedId)).toBeUndefined();
+            expect(put).toHaveBeenCalledTimes(mode === "disabled" ? 0 : 1);
+          } finally {
+            put.mockRestore();
+          }
+        });
+      });
+    },
+  );
+
+  it.each(["bytes", "count"])(
+    "reserves the last %s allowance while the first R2 write is still pending",
+    async limit => {
+      let stub = env.TEST_OVERSEER.getByName("attachment-pending-reservation-" + limit);
+      await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
+        await withAttachmentEnv(instance, {
+          WORKSPACE_BLOB_MODE: "r2",
+          WORKSPACE_ATTACHMENT_LIMIT_BYTES: limit === "bytes" ? "3" : "6",
+          WORKSPACE_ATTACHMENT_LIMIT_COUNT: limit === "count" ? "1" : "2",
+        }, async overseer => {
+          let bucket = overseer.env.WORKSPACE_BLOBS;
+          let originalPut = bucket.put.bind(bucket);
+          let releaseWrite = Promise.withResolvers<void>();
+          let put = vi.spyOn(bucket, "put").mockImplementationOnce(async (...args) => {
+            await releaseWrite.promise;
+            return originalPut(...args);
+          });
+          let id = crypto.randomUUID();
+          let rejectedId = crypto.randomUUID();
+          let first = overseer.stageChatAttachment(id, {
+            content: new Uint8Array([1, 2, 3]), mimeType: "application/octet-stream",
+          });
+          try {
+            expect(put).toHaveBeenCalledTimes(1);
+            expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 3, count: 1});
+            await expect(overseer.stageChatAttachment(rejectedId, {
+              content: new Uint8Array([4, 5, 6]), mimeType: "application/octet-stream",
+            })).rejects.toThrow(limit === "bytes" ? "attachment storage limit" : "attachment count limit");
+            expect(put).toHaveBeenCalledTimes(1);
+            expect(overseer.storage.chatAttachmentContent.get(rejectedId)).toBeUndefined();
+            releaseWrite.resolve();
+            await first;
+            let record = overseer.storage.chatAttachmentContent.get(id)!;
+            expect(await objectBytes(bucket, record.blobKey!)).toEqual(new Uint8Array([1, 2, 3]));
+            expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 3, count: 1});
+          } finally {
+            releaseWrite.resolve();
+            try {
+              await first;
+            } finally {
+              put.mockRestore();
+            }
+          }
+        });
+      });
+    },
+  );
+
+  it("releases both allowances after a failed R2 write and admits a retry", async () => {
+    let stub = env.TEST_OVERSEER.getByName("attachment-r2-failure-release");
+    await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
+      await withAttachmentEnv(instance, {
+        WORKSPACE_BLOB_MODE: "r2",
+        WORKSPACE_ATTACHMENT_LIMIT_BYTES: "3",
+        WORKSPACE_ATTACHMENT_LIMIT_COUNT: "1",
+      }, async overseer => {
+        let id = crypto.randomUUID();
+        let put = vi.spyOn(overseer.env.WORKSPACE_BLOBS, "put")
+            .mockRejectedValueOnce(new Error("injected R2 write failure"));
+        let error = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+          await expect(overseer.stageChatAttachment(id, {
+            content: new Uint8Array([1, 2, 3]), mimeType: "application/octet-stream",
+          })).rejects.toThrow("injected R2 write failure");
+          expect(overseer.storage.chatAttachmentContent.get(id)).toBeUndefined();
+          expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 0, count: 0});
+          expect(error).toHaveBeenCalledWith(expect.objectContaining({
+            event: "chat.attachment.r2.write.failed", operation: "write",
+          }));
+          await overseer.stageChatAttachment(id, {
+            content: new Uint8Array([1, 2, 3]), mimeType: "application/octet-stream",
+          });
+          expect(put).toHaveBeenCalledTimes(2);
+          expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 3, count: 1});
+          let record = overseer.storage.chatAttachmentContent.get(id)!;
+          expect(await objectBytes(overseer.env.WORKSPACE_BLOBS, record.blobKey!))
+              .toEqual(new Uint8Array([1, 2, 3]));
+        } finally {
+          put.mockRestore();
+          error.mockRestore();
+        }
+      });
+    });
+  });
+
+  it("retains the DO body and reservation when a mirror write fails", async () => {
+    let stub = env.TEST_OVERSEER.getByName("attachment-mirror-failure-fallback");
+    await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
+      await withAttachmentEnv(instance, {
+        WORKSPACE_BLOB_MODE: "mirror",
+        WORKSPACE_ATTACHMENT_LIMIT_BYTES: "3",
+        WORKSPACE_ATTACHMENT_LIMIT_COUNT: "1",
+      }, async overseer => {
+        let id = crypto.randomUUID();
+        let data = new Uint8Array([1, 2, 3]);
+        let put = vi.spyOn(overseer.env.WORKSPACE_BLOBS, "put")
+            .mockRejectedValueOnce(new Error("injected mirror failure"));
+        let warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          await overseer.stageChatAttachment(id, {content: data, mimeType: "application/octet-stream"});
+          let record = overseer.storage.chatAttachmentContent.get(id)!;
+          expect(record.data).toEqual(data);
+          expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 3, count: 1});
+          expect(await overseer.env.WORKSPACE_BLOBS.get(record.blobKey!)).toBeNull();
+          expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+            event: "chat.attachment.r2.mirror.failed",
+          }));
+          overseer.storage.chatAttachmentContent.put({...record, state: {type: "committed", chatId: 7}});
+          expect(await overseer.getChatAttachmentData(7, id)).toEqual(data);
+          await expect(overseer.stageChatAttachment(crypto.randomUUID(), {
+            content: new Uint8Array(), mimeType: "application/octet-stream",
+          })).rejects.toThrow("attachment count limit");
+          expect(put).toHaveBeenCalledTimes(1);
+        } finally {
+          put.mockRestore();
+          warn.mockRestore();
+        }
+      });
+    });
+  });
+
+  it("reads and deletes existing R2-only bodies after disabled-mode rollback", async () => {
+    let stub = env.TEST_OVERSEER.getByName("attachment-r2-disabled-rollback");
+    await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
+      await withAttachmentEnv(instance, {WORKSPACE_BLOB_MODE: "r2"}, async overseer => {
+        let id = crypto.randomUUID();
+        let data = new Uint8Array([1, 2, 3]);
+        await overseer.stageChatAttachment(id, {content: data, mimeType: "application/octet-stream"});
+        let record = overseer.storage.chatAttachmentContent.get(id)!;
+        expect(record.data).toBeUndefined();
+        overseer.storage.chatAttachmentContent.put({...record, state: {type: "committed", chatId: 7}});
+        overseer.env.WORKSPACE_BLOB_MODE = "disabled";
+        let put = vi.spyOn(overseer.env.WORKSPACE_BLOBS, "put");
+        try {
+          expect(await overseer.getChatAttachmentData(7, id)).toEqual(data);
+          await expect(overseer.getChatAttachmentData(8, id)).rejects.toThrow("Chat attachment not found");
+          let legacyId = crypto.randomUUID();
+          await overseer.stageChatAttachment(legacyId, {
+            content: new Uint8Array([4, 5]), mimeType: "application/octet-stream",
+          });
+          expect(overseer.storage.chatAttachmentContent.get(legacyId)).toMatchObject({
+            data: new Uint8Array([4, 5]), size: 2,
+          });
+          expect(overseer.storage.chatAttachmentContent.get(legacyId)?.blobKey).toBeUndefined();
+          expect(put).not.toHaveBeenCalled();
+          expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 5, count: 2});
+          await overseer.deleteChatAttachmentBlobs([record.blobKey!]);
+          overseer.deleteChatAttachmentRecords([id, legacyId]);
+          expect(await overseer.env.WORKSPACE_BLOBS.get(record.blobKey!)).toBeNull();
+          expect(overseer.storage.workspaceAttachmentUsage.get()).toEqual({bytes: 0, count: 0});
+        } finally {
+          put.mockRestore();
+        }
+      });
     });
   });
 
