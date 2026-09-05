@@ -121,6 +121,8 @@ describe("RealtimePresenceDurableObject", () => {
 
     let replay = await stub.fetch(request);
     expect(replay.status).toBe(409);
+    // Consume the response so its in-flight request cannot hold graceful eviction open.
+    await expect(replay.text()).resolves.toBe("Realtime ticket was already used.");
     socket.close(1000, "test complete");
   });
 
