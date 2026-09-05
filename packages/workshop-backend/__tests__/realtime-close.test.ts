@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
-import { describe, expect, it, vi } from "vitest";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { PresenceParticipant, RealtimePresenceMessage } from "@gadgets/workshop-shared/api";
 import type { RealtimePresenceDurableObject } from "../src/realtime-presence";
 import type { RealtimePresenceTicketClaims } from "../src/realtime-presence-ticket";
@@ -53,6 +53,7 @@ describe("realtime close handling", () => {
   // peer, so these cases inject the callback argument, not an impossible wire Close frame.
   it.each([1000, 1001, 1005, 1006, 1015])("handles close code %i and removes the departing participant", async code => {
     let stub = env.TEST_REALTIME_PRESENCE.getByName(`close-code-${code}`);
+    onTestFinished(() => evictDurableObject(stub, {webSockets: "close"}));
     await runInDurableObject(stub, async (instance: RealtimePresenceDurableObject, state) => {
       let departing = socketPair(state, DEPARTING);
       let remaining = socketPair(state, REMAINING);
@@ -75,6 +76,7 @@ describe("realtime close handling", () => {
 
   it("updates presence even when closing the socket throws", async () => {
     let stub = env.TEST_REALTIME_PRESENCE.getByName("close-throws");
+    onTestFinished(() => evictDurableObject(stub, {webSockets: "close"}));
     await runInDurableObject(stub, async (instance: RealtimePresenceDurableObject, state) => {
       let departing = socketPair(state, DEPARTING);
       let remaining = socketPair(state, REMAINING);
@@ -98,6 +100,7 @@ describe("realtime close handling", () => {
 
   it("handles the last participant and repeated close callbacks", async () => {
     let stub = env.TEST_REALTIME_PRESENCE.getByName("last-participant-close");
+    onTestFinished(() => evictDurableObject(stub, {webSockets: "close"}));
     await runInDurableObject(stub, async (instance: RealtimePresenceDurableObject, state) => {
       let departing = socketPair(state, DEPARTING);
       // A socket without a participant observes the empty roster without adding a member.
@@ -120,6 +123,7 @@ describe("realtime close handling", () => {
 
   it("does not broadcast a presence update when a console socket closes", async () => {
     let stub = env.TEST_REALTIME_PRESENCE.getByName("console-close-isolation");
+    onTestFinished(() => evictDurableObject(stub, {webSockets: "close"}));
     await runInDurableObject(stub, async (instance: RealtimePresenceDurableObject, state) => {
       let departing = socketPair(state, DEPARTING, "console");
       let remaining = socketPair(state, REMAINING);
