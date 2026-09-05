@@ -6,6 +6,7 @@ import {
   accessLoginUrl,
   consumePendingHomePrompt,
   currentReturnTo,
+  logoutAccessSession,
   peekPendingHomePrompt,
   probeAccessSession,
   requestAccessLogin,
@@ -45,6 +46,57 @@ describe("Access session probe", () => {
         async () => { throw new Error("offline"); },
       ) as typeof fetch,
     )).resolves.toBe("error");
+  });
+});
+
+describe('Access logout', () => {
+  it('waits for the authenticated logout request and a fresh guest probe', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('Access logout page', { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }));
+
+    await expect(logoutAccessSession(fetchImpl)).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, '/cdn-cgi/access/logout', {
+      method: 'GET', credentials: 'same-origin', redirect: 'manual', cache: 'no-store',
+      signal: expect.any(AbortSignal),
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, '/api/session', expect.objectContaining({
+      cache: 'no-store', credentials: 'same-origin', redirect: 'manual',
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
+  it('verifies a logout redirect instead of navigating to the Access page', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 302 }))
+      .mockResolvedValueOnce(new Response(null, { status: 403 }));
+    await expect(logoutAccessSession(fetchImpl)).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not accept a success page when the session is still authenticated', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('Success', { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(logoutAccessSession(fetchImpl)).rejects.toThrow('Could not confirm');
+  });
+
+  it('does not accept an unavailable or misrouted session probe as logout', async () => {
+    for (const status of [200, 500]) {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(null, { status: 200 }))
+        .mockResolvedValueOnce(new Response(null, { status }));
+      await expect(logoutAccessSession(fetchImpl)).rejects.toThrow('Could not confirm');
+    }
+  });
+
+  it('fails on logout server and network errors without probing', async () => {
+    const failed = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 500 }));
+    await expect(logoutAccessSession(failed)).rejects.toThrow('logout failed');
+    expect(failed).toHaveBeenCalledOnce();
+    const offline = vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'));
+    await expect(logoutAccessSession(offline)).rejects.toThrow('offline');
+    expect(offline).toHaveBeenCalledOnce();
   });
 });
 
