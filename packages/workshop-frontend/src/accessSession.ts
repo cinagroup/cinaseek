@@ -33,6 +33,8 @@ export async function probeAccessSession(
       method: 'GET',
       credentials: 'same-origin',
       redirect: 'manual',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(10_000),
       headers: {
         accept: 'application/json',
         'x-requested-with': 'XMLHttpRequest',
@@ -48,6 +50,26 @@ export async function probeAccessSession(
     return 'error'
   } catch {
     return 'error'
+  }
+}
+
+/** Revoke Access through its own endpoint, then verify logout before returning to the public home. */
+export async function logoutAccessSession(fetchImpl: typeof fetch = fetch): Promise<void> {
+  const response = await fetchImpl('/cdn-cgi/access/logout', {
+    method: 'GET',
+    credentials: 'same-origin',
+    redirect: 'manual',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(10_000),
+  })
+  // Access may reply with HTML or a redirect. Neither is proof that the session was revoked;
+  // only the protected probe can confirm that the next page will actually be signed out.
+  if (!response.ok && response.type !== 'opaqueredirect' &&
+      !(response.status >= 300 && response.status < 400)) {
+    throw new Error('Cloudflare Access logout failed.')
+  }
+  if (await probeAccessSession(fetchImpl) !== 'guest') {
+    throw new Error('Could not confirm Cloudflare Access logout.')
   }
 }
 

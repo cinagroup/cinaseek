@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { RpcStub } from 'capnweb'
 import { PublicApi, AuthenticatedApi } from '@gadgets/workshop-shared/api'
 import { setReportedUserId } from './errorReporting'
-import type { AccessSessionStatus } from './accessSession'
+import { logoutAccessSession, type AccessSessionStatus } from './accessSession'
 
 const CF_ACCESS_MODE = import.meta.env.VITE_CF_ACCESS_MODE === 'true'
 
@@ -29,6 +29,7 @@ export function useAuth(
   // State closures go stale in cleanup functions, so retain only the current capability here.
   const authenticatedApiRef = useRef<RpcStub<AuthenticatedApi> | null>(null)
   authenticatedApiRef.current = authState.authenticatedApi
+  const logoutPending = useRef(false)
 
   useEffect(() => {
     const authenticatedApi = authState.authenticatedApi
@@ -123,11 +124,23 @@ export function useAuth(
   }
 
   const logout = () => {
-    setReportedUserId(undefined)
     if (CF_ACCESS_MODE) {
-      window.location.assign('/cdn-cgi/access/logout')
+      if (logoutPending.current) return
+      logoutPending.current = true
+      void logoutAccessSession().then(() => {
+        setReportedUserId(undefined)
+        // A full navigation also tears down the old RPC capabilities. Do not clear React auth
+        // early: protected routes would otherwise start a fresh Access login during logout.
+        window.location.replace('/')
+      }).catch(() => {
+        setAuthState(previous => ({
+          ...previous,
+          error: 'Could not sign out. Please retry and try signing out again.',
+        }))
+      }).finally(() => { logoutPending.current = false })
       return
     }
+    setReportedUserId(undefined)
     setAuthState((previous) => {
       previous.authenticatedApi?.[Symbol.dispose]()
       return { token: null, authenticatedApi: null, isLoading: false, error: null }

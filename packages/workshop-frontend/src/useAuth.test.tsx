@@ -8,9 +8,15 @@ import type { RpcStub } from 'capnweb'
 import type { PublicApi, AiChatAuthorInfo } from '@gadgets/workshop-shared/api'
 import { setReportedUserId } from './errorReporting'
 import { useAuth } from './useAuth'
+import type { logoutAccessSession } from './accessSession'
 
 vi.mock('./errorReporting', () => ({
   setReportedUserId: vi.fn<(reportedUserId: string | undefined) => void>(),
+}))
+
+vi.mock('./accessSession', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./accessSession')>(),
+  logoutAccessSession: vi.fn<typeof logoutAccessSession>(),
 }))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -70,6 +76,7 @@ describe('useAuth error reporting identity', () => {
     containers.length = 0
     localStorage.clear()
     vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
 
@@ -77,11 +84,13 @@ describe('useAuth error reporting identity', () => {
   async function mount(
     publicApi: RpcStub<PublicApi>,
     hook: typeof useAuth = useAuth,
-  ): Promise<{ controls: Controls; root: Root }> {
-    const captured: { controls?: Controls } = {}
+  ): Promise<{ controls: Controls; root: Root; state: () => ReturnType<typeof useAuth> }> {
+    const captured: { controls?: Controls; state?: ReturnType<typeof useAuth> } = {}
     function Consumer() {
-      const { login, logout } = hook(publicApi)
+      const state = hook(publicApi)
+      const { login, logout } = state
       captured.controls = { login, logout }
+      captured.state = state
       return null
     }
 
@@ -91,7 +100,7 @@ describe('useAuth error reporting identity', () => {
     const root = createRoot(container)
     roots.push(root)
     await act(async () => root.render(<Consumer />))
-    return { controls: captured.controls!, root }
+    return { controls: captured.controls!, root, state: () => captured.state! }
   }
 
   it('names the user when a stored token authenticates on mount', async () => {
@@ -137,6 +146,58 @@ describe('useAuth error reporting identity', () => {
     roots.splice(roots.indexOf(inner), 1)
 
     expect(setReportedUserId).not.toHaveBeenCalledWith(undefined)
+  })
+
+  async function mountAccessLogout() {
+    vi.stubEnv('VITE_CF_ACCESS_MODE', 'true')
+    vi.resetModules()
+    const { useAuth: accessUseAuth } = await import('./useAuth')
+    const { logoutAccessSession: endSession } = await import('./accessSession')
+    const { setReportedUserId: setId } = await import('./errorReporting')
+    const replace = vi.fn<Location['replace']>()
+    const assign = vi.fn<Location['assign']>()
+    const browserWindow = window
+    vi.stubGlobal('window', new Proxy(browserWindow, {
+      get(target, key) {
+        return key === 'location' ? { replace, assign } : Reflect.get(target, key, target)
+      },
+    }))
+    const mounted = await mount(stubPublicApi(person), accessUseAuth)
+    return { ...mounted, endSession: vi.mocked(endSession), setId, replace, assign }
+  }
+
+  it('returns to public home only after confirmed Access logout and ignores repeated clicks', async () => {
+    const { controls, state, endSession, setId, replace, assign } = await mountAccessLogout()
+    let complete!: () => void
+    endSession.mockImplementation(() => new Promise<void>(resolve => { complete = resolve }))
+
+    act(() => { controls.logout(); controls.logout() })
+    expect(endSession).toHaveBeenCalledOnce()
+    expect(replace).not.toHaveBeenCalled()
+    // Keep auth until the document navigation: clearing it on a protected route would log back in.
+    expect(state().isAuthenticated).toBe(true)
+    expect(setId).not.toHaveBeenCalledWith(undefined)
+
+    await act(async () => complete())
+    expect(replace).toHaveBeenCalledExactlyOnceWith('/')
+    expect(assign).not.toHaveBeenCalled()
+    expect(setId).toHaveBeenLastCalledWith(undefined)
+  })
+
+  it('reports failed Access logout without pretending to sign out and permits retry', async () => {
+    const { controls, state, endSession, setId, replace } = await mountAccessLogout()
+    endSession.mockRejectedValueOnce(new Error('session is still active'))
+    await act(async () => controls.logout())
+
+    expect(replace).not.toHaveBeenCalled()
+    expect(state().isAuthenticated).toBe(true)
+    expect(state().error).toContain('Could not sign out')
+    expect(setId).not.toHaveBeenCalledWith(undefined)
+
+    endSession.mockResolvedValueOnce(undefined)
+    await act(async () => controls.logout())
+    expect(endSession).toHaveBeenCalledTimes(2)
+    expect(replace).toHaveBeenCalledExactlyOnceWith('/')
   })
 
   it('clears the identity on logout', async () => {
