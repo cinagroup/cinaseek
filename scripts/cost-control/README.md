@@ -68,6 +68,13 @@ downloads in a `finally` block:
     CINASEEK_PRODUCT_ANALYTICS_R2_SECRET_ACCESS_KEY=<bucket-scoped-secret-key>
     pnpm audit:product-analytics:r2 -- --day 2026-09-03
 
+The acquisition wrapper requires complete, well-formed ListObjectsV2 XML, an explicit boolean
+pagination state, URL encoding, and a KeyCount matching the ungrouped object entries. Duplicate
+keys (including across pages), dot path segments, grouped prefixes, malformed scalar fields and
+DTD declarations fail before any download. Redirects are refused and each request has a 30-second
+timeout. A successful read audits the objects returned by that listing; it does not prove that
+the producer has finalized all delayed events or establish the fourteen-day billing window.
+
 For manually acquired finalized Pipeline objects, audit them locally with:
 
     pnpm audit:product-analytics <file-or-directory> [...]

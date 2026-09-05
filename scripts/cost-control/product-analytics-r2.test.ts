@@ -24,6 +24,8 @@ function listXml(entries: Array<{ key: string; size: number }>, options: {
   return [
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
     "<ListBucketResult>",
+    "<EncodingType>url</EncodingType>",
+    `<KeyCount>${entries.length}</KeyCount>`,
     ...entries.map(entry =>
       `<Contents><Key>${encodeURIComponent(entry.key)}</Key><Size>${entry.size}</Size></Contents>`
     ),
@@ -181,4 +183,85 @@ test("fails on an object-size race and still removes its temporary directory", a
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
+});
+
+const PARTITION = "analytics/events/year=2026/month=09/day=03/";
+const ONE_OBJECT = listXml([{ key: `${PARTITION}one.parquet`, size: 1 }]);
+
+for (const [name, xml] of [
+  ["missing pagination state", ONE_OBJECT.replace("<IsTruncated>false</IsTruncated>", "")],
+  ["invalid pagination state", ONE_OBJECT.replace("<IsTruncated>false", "<IsTruncated>unknown")],
+  ["unfinished XML", ONE_OBJECT.replace("</ListBucketResult>", "")],
+  ["unexpected root", ONE_OBJECT.replaceAll("ListBucketResult", "Error")],
+  ["duplicate pagination fields", ONE_OBJECT.replace("</ListBucketResult>",
+    "<IsTruncated>true</IsTruncated></ListBucketResult>")],
+  ["incorrect key count", ONE_OBJECT.replace("<KeyCount>1", "<KeyCount>2")],
+  ["missing key count", ONE_OBJECT.replace("<KeyCount>1</KeyCount>", "")],
+  ["unexpected encoding", ONE_OBJECT.replace("<EncodingType>url", "<EncodingType>unknown")],
+  ["nested object field", ONE_OBJECT.replace("<Key>", "<Key><Unexpected>")
+    .replace("</Key>", "</Unexpected></Key>")],
+  ["unexpected grouped prefix", ONE_OBJECT.replace("</ListBucketResult>",
+    "<CommonPrefixes><Prefix>other/</Prefix></CommonPrefixes></ListBucketResult>")],
+  ["DTD declaration", ONE_OBJECT.replace("<ListBucketResult>",
+    "<!DOCTYPE ListBucketResult [<!ENTITY test 'value'>]><ListBucketResult>")],
+] as const) {
+  test(`rejects ${name} before downloading or validating content`, async () => {
+    let gets = 0;
+    let audits = 0;
+    await assert.rejects(auditProductAnalyticsR2Day(CONFIG, {
+      now: new Date("2026-09-04T12:00:00Z"),
+      client: {
+        async fetch(input): Promise<Response> {
+          if (new URL(String(input)).searchParams.has("list-type")) return new Response(xml);
+          gets++;
+          return new Response(new Uint8Array([1]));
+        },
+      },
+      audit: async () => { audits++; return AUDIT_REPORT; },
+    }), /R2 list response/);
+    assert.equal(gets, 0);
+    assert.equal(audits, 0);
+  });
+}
+
+for (const suffix of ["../../../../outside.parquet", "./one.parquet"]) {
+  test(`rejects URL-normalized key segments: ${suffix}`, async () => {
+    let gets = 0;
+    await assert.rejects(auditProductAnalyticsR2Day(CONFIG, {
+      now: new Date("2026-09-04T12:00:00Z"),
+      client: {
+        async fetch(input): Promise<Response> {
+          if (new URL(String(input)).searchParams.has("list-type")) {
+            return new Response(listXml([{ key: `${PARTITION}${suffix}`, size: 1 }]));
+          }
+          gets++;
+          return new Response(new Uint8Array([1]));
+        },
+      },
+      audit: async () => AUDIT_REPORT,
+    }), /R2 list response/);
+    assert.equal(gets, 0);
+  });
+}
+
+test("rejects duplicate object keys across pages instead of inflating row counts", async () => {
+  let pages = 0;
+  let gets = 0;
+  await assert.rejects(auditProductAnalyticsR2Day(CONFIG, {
+    now: new Date("2026-09-04T12:00:00Z"),
+    client: {
+      async fetch(input): Promise<Response> {
+        if (new URL(String(input)).searchParams.has("list-type")) {
+          pages++;
+          return new Response(listXml([{ key: `${PARTITION}one.parquet`, size: 1 }],
+            pages === 1 ? { truncated: true, token: "next-page" } : {}));
+        }
+        gets++;
+        return new Response(new Uint8Array([1]));
+      },
+    },
+    audit: async () => AUDIT_REPORT,
+  }), /repeated an object key/);
+  assert.equal(pages, 2);
+  assert.equal(gets, 0);
 });

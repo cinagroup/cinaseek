@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,12 +15,14 @@ import {
 const ACCOUNT_ID = /^[0-9a-f]{32}$/i;
 const BUCKET_NAME = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+// Reuse the repository's XML parser; regex matching cannot detect a truncated response.
+const { JSDOM } = createRequire(import.meta.url)("jsdom");
 
 interface SignedR2Client {
   fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
 }
 
-/** Non-secret configuration for one closed-day, bucket-scoped R2 audit. */
+/** Configuration for one closed-day, bucket-scoped R2 audit; credentials must not be logged. */
 export interface ProductAnalyticsR2AuditConfig {
   /** Cloudflare account identifier used to derive the fixed R2 S3 endpoint. */
   accountId: string;
@@ -63,59 +66,86 @@ interface ProductAnalyticsR2AuditDependencies {
   tempRoot?: string;
 }
 
-function xmlText(xml: string, name: string): string | undefined {
-  const match = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(xml);
-  return match?.[1];
+// The Node tooling project has no browser DOM globals. This is the small, read-only XML
+// element surface consumed from jsdom, not an RPC or provider-response assertion.
+interface XmlElement {
+  readonly localName: string;
+  readonly children: ArrayLike<XmlElement>;
+  readonly textContent: string | null;
 }
 
-function decodeXmlText(value: string): string {
-  return value.replace(/&(amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);/gi, entity => {
-    const body = entity.slice(1, -1).toLowerCase();
-    if (body === "amp") return "&";
-    if (body === "lt") return "<";
-    if (body === "gt") return ">";
-    if (body === "quot") return '"';
-    if (body === "apos") return "'";
-    const codePoint = body.startsWith("#x")
-      ? Number.parseInt(body.slice(2), 16)
-      : Number.parseInt(body.slice(1), 10);
-    if (!Number.isSafeInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
-      throw new Error("R2 list response contains an invalid XML entity");
-    }
-    return String.fromCodePoint(codePoint);
-  });
+function xmlText(parent: XmlElement, name: string): string | undefined {
+  const matches = Array.from(parent.children).filter(child => child.localName === name);
+  if (matches.length > 1 || matches[0]?.children.length) {
+    throw new Error("R2 list response contains duplicate or nested scalar fields");
+  }
+  return matches[0]?.textContent ?? undefined;
 }
 
-function parseListPage(xml: string, prefix: string): ListPage {
+function parseListPage(xml: string, prefix: string, seenKeys: Set<string>): ListPage {
+  if (xml.includes("<!DOCTYPE")) throw new Error("R2 list response must not contain a DTD");
+  let view;
+  try {
+    view = new JSDOM(xml, { contentType: "application/xml" }).window;
+  } catch {
+    // XML diagnostics may quote provider-authored object keys; never forward those diagnostics.
+    throw new Error("R2 list response is not complete, well-formed XML");
+  }
+  try {
+    const root: XmlElement = view.document.documentElement;
+    if (root.localName !== "ListBucketResult") throw new Error("R2 list response has an unexpected root");
+    return parseListResult(root, prefix, seenKeys);
+  } finally {
+    view.close();
+  }
+}
+
+function parseListResult(root: XmlElement, prefix: string, seenKeys: Set<string>): ListPage {
+  const truncated = xmlText(root, "IsTruncated");
+  if (truncated !== "true" && truncated !== "false") {
+    throw new Error("R2 list response omitted a valid pagination state");
+  }
+  if (xmlText(root, "EncodingType") !== "url") {
+    throw new Error("R2 list response omitted the requested URL encoding");
+  }
+  const children = Array.from(root.children);
+  const entries = children.filter(child => child.localName === "Contents");
+  const keyCount = xmlText(root, "KeyCount");
+  if (keyCount === undefined || !/^\d+$/.test(keyCount) || Number(keyCount) !== entries.length ||
+      children.some(child => child.localName === "CommonPrefixes")) {
+    throw new Error("R2 list response has incomplete object coverage");
+  }
   const objects: R2Object[] = [];
   let nonParquetObjects = 0;
-  for (const match of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
-    const encodedKey = xmlText(match[1], "Key");
-    const sizeText = xmlText(match[1], "Size");
+  for (const entry of entries) {
+    const encodedKey = xmlText(entry, "Key");
+    const sizeText = xmlText(entry, "Size");
     if (encodedKey === undefined || sizeText === undefined || !/^\d+$/.test(sizeText)) {
       throw new Error("R2 list response contains an invalid object entry");
     }
     let key: string;
     try {
-      key = decodeURIComponent(decodeXmlText(encodedKey));
+      key = decodeURIComponent(encodedKey);
     } catch {
       throw new Error("R2 list response contains an invalid encoded key");
     }
     const size = Number(sizeText);
-    if (!key.startsWith(prefix) || !Number.isSafeInteger(size) || size < 0) {
+    if (!key.startsWith(prefix) || !Number.isSafeInteger(size) || size < 0 ||
+        key.split("/").some(part => part === "." || part === "..")) {
       throw new Error("R2 list response escaped the requested partition or byte bounds");
     }
+    if (seenKeys.has(key)) throw new Error("R2 list response repeated an object key");
+    seenKeys.add(key);
     if (!key.toLowerCase().endsWith(".parquet")) {
       nonParquetObjects++;
       continue;
     }
     objects.push({ key, size });
   }
-  const isTruncated = xmlText(xml, "IsTruncated") === "true";
-  const token = xmlText(xml, "NextContinuationToken");
-  if (!isTruncated) return { objects, nonParquetObjects };
+  const token = xmlText(root, "NextContinuationToken");
+  if (truncated === "false") return { objects, nonParquetObjects };
   if (!token) throw new Error("R2 list response omitted its continuation token");
-  return { objects, nonParquetObjects, nextContinuationToken: decodeXmlText(token) };
+  return { objects, nonParquetObjects, nextContinuationToken: token };
 }
 
 function closedDay(day: string, now: Date): { day: string; prefix: string } {
@@ -149,16 +179,23 @@ async function listObjects(
   let nonParquetObjects = 0;
   let continuationToken: string | undefined;
   const seenContinuationTokens = new Set<string>();
+  const seenKeys = new Set<string>();
+  let pages = 0;
   do {
+    if (++pages > PRODUCT_ANALYTICS_PARQUET_LIMITS.maxFiles + 1) {
+      throw new Error("R2 list response exceeded the pagination bound");
+    }
     const url = objectUrl(endpoint, bucket);
     url.searchParams.set("list-type", "2");
     url.searchParams.set("encoding-type", "url");
     url.searchParams.set("max-keys", String(PRODUCT_ANALYTICS_PARQUET_LIMITS.maxFiles));
     url.searchParams.set("prefix", prefix);
     if (continuationToken) url.searchParams.set("continuation-token", continuationToken);
-    const response = await client.fetch(url, { method: "GET" });
+    const response = await client.fetch(url, {
+      method: "GET", redirect: "error", signal: AbortSignal.timeout(30_000),
+    });
     if (!response.ok) throw new Error(`R2 list failed with status ${response.status}`);
-    const page = parseListPage(await response.text(), prefix);
+    const page = parseListPage(await response.text(), prefix, seenKeys);
     objects.push(...page.objects);
     nonParquetObjects += page.nonParquetObjects;
     if (objects.length + nonParquetObjects > PRODUCT_ANALYTICS_PARQUET_LIMITS.maxFiles) {
@@ -209,7 +246,7 @@ export async function auditProductAnalyticsR2Day(
     const paths: string[] = [];
     for (const [index, object] of listed.objects.entries()) {
       const response = await client.fetch(objectUrl(endpoint, config.bucket, object.key), {
-        method: "GET",
+        method: "GET", redirect: "error", signal: AbortSignal.timeout(30_000),
       });
       if (!response.ok) throw new Error(`R2 object ${index + 1} GET failed with status ${response.status}`);
       const body = new Uint8Array(await response.arrayBuffer());
