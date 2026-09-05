@@ -13,6 +13,7 @@
     "app:mobile:sync": "pnpm --filter @cinaseek/app-mobile sync",
     "app:mobile:android": "pnpm --filter @cinaseek/app-mobile open:android",
     "app:mobile:ios": "pnpm --filter @cinaseek/app-mobile open:ios",
+    "audit:billing:v1": "node scripts/cost-control/billing-v1-reconcile.ts",
     "audit:product-analytics": "node scripts/cost-control/product-analytics-parquet.ts",
     "audit:product-analytics:r2": "node scripts/cost-control/product-analytics-r2.ts",
     "build": "vp run -r --cache build",

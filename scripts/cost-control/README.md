@@ -81,6 +81,22 @@ values in different workspaces remain distinct without exposing low-entropy iden
 parser never lists or downloads R2 objects itself, so acquisition credentials stay in the small
 acquisition wrapper rather than entering the content validator.
 
+After at least fourteen consecutive closed UTC days have a daily attribution report, reconcile the
+fixed 15% gate against Cloudflare's current-period V1 `BilledCost` rows with:
+
+    CLOUDFLARE_ACCOUNT_ID=<account-id>
+    CINASEEK_AI_GATEWAY_TOKEN=<token-with-Billing-Read>
+    pnpm audit:billing:v1 -- --attribution <daily-costs.json>
+
+The input contract is `{ "schemaVersion": 1, "currency": "USD", "days": [{ "day":
+"YYYY-MM-DD", "attributedCostUsd": 0 }] }`. The command requires 14-31 sorted consecutive closed
+days, makes one GET without a custom time range (avoiding the provider's billing-anchor trap),
+requires an explicit provider row for every day, and enforces the runbook's 15% threshold on every
+day. Its report omits account names, zone data, subscriptions, charge descriptions, and raw provider
+messages. This verifies arithmetic and invoice coverage; the attribution input must still come from
+the authoritative Cloudflare metrics and privacy-preserving product-event process in
+`docs/cost-control.md`.
+
 The workspace-reopen alert reads a closed 30-minute outcome window and compares it with the latest
 rolling seven-day p95 latency baseline. Because a seven-day Workers Observability scan is materially
 larger than an outcome-window query, the baseline is refreshed at most once per UTC day and cached
