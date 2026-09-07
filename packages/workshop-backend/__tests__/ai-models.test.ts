@@ -276,6 +276,9 @@ describe("getModel AI Gateway routing", () => {
   it("keeps Workers AI user-funded when a platform gateway is configured", async () => {
     const handle = getModel(env(), WORKERS_AI_CONFIG, INITIATOR,
         { sessionAffinity: "session-a" });
+    const glm = getModel(env(),
+        {...WORKERS_AI_CONFIG, model: "@cf/zai-org/glm-5.3-flash"}, INITIATOR);
+    expect(glm.model).toMatchObject({reasoning: true, input: ["text", "image"]});
 
     expect(handle.model.api).toBe("openai-completions");
     expect(handle.model.id).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
