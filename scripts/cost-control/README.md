@@ -11,6 +11,15 @@ a restricted Cloudflare Email Service binding and/or an optional HTTPS webhook. 
 emits prompts, user IDs, workspace IDs, filenames, provider messages, or credentials. A source
 failure produces `insufficient_data`; it cannot recover a firing alert.
 
+Metrics transport retries HTTP 500/502/503/504 once per page, after 250–500 ms of jitter, only
+for its existing read-only GET, GraphQL and dry Observability queries. The retry, response headers
+and bounded response-body read share one 30-second deadline; a failed second attempt remains a
+source failure. Permission errors, rate limits, malformed data and responses carrying `Retry-After`
+are not retried. Pagination advances only after a validated successful page, so retrying cannot
+double-count an already-consumed page. Redirects are refused. The deployed no-fetch-signal
+compatibility path is preserved: timeout cancels an active body reader, but an outstanding header
+request may finish later; its response is then discarded without reading or retrying it.
+
 ## Required production configuration
 
 - A dedicated KV namespace bound as `ALERT_STATE`.
