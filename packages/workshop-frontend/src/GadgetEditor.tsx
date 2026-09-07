@@ -655,7 +655,10 @@ function AuthenticatedGadgetEditor({
   const [hasChatZero, setHasChatZero] = useState(false)
   const [_hasBindings, setHasBindings] = useState(false)
   const [hasAnyProposedChanges, setHasAnyProposedChanges] = useState(false)
-  const [selectedChatHasProposedChanges, setSelectedChatHasProposedChanges] = useState(false)
+  // The workpieces the selected chat proposes changes to (see
+  // AiChatMetadata.proposedChangeWorkpieces): drives per-gadget draft previews below.
+  const [selectedChatProposedWorkpieces, setSelectedChatProposedWorkpieces] =
+    useState<readonly WorkpieceId[]>([])
   const selectedChatId = urlChatId
   const chatListReady = chatCount !== null
   const singleInitialChat = chatCount === 1 && hasChatZero
@@ -851,8 +854,13 @@ function AuthenticatedGadgetEditor({
     ? 'transition-[width,opacity] duration-200 ease-out'
     : ''
 
+  // Show the selected chat's draft only when it proposes changes to the *selected* gadget: a
+  // chat that touched some other gadget would otherwise run this one as a needlessly separate
+  // chat-scoped instance with identical code (the backend applies the same per-gadget rule in
+  // getGadgetFacetFetcher).
   const previewChatId =
-    selectedChatHasProposedChanges && effectiveSelectedChatId !== null
+    effectiveSelectedChatId !== null && selectedGadgetId !== null &&
+        selectedChatProposedWorkpieces.includes(selectedGadgetId)
       ? effectiveSelectedChatId
       : undefined
 
@@ -1054,7 +1062,7 @@ function AuthenticatedGadgetEditor({
     setChatCount(null)
     setHasChatZero(false)
     setHasAnyProposedChanges(false)
-    setSelectedChatHasProposedChanges(false)
+    setSelectedChatProposedWorkpieces([])
     setWorkspaceView(getStoredWorkspaceView(id))
     openedWorkpieceParamRef.current = null
     activityReturnViewRef.current = null
@@ -1775,7 +1783,7 @@ function AuthenticatedGadgetEditor({
                   onComposerIntegrityStateChange={setComposerIntegrity}
                   onAutoApproveChange={() => setAutoApproveReloadTrigger(t => t + 1)}
                   onHasAnyCodeChange={setHasAnyProposedChanges}
-                  onSelectedChatHasProposedChangesChange={setSelectedChatHasProposedChanges}
+                  onSelectedChatProposedChangesChange={setSelectedChatProposedWorkpieces}
                   onOpenGadget={handleSelectWorkpiece}
                   outputOfWorkpiece={outputOfWorkpiece}
                 />

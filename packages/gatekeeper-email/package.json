@@ -18,6 +18,7 @@
     "postal-mime": "^2.7.6"
   },
   "devDependencies": {
+    "@gadgets/scripts": "workspace:*",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "wrangler": "catalog:"
