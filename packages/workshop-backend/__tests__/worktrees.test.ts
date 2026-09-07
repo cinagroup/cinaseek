@@ -421,7 +421,7 @@ describe("client delivery filtering", () => {
     expect(stored.change).toBeDefined();  // storage keeps everything
     expect(stored.pins).toHaveLength(1);
 
-    let delivered = impl.hydrateChatMessageForClient(stored);
+    let delivered = await impl.hydrateChatMessageForClient(stored);
     expect(delivered.change).toBeUndefined();          // all-worktree change: dropped outright
     expect(delivered.pins).toBeUndefined();            // the pin is the base-fetch trigger
     expect(delivered.watermark).toEqual(stored.watermark);  // clients still drop their rows
@@ -451,7 +451,7 @@ describe("client delivery filtering", () => {
     let stored = chatMessages(impl, 1).find(msg => msg.type === "changes")!;
     expect(stored.change).toBeDefined();
     expect(stored.pins).toHaveLength(1);
-    let delivered = impl.hydrateChatMessageForClient(stored);
+    let delivered = await impl.hydrateChatMessageForClient(stored);
     expect(delivered.change).toBeUndefined();
     expect(delivered.pins).toBeUndefined();
     expect(JSON.stringify(delivered)).not.toContain("worktree content");
@@ -471,7 +471,7 @@ describe("client delivery filtering", () => {
     ]});
 
     let stored = chatMessages(impl, 1).filter(msg => msg.type === "changes").at(-1)!;
-    let delivered = impl.hydrateChatMessageForClient(stored);
+    let delivered = await impl.hydrateChatMessageForClient(stored);
     expect(Object.keys(delivered.change!)).toEqual([`${gadget.id}`]);
     expect(JSON.stringify(delivered)).not.toContain("worktree content");
   }));

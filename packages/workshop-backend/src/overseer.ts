@@ -12136,6 +12136,18 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     let chatMeta = this.impl.storage.chatMeta;
     let changedChatMetadata: AiChatMetadata[] = [];
     let replayCount = 0;
+    let self = this;
+    let disposed = false;
+    let deliveryTail = Promise.resolve();
+
+    function deliver(callback: () => Promise<void>) {
+      // Durable metadata (especially active -> idle) must not overtake messages waiting on
+      // R2 hydration, or clients can observe a completed turn with an incomplete history.
+      deliveryTail = deliveryTail.then(async () => {
+        if (!disposed) await callback();
+      });
+      deliveryTail.catch(unsubscribe);
+    }
 
     subscriber = subscriber.dup();  // keep stub after return
     this.impl.addChatSubscriber(subscriber);
@@ -12146,27 +12158,27 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     subscriber.streamGeneration(this.impl.streamGeneration).catch(unsubscribe);
 
     let impl = this.impl;
+    function deliverMetadata(record: AiChatMetadata) {
+      // Freeze the event's state before waiting: the writer may reuse this metadata object.
+      let metadata = structuredClone(impl.chatMetaForClient(record));
+      deliver(() => subscriber.metadata(metadata));
+    }
     let metaSubscriber = {
       add(record: AiChatMetadata) {
-        subscriber.metadata(impl.chatMetaForClient(record)).catch(unsubscribe);
+        deliverMetadata(record);
       },
       update(oldRecord: AiChatMetadata, newRecord: AiChatMetadata): void {
-        subscriber.metadata(impl.chatMetaForClient(newRecord)).catch(unsubscribe);
+        deliverMetadata(newRecord);
       },
       remove(record: AiChatMetadata): void {
-        subscriber.deleted(record.id);
+        deliver(() => subscriber.deleted(record.id));
       }
     }
 
-    let self = this;
-    let deliveryTail = Promise.resolve();
     function deliverMessage(record: AiChatMessage) {
-      // R2-backed image hydration is asynchronous. Chain deliveries so differing object-read
-      // latency cannot reorder chat messages on the callback stream.
-      deliveryTail = deliveryTail.then(async () => {
+      deliver(async () => {
         await subscriber.message(await self.#getChatMessageForClient(record));
       });
-      deliveryTail.catch(unsubscribe);
     }
 
     let msgSubscriber = {
@@ -12184,7 +12196,6 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       }
     }
 
-    let disposed = false;
     function unsubscribe() {
       if (disposed) return;
       disposed = true;
@@ -12210,7 +12221,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       }
       // Messages establish the durable state that the corresponding metadata describes.
       for (let meta of changedChatMetadata) {
-        subscriber.metadata(impl.chatMetaForClient(meta)).catch(unsubscribe);
+        deliverMetadata(meta);
       }
     }
 
@@ -12224,9 +12235,9 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     // stripWorktreeChangeEntries), revision numbering preserved.
     for (let row of this.impl.storage.chatChanges.list()) {
       if (row.retired) continue;
-      subscriber.changeApplied(row.chatId, row.generation, row.revision, row.author,
-                               impl.stripWorktreeChangeEntries(row.change),
-                               row.submission).catch(unsubscribe);
+      let change = impl.stripWorktreeChangeEntries(row.change);
+      deliver(() => subscriber.changeApplied(row.chatId, row.generation, row.revision, row.author,
+                                            change, row.submission));
       ++replayCount;
     }
 
