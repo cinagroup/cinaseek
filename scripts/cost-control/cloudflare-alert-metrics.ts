@@ -3,6 +3,7 @@ const GRAPHQL_URL = `${API_BASE}/graphql`;
 const OBSERVABILITY_DATASETS = ["cloudflare-workers"];
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+const RETRY_DELAY_MS = 250;
 const MAX_AI_GATEWAY_PAGES = 20;
 const AI_GATEWAY_PAGE_SIZE = 50;
 const GRAPHQL_GROUP_LIMIT = 10_000;
@@ -164,7 +165,8 @@ function eventFilter(eventNames: readonly string[]): object {
   };
 }
 
-async function readBoundedJson(response: Response): Promise<unknown> {
+async function readBoundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  signal.throwIfAborted();
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
     await response.body?.cancel();
@@ -172,17 +174,25 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   }
   if (!response.body) return null;
   const reader = response.body.getReader();
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener("abort", cancel, { once: true });
   const chunks: Uint8Array[] = [];
   let size = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_RESPONSE_BYTES) {
-      await reader.cancel();
-      throw new CloudflareAlertMetricsError(502, "Cloudflare metrics response exceeded the size limit.");
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new CloudflareAlertMetricsError(502, "Cloudflare metrics response exceeded the size limit.");
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    reader.releaseLock();
   }
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -298,35 +308,63 @@ export class CloudflareAlertMetricsClient {
     this.#fetch = fetchImpl;
   }
 
-  async #request(url: string, init: RequestInit): Promise<Response> {
-    let didTimeout = false;
+  // Every caller is a read: GET, a GraphQL query, or a dry Observability query. Retry only
+  // transient HTTP failures, once per page, under the SAME deadline as reading its body.
+  // Never replay writes, invalid responses, permission errors or rate limits. A provider's
+  // Retry-After is left to the next collection cycle rather than retried prematurely.
+  async #request(url: string, init: RequestInit): Promise<{ response: Response; body: unknown }> {
+    const controller = new AbortController();
+    const timeoutError = new CloudflareAlertMetricsError(
+      504, "Cloudflare metrics request timed out.", [], "timeout",
+    );
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<Response>((_resolve, reject) => {
+    let retryDelay: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
-        didTimeout = true;
-        reject(new Error("Cloudflare metrics request timeout"));
+        reject(timeoutError);
+        controller.abort(timeoutError);
       }, REQUEST_TIMEOUT_MS);
     });
     try {
       const fetchImpl = this.#fetch;
-      const request = fetchImpl(url, {
-        ...init,
-        headers: {
-          Authorization: `Bearer ${this.#config.apiToken}`,
-          "Content-Type": "application/json",
-          ...init.headers,
-        },
-      });
+      const request = (async () => {
+        for (let attempt = 0; ; attempt++) {
+          controller.signal.throwIfAborted();
+          const response = await fetchImpl(url, {
+            ...init,
+            redirect: "error",
+            // Keep the deployed no-fetch-signal compatibility path (1224c50f). The local
+            // controller cancels body reads; the race bounds waiting for response headers.
+            headers: {
+              Authorization: `Bearer ${this.#config.apiToken}`,
+              "Content-Type": "application/json",
+              ...init.headers,
+            },
+          });
+          // A header request may finish after the local deadline; never read or retry it.
+          if (controller.signal.aborted) {
+            void response.body?.cancel().catch(() => {});
+            controller.signal.throwIfAborted();
+          }
+          if (attempt === 0 && [500, 502, 503, 504].includes(response.status) &&
+              !response.headers.has("Retry-After")) {
+            await response.body?.cancel();
+            controller.signal.throwIfAborted();
+            await Promise.race([
+              new Promise<void>(resolve => {
+                retryDelay = setTimeout(resolve, RETRY_DELAY_MS * (1 + Math.random()));
+              }),
+              timeoutPromise,
+            ]);
+            continue;
+          }
+          return { response, body: await readBoundedJson(response, controller.signal) };
+        }
+      })();
       return await Promise.race([request, timeoutPromise]);
     } catch (error) {
-      if (didTimeout) {
-        throw new CloudflareAlertMetricsError(
-          504,
-          "Cloudflare metrics request timed out.",
-          [],
-          "timeout",
-        );
-      }
+      if (controller.signal.aborted) throw timeoutError;
+      if (error instanceof CloudflareAlertMetricsError) throw error;
       throw new CloudflareAlertMetricsError(
         502,
         "Could not reach the Cloudflare metrics API.",
@@ -335,12 +373,12 @@ export class CloudflareAlertMetricsClient {
       );
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+      if (retryDelay !== undefined) clearTimeout(retryDelay);
     }
   }
 
   async #api(url: string, init: RequestInit): Promise<Record<string, unknown>> {
-    const response = await this.#request(url, init);
-    const body = await readBoundedJson(response);
+    const { response, body } = await this.#request(url, init);
     if (!response.ok) {
       throw new CloudflareAlertMetricsError(
         response.status,
@@ -352,11 +390,10 @@ export class CloudflareAlertMetricsClient {
   }
 
   async #graphql(query: string, variables: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const response = await this.#request(GRAPHQL_URL, {
+    const { response, body } = await this.#request(GRAPHQL_URL, {
       method: "POST",
       body: JSON.stringify({ query, variables }),
     });
-    const body = await readBoundedJson(response);
     if (!response.ok || !isRecord(body) || Array.isArray(body.errors) || !isRecord(body.data)) {
       throw new CloudflareAlertMetricsError(
         response.status || 502,
@@ -745,12 +782,11 @@ export class CloudflareAlertMetricsClient {
         per_page: String(AI_GATEWAY_PAGE_SIZE),
         page: String(page),
       });
-      const response = await this.#request(
+      const { response, body } = await this.#request(
         `${API_BASE}/accounts/${this.#config.accountId}/ai-gateway/gateways/` +
           `${encodeURIComponent(this.#config.aiGatewayId)}/logs?${search}`,
         { method: "GET", headers: { Accept: "application/json" } },
       );
-      const body = await readBoundedJson(response);
       if (!response.ok || !isRecord(body) || body.success !== true || !Array.isArray(body.result)) {
         throw new CloudflareAlertMetricsError(
           response.status || 502,
@@ -789,12 +825,11 @@ export class CloudflareAlertMetricsClient {
     for (let page = 0; page < MAX_DURABLE_OBJECT_PAGES; page++) {
       const search = new URLSearchParams({ limit: String(DURABLE_OBJECT_PAGE_SIZE) });
       if (cursor) search.set("cursor", cursor);
-      const response = await this.#request(
+      const { response, body } = await this.#request(
         `${API_BASE}/accounts/${this.#config.accountId}/workers/durable_objects/namespaces/` +
           `${this.#config.overseerNamespaceId}/objects?${search}`,
         { method: "GET", headers: { Accept: "application/json" } },
       );
-      const body = await readBoundedJson(response);
       if (!response.ok || !isRecord(body) || body.success !== true || !Array.isArray(body.result) ||
           !isRecord(body.result_info)) {
         throw new CloudflareAlertMetricsError(

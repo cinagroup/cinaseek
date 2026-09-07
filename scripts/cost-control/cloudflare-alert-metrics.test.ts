@@ -126,6 +126,7 @@ describe("Cloudflare alert metrics client", () => {
       (requests[0].init.headers as Record<string, string>).Authorization,
     "Bearer test-token-never-log");
     assert.equal(requests[0].init?.signal, undefined);
+    assert.equal(requests[0].init?.redirect, "error");
   });
 
   it("paginates unsampled duration events and de-duplicates a page boundary", async () => {
