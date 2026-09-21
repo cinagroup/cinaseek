@@ -104,6 +104,7 @@ import { useResolveAction } from "./useResolveAction";
 import { safeExternalUrl } from "./utils/safeExternalUrl";
 import { useAuthenticatedApi } from "./AuthContext";
 import { useVendorBranding } from "./useVendorBranding";
+import { personalSearchBranding } from "./features/connections/personalSearch";
 import OutOfCreditsModal from "./components/billing/OutOfCreditsModal";
 import { formatFullTimestamp } from "./utils/formatTimestamp";
 import { copyToClipboard } from "./clipboard";
@@ -1045,7 +1046,8 @@ function SlashCommandMention(
 function CapsuleMention({ capsule }: { capsule: CapsuleSpecifier }) {
   const { authenticatedApi } = useAuthenticatedApi();
   const vendorBranding = useVendorBranding(authenticatedApi);
-  const logo = capsule.vendorId ? vendorBranding.get(capsule.vendorId)?.logoUrl : undefined;
+  const logo = personalSearchBranding(capsule.vendorId, capsule.description.url)?.logoUrl
+    ?? (capsule.vendorId ? vendorBranding.get(capsule.vendorId)?.logoUrl : undefined);
   const safeUrl = safeExternalUrl(capsule.description.url);
   const body = (
     <>

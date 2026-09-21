@@ -161,6 +161,28 @@ describe("catalog and dispatch enforcement", () => {
     })).toThrow(/schema changed/);
   });
 
+  it("supports the official Tavily MCP general-only topic without widening the grant", () => {
+    // https://github.com/tavily-ai/tavily-mcp/blob/main/src/index.ts (2026-09-21).
+    // The REST API's news/finance topics are not part of this MCP contract.
+    const currentTool: McpWireTool = { ...tool, inputSchema: {
+      ...tool.inputSchema, properties: { ...tool.inputSchema.properties,
+        topic: { type: 'string', enum: ['general'], default: 'general' },
+      },
+    } };
+    expect(searchToolForEndpoint(tavily.endpoint, currentTool)?.inputSchema.properties?.topic)
+      .toEqual({ type: 'string', enum: ['general'] });
+    expect(prepareSearchArguments(tavily.endpoint, tavily.tool, { query: 'test', topic: 'general' }))
+      .toMatchObject({ topic: 'general', search_depth: 'basic' });
+    for (const topic of ['news', 'finance']) {
+      expect(() => prepareSearchArguments(tavily.endpoint, tavily.tool, { query: 'test', topic })).toThrow();
+    }
+    expect(() => searchToolForEndpoint(tavily.endpoint, { ...currentTool, inputSchema: {
+      ...currentTool.inputSchema, properties: { ...currentTool.inputSchema.properties,
+        topic: { type: 'string', enum: ['news'] },
+      },
+    } })).toThrow(/schema changed/);
+  });
+
   it("checks the live catalog and bounds arguments even for direct/queued tool execution", async () => {
     const sent: { method: string; params: unknown }[] = [];
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {

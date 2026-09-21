@@ -5,6 +5,14 @@
 import { escapeHtml, PAGE_STYLE } from "@gadgets/mcp-shared/html";
 import { SEARCH_PRESETS } from "@gadgets/mcp-shared/search-presets";
 
+/** Resolves a Connections shortcut without allowing arbitrary endpoints in the initiation URL. */
+export function searchShortcutEndpoint(url: URL): string | undefined {
+  if (!url.searchParams.has("preset")) return undefined;
+  const form = new FormData();
+  for (const [key, value] of url.searchParams) form.append(key, value);
+  return connectEndpoint(form);
+}
+
 /** Resolves a preset on the server; posted URLs cannot replace a preset's OAuth endpoint. */
 export function connectEndpoint(form: FormData): string {
   if (form.has("preset")) {

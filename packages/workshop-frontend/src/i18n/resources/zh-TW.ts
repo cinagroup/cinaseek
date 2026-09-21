@@ -280,6 +280,12 @@ const zhTW: TranslationCatalog = {
     },
   },
   gatekeepers: {
+    personalSearch: {
+      tagline: '使用自己的帳戶進行網頁搜尋',
+      description: '連接個人或團隊帳戶。搜尋消耗該帳戶的額度，不會回退使用 CinaSeek 的金鑰。CinaSeek 僅開放搜尋，不開放網頁擷取或研究。授權前請核對供應商的 OAuth 權限和計費帳戶。',
+      resourceTitle: '{{provider}} 搜尋',
+      resourceDescription: '僅搜尋，每次最多 10 筆結果，消耗已連接帳戶的額度。',
+    },
     pageTitle: '連接器', title: '連接器', subtitle: '新增工作區可使用的應用程式和帳戶。只需連接一次，即可接入你建立的任何內容。',
     search: '搜尋連接器…', reconnect: '重新連接', opening: '正在開啟…', connected: '已連接', available: '可用',
     credentialsExpired: '憑證已過期', loading: '正在載入連接器…', loadError: '載入連接器時發生問題。',

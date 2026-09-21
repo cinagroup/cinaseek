@@ -39,6 +39,7 @@ import { WorkshopIconButton } from "../../../components/WorkshopControls";
 import { handlePickerKeyDown } from "../../../pickerNavigation";
 import { useAuthenticatedApi } from "../../../AuthContext";
 import { useVendorBranding } from "../../../useVendorBranding";
+import { personalSearchBranding } from "../../connections/personalSearch";
 import { useSlashCommandPicker } from "./slash-commands/SlashCommandPicker";
 import { isImeComposing } from "../../../keyboardEvent";
 import { i18n } from "../../../i18n";
@@ -283,7 +284,8 @@ export const ChatComposer = ({
     getDocumentSnapshot,
     commitDocumentEdit,
     capsuleTokenText: (description, vendorId) =>
-      (vendorId && vendorBranding.get(vendorId)?.logoUrl ? CAPSULE_LOGO_SLOT : "") +
+      ((personalSearchBranding(vendorId, description.url)?.logoUrl
+        ?? (vendorId && vendorBranding.get(vendorId)?.logoUrl)) ? CAPSULE_LOGO_SLOT : "") +
       description.title,
     onConnectionCreated: () => connectionCreatedRef.current(),
     onSelectionRequest: (selection, documentRevision) => {
@@ -678,13 +680,13 @@ export const ChatComposer = ({
   // What the mirror paints as objects rather than text. Memoized because the composer re-renders for
   // plenty of reasons that leave the text alone (attachments, agent activity, menus).
   const mirrorTokens = useMemo<MirrorToken[]>(() => [
-    ...capsules.map(({start, length, vendorId}) => ({
+    ...capsules.map(({start, length, vendorId, description}) => ({
       kind: "capsule" as const,
       start,
       length,
       // Painted into the em space the token starts with, so it costs no layout.
       logoUrl: inputValue.startsWith(CAPSULE_LOGO_SLOT, start) && vendorId
-        ? vendorBranding.get(vendorId)?.logoUrl
+        ? personalSearchBranding(vendorId, description.url)?.logoUrl ?? vendorBranding.get(vendorId)?.logoUrl
         : undefined,
     })),
     ...(selectedSlashCommand ? [{

@@ -7,6 +7,7 @@ import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
 import { AccountDescription, SupportedResource, VendorDescription } from '@gadgets/workshop-shared/gatekeeper'
 import { extractHostname, extractBaseUrl, matchesResource, matchesResourceText, classifyMatch, getPlaceholderRanges } from './resourceMatching'
 import { GatekeeperIcon } from './components/GatekeeperIcon'
+import { personalSearchBranding } from './features/connections/personalSearch'
 import {
   PICKER_CAPTION, PICKER_EMPTY, PICKER_ROW, PICKER_ROW_ACTIVE, TabHint,
 } from './components/pickerRows'
@@ -530,6 +531,7 @@ export default function ResourcePicker({
 
                 {/* Existing account rows */}
                 {vendorAccounts.map(account => {
+                  const brand = personalSearchBranding(vendor.id, account.description.uniqueName)
                   const isActive = itemIdx === activeIndex
                   itemIdx++
                   const isExpired = !account.credentialsValid
@@ -558,7 +560,8 @@ export default function ResourcePicker({
                     >
                       <GatekeeperIcon
                         vendorId={vendor.id}
-                        logoUrl={vendor.description.logo?.url}
+                        logoUrl={brand?.logoUrl ?? vendor.description.logo?.url}
+                        color={brand ? brand.color : vendor.description.color}
                         fallbackText={vendor.description.displayName}
                         size={14}
                         className="h-6 w-6 rounded-md"

@@ -577,6 +577,12 @@ const en = {
     },
   },
   gatekeepers: {
+    personalSearch: {
+      tagline: 'Web search with your own account',
+      description: 'Connect your personal or team account. Searches use that account’s credits, never a fallback CinaSeek key. CinaSeek exposes search only, not scraping or research. Review the provider’s OAuth permissions and billing account before authorizing.',
+      resourceTitle: '{{provider}} Search',
+      resourceDescription: 'Search only. Up to 10 results per call; uses your connected account’s credits.',
+    },
     pageTitle: 'Gatekeepers',
     title: 'Gatekeepers',
     subtitle: 'Add the apps and accounts your workspaces can use. Connect once, then wire them into anything you build.',
