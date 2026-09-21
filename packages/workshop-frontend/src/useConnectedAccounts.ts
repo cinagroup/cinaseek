@@ -8,6 +8,8 @@ import type {
 } from '@gadgets/workshop-shared/gatekeeper'
 import { AccountsSubscriberAdapter } from './accountsSubscriber'
 import { logRpcFailure } from './rpcErrors'
+import { personalSearchDescription } from './features/connections/personalSearch'
+import { personalSearchProviderForUrl } from '@gadgets/workshop-shared/search-providers'
 
 /** Everything the Connections page renders for one connected account. */
 export interface AccountEntry {
@@ -41,11 +43,12 @@ export function useConnectedAccounts(authenticatedApi: RpcStub<AuthenticatedApi>
     const subscriber = new AccountsSubscriberAdapter({
       add({ id, description, vendor, supportedResources, credentialsValid, vendorId }) {
         if (cancelled) return
+        const preset = vendorId === 'mcp' ? personalSearchProviderForUrl(description.uniqueName) : undefined
         accountMap.set(id, {
           id,
           accountDescription: description,
           vendorId,
-          vendorDescription: vendor,
+          vendorDescription: preset ? { ...vendor, ...personalSearchDescription(preset) } : vendor,
           supportedResources,
           credentialsValid,
         })

@@ -48,7 +48,7 @@ function AccountList({
   return (
     <div data-render-token={renderToken} data-loaded={loaded}>
       {accounts.map((account) => (
-        <span key={account.id}>{account.accountDescription.displayName}</span>
+        <span key={account.id} data-vendor-id={account.vendorId} data-vendor-name={account.vendorDescription.displayName}>{account.accountDescription.displayName}</span>
       ))}
     </div>
   )
@@ -104,6 +104,11 @@ describe('useConnectedAccounts', () => {
 
     expect(container.textContent).toContain('first@example.com')
     expect(container.textContent).toContain('second@example.com')
+
+    await act(async () => {
+      subscriber!.add(3, accountDescription('https://mcp.tavily.com/mcp'), { displayName: 'MCP Server', url: 'https://modelcontextprotocol.io' }, [], true, 'mcp')
+    })
+    expect(container.querySelector('[data-vendor-name="Tavily"]')?.getAttribute('data-vendor-id')).toBe('mcp')
 
     await act(async () => {
       root!.render(<AccountList authenticatedApi={authenticatedApi} renderToken={1} />)

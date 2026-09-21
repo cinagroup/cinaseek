@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Check, Plus, UserCircle } from '@phosphor-icons/react'
 import { AccountDescription, SupportedResource, VendorDescription } from '@gadgets/workshop-shared/gatekeeper'
 import { useTranslation } from '../i18n'
+import { personalSearchBranding } from '../features/connections/personalSearch'
 
 /**
  * Account info as consumed by the chooser. Matches the shape used by GatekeeperModal and the
@@ -80,6 +81,7 @@ export function AccountChooser({
       </div>
       <div className="divide-y divide-kumo-line">
         {accounts.map(account => {
+          const brand = personalSearchBranding(account.vendorId, account.description.uniqueName)
           const selected = selectedAccountId === account.id
           const name =
             account.description.uniqueName ||
@@ -109,10 +111,10 @@ export function AccountChooser({
                   className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full"
                   style={{
                     backgroundColor:
-                      account.vendorDescription.color ?? 'var(--color-kumo-tint)',
+                      (brand ? brand.color : account.vendorDescription.color) ?? 'var(--color-kumo-tint)',
                   }}
                 >
-                  <AccountAvatar avatarUrl={account.description.avatar?.url} logoUrl={account.vendorDescription.logo?.url} />
+                  <AccountAvatar avatarUrl={brand?.logoUrl ?? account.description.avatar?.url} logoUrl={account.vendorDescription.logo?.url} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">{name}</p>

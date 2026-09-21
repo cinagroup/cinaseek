@@ -282,6 +282,12 @@ const zhCN: TranslationCatalog = {
     },
   },
   gatekeepers: {
+    personalSearch: {
+      tagline: '使用自己的账户进行网页搜索',
+      description: '连接个人或团队账户。搜索消耗该账户的额度，不会回退使用 CinaSeek 的密钥。CinaSeek 仅开放搜索，不开放网页抓取或研究。授权前请核对供应商的 OAuth 权限和计费账户。',
+      resourceTitle: '{{provider}} 搜索',
+      resourceDescription: '仅搜索，每次最多 10 条结果，消耗已连接账户的额度。',
+    },
     pageTitle: '连接器', title: '连接器', subtitle: '添加工作区可使用的应用和账户。只需连接一次，即可接入你构建的任何内容。',
     search: '搜索连接器…', reconnect: '重新连接', opening: '正在打开…', connected: '已连接', available: '可用',
     credentialsExpired: '凭据已过期', loading: '正在加载连接器…', loadError: '加载连接器时出现问题。',
