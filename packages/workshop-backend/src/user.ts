@@ -2366,8 +2366,9 @@ export class GatekeeperSearchBudgetImpl
   }
 
   /** Reserves against the fixed owner's provider bucket. */
-  reserve(provider: GatekeeperSearchProvider, requestId: string): Promise<GatekeeperSearchReservation> {
-    return this.#user().reserveSearchCall(this.ctx.props.accountId, provider, requestId);
+  async reserve(provider: GatekeeperSearchProvider, requestId: string): Promise<GatekeeperSearchReservation> {
+    using reservation = await this.#user().reserveSearchCall(this.ctx.props.accountId, provider, requestId);
+    return { expiresAt: reservation.expiresAt };
   }
 
   /** Settles only a reservation created by this connection capability. */

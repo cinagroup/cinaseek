@@ -63,7 +63,8 @@ export class SearchBudgetTestHooks extends DurableObject<Cloudflare.Env> {
   }
 
   async reserve(provider: GatekeeperSearchProvider, requestId: string) {
-    return this.#budget().reserve(provider, requestId);
+    using reservation = await this.#budget().reserve(provider, requestId);
+    return { expiresAt: reservation.expiresAt };
   }
 
   async settle(requestId: string, outcome: "not-dispatched" | "sent-or-unknown") {
