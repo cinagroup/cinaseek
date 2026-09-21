@@ -4,7 +4,9 @@ import type { GatekeeperSearchBudget } from "@gadgets/workshop-shared/gatekeeper
 /** In-memory RPC method fixture; no production budget or real provider is contacted. */
 export function searchBudget() {
   return {
-    reserve: vi.fn<GatekeeperSearchBudget["reserve"]>(async () => ({ expiresAt: Date.now() + 60_000 })),
+    reserve: vi.fn<GatekeeperSearchBudget["reserve"]>(async () => ({
+      expiresAt: Date.now() + 60_000, [Symbol.dispose]() {},
+    })),
     settle: vi.fn<GatekeeperSearchBudget["settle"]>(async () => {}),
   };
 }

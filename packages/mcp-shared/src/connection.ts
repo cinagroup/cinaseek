@@ -108,6 +108,7 @@ export async function withClient<T>(
   if (searchPreset && !authorization) {
     throw new McpCallNotDispatchedError("Personal search requires OAuth. Please reconnect the account.");
   }
+  const budget = connection.searchBudget;
   const client = new McpClient(
     endpoint, async method => {
       if (method === "tools/call") {
@@ -117,7 +118,14 @@ export async function withClient<T>(
     }, sessionId, {
       ...fetchOptions(env),
       deadline: options.deadline,
-    }, connection.searchBudget);
+    }, budget && {
+      async reserve(provider, requestId) {
+        // Copy the value and release the RPC result rather than retaining the budget Worker.
+        using reservation = await budget.reserve(provider, requestId);
+        return { expiresAt: reservation.expiresAt };
+      },
+      async settle(requestId, outcome) { await budget.settle(requestId, outcome); },
+    });
   let persistedSessionId = sessionId;
 
   const persistSession = async (): Promise<void> => {

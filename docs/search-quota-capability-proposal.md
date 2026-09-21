@@ -135,3 +135,8 @@ export interface GatekeeperSearchBudget extends WorkerEntrypoint {
 - [CI 35589727853](https://github.com/cinagroup/cinaseek/actions/runs/35589727853)：Lint、构建成功，backend 845 个测试通过、6 个失败；其中 `search-budget.test.ts` 的 8 个真实存储案例全部通过。
 - 新增 6 个 RPC 案例全部在测试包装入口失败：`this.ctx.exports.GatekeeperConnectCallbackImpl is not a function`。补充显式命名导出以便测试池发现回调/预算 RPC loopback；必须重新运行验证，不能把此轮作为 RPC 验收通过。
 - 独立治理检查：CLA 失败日志指出缺少 `cla-signatures` 分支；Bonk preflight 三次请求均超时。这些不是功能测试通过证据，未自行豁免、代签或修改规则。
+
+### 第二次 Linux CI（PR #9，76a6ede9）
+
+- [CI 35590455283](https://github.com/cinagroup/cinaseek/actions/runs/35590455283)：Lint、构建成功，8 个存储案例与 5 个 RPC 案例通过；剩余驱逐案例因活动引用无法释放而失败，不能计为全部通过。
+- 为预算 RPC 返回值补充显式释放：预算 Entrypoint、MCP 消费适配层和测试转发器复制 `expiresAt` 后释放 RPC 对象。测试断言使用普通 Promise/数据，避免断言框架检查 RPC 代理属性而产生额外拒绝。保留驱逐测试及所有失败断言，重新提交 Linux 验证。

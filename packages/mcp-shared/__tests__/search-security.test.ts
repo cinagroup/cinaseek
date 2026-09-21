@@ -31,6 +31,28 @@ function connection(token = "test-personal-token"): ConnectionAccount {
 afterEach(() => vi.unstubAllGlobals());
 
 describe.each(SEARCH_PRESETS)("$name personal credentials", preset => {
+  it("releases the reservation RPC result before dispatch", async () => {
+    const account = connection();
+    const connectionData = await account.getConnection(preset.endpoint);
+    const budget = storedSearchBudget();
+    const dispose = vi.fn();
+    vi.spyOn(budget, "reserve").mockResolvedValue({
+      expiresAt: Date.now() + 60_000, [Symbol.dispose]: dispose,
+    });
+    account.getConnection = async () => ({ ...connectionData, searchBudget: budget });
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (body.method === "tools/list") {
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [wireTool(preset.tool)] } });
+      }
+      expect(dispose).toHaveBeenCalledOnce();
+      return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [] } });
+    });
+    await withClient({}, account, preset.endpoint,
+      client => client.callTool(preset.tool, { query: "test" }));
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it.each([402, 429, 500])("does not retry or change credentials after HTTP %s", async status => {
     const account = connection();
     const sent: { method: string; authorization: string | null }[] = [];
