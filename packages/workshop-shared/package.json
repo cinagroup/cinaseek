@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "exports": {
+    "./search-providers": {
+      "types": "./src/search-providers.ts",
+      "import": "./src/search-providers.ts"
+    },
     "./api": {
       "types": "./src/api.ts",
       "import": "./src/api.ts"
