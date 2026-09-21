@@ -129,3 +129,9 @@ export interface GatekeeperSearchBudget extends WorkerEntrypoint {
 - 本轮重试两个真实运行时文件仍在测试开始前出现 `0xc0000005 / ERR_RUNTIME_FAILURE`，14 个预期用例均未执行。`tsc -p tsconfig.search-budget-tests.json` 通过只证明静态类型，不能替代 Linux 执行证据。
 - 现有 `.github/workflows/ci.yml` 在 Ubuntu 上执行全仓 build/test。用户已明确授权将此次变更分组提交到独立 `codex/personal-search-budget` 分支、推送并创建 PR 以触发 CI；不包括合并或部署。新分支从 `origin/main` 建立，原成本监控分支的两个无关提交不纳入搜索 PR。
 - 真实 Tavily/Firecrawl OAuth、个人/团队额度归属、供应商用量对账及部署仍未进行，需要分别完成用户参与和当前授权。
+
+### 首次 Linux CI（PR #9，675f633c）
+
+- [CI 35589727853](https://github.com/cinagroup/cinaseek/actions/runs/35589727853)：Lint、构建成功，backend 845 个测试通过、6 个失败；其中 `search-budget.test.ts` 的 8 个真实存储案例全部通过。
+- 新增 6 个 RPC 案例全部在测试包装入口失败：`this.ctx.exports.GatekeeperConnectCallbackImpl is not a function`。补充显式命名导出以便测试池发现回调/预算 RPC loopback；必须重新运行验证，不能把此轮作为 RPC 验收通过。
+- 独立治理检查：CLA 失败日志指出缺少 `cla-signatures` 分支；Bonk preflight 三次请求均超时。这些不是功能测试通过证据，未自行豁免、代签或修改规则。

@@ -6,6 +6,9 @@ import type {
 
 export { default } from "../src/server.js";
 export * from "../src/server.js";
+// The Vitest pool discovers RPC loopbacks from named exports, not export-star forwarding.
+// DOs also have explicit Miniflare bindings, which is why their storage tests work without this.
+export { GatekeeperConnectCallbackImpl, GatekeeperSearchBudgetImpl } from "../src/user.js";
 
 /** Credential-free account fixture for exercising the real Workshop connection lifecycle. */
 export class SearchBudgetTestAccount extends WorkerEntrypoint<Cloudflare.Env, { label: string }>
