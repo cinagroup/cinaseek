@@ -1,5 +1,45 @@
 [
   {
+    "name": "connector-tavily-search",
+    "blueprintId": "integration.tavily-search",
+    "connector": "tavily",
+    "title": "Tavily Search",
+    "description": "Search the web with your personal Tavily account. Basic search only; each submitted search uses your own credits. No scraping or platform-paid fallback.",
+    "resourceName": "Web results",
+    "searchPlaceholder": "What would you like to find?",
+    "accent": "#111827",
+    "icon": "fileText",
+    "binding": {
+      "name": "TAVILY_SEARCH",
+      "gatekeeperName": "mcp",
+      "typeUrlPattern": "https://*",
+      "resourceUrl": "https://mcp.tavily.com/mcp#tool=tavily_search",
+      "title": "Personal Tavily search",
+      "description": "Connect your own Tavily account and grant tavily_search only. Searches consume that account's credits."
+    },
+    "revision": 1
+  },
+  {
+    "name": "connector-firecrawl-search",
+    "blueprintId": "integration.firecrawl-search",
+    "connector": "firecrawl",
+    "title": "Firecrawl Search",
+    "description": "Search the web with your personal Firecrawl account. Search only; each submitted search uses your own credits. No scraping or platform-paid fallback.",
+    "resourceName": "Web results",
+    "searchPlaceholder": "What would you like to find?",
+    "accent": "#ff4c00",
+    "icon": "fileText",
+    "binding": {
+      "name": "FIRECRAWL_SEARCH",
+      "gatekeeperName": "mcp",
+      "typeUrlPattern": "https://*",
+      "resourceUrl": "https://mcp.firecrawl.dev/v2/mcp-oauth#tool=firecrawl_search",
+      "title": "Personal Firecrawl search",
+      "description": "Connect your own Firecrawl account and grant firecrawl_search only. Searches consume that account's credits."
+    },
+    "revision": 1
+  },
+  {
     "name": "connector-cloudflare-observability",
     "blueprintId": "integration.cloudflare-observability",
     "connector": "cloudflare",

@@ -50,6 +50,8 @@ for (const entry of manifest) {
       "archive gatekeeper name is stale");
   expect(binding?.typeUrlPattern === entry.binding.typeUrlPattern, entry,
       "archive resource type pattern is stale");
+  expect(binding?.resourceUrl === entry.binding.resourceUrl, entry,
+      "archive suggested resource URL is stale");
 
   const doc = new Y.Doc();
   Y.applyUpdateV2(doc, gunzipSync(content));

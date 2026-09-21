@@ -25,3 +25,22 @@ Three installed Gatekeepers intentionally have no static template here:
 The Email and Workers AI templates are CinaSeek production templates: their resource patterns use
 `https://cinaseek.ai`. A deployment using a different public origin should keep its own blueprint
 directory via `FORMAT_BLUEPRINTS_DIR`, as documented by `../format-blueprints/README.md`.
+
+## Personal search templates
+
+`integration.tavily-search` and `integration.firecrawl-search` use the dedicated
+`search-server.js` / `search-client.js` sources and the reviewed Connections SVG assets.
+They suggest the official provider's single-tool MCP resource and require a user-granted
+personal account binding. The suggestion is not authorization: the MCP gatekeeper retains
+all endpoint, schema, scope and personal-budget checks. No credentials are embedded.
+
+Opening, refreshing, or exporting the template makes no search call. A form submission
+executes one fixed search tool with bounded arguments; Tavily uses basic search only.
+The UI suppresses double submissions and the server refuses concurrent calls in its active
+instance. This is not a durable exactly-once guarantee across a crash or an explicit new
+submission. There are no automatic retries, scraping, research, or platform-paid fallbacks.
+Results are page-local, not persisted; credits are displayed only if the provider reports them.
+
+Run `node --test scripts/search-blueprints.test.js` from the workspace root for logic/DOM
+coverage (mocked platform base classes, not a workerd integration test). Provider schema
+compatibility and authenticated live calls remain separate production acceptance checks.

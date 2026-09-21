@@ -10,6 +10,7 @@ import {
   BlueprintMetadata,
 } from "@gadgets/workshop-shared/api";
 import { VendorDescription } from "@gadgets/workshop-shared/gatekeeper";
+import { personalSearchBranding } from "../features/connections/personalSearch";
 
 const gradients = [
   "from-[#4A154B] to-[#7C3085]",
@@ -31,9 +32,11 @@ export type BindingBadgeInfo = {
   label: string;
   /** For gatekeeper bindings, the vendor key (e.g. "google", "github"). */
   vendorKey?: string;
+  /** Provider branding derived from a blueprint's suggested resource, not an authorization. */
+  searchBrand?: ReturnType<typeof personalSearchBranding>;
 };
 
-/** Deduplicate binding types for display. Returns one badge per unique gatekeeper vendor
+/** Deduplicate binding types for display. Returns one badge per unique vendor/search provider
  *  and one per aiModel / agentSpawner type. */
 export function uniqueBindingBadges(
   bindings: Record<string, BlueprintBinding>,
@@ -44,8 +47,10 @@ export function uniqueBindingBadges(
     let key: string;
     let label: string;
     let vendorKey: string | undefined;
+    let searchBrand: ReturnType<typeof personalSearchBranding>;
     if (b.type === "gatekeeper") {
-      key = `gk:${b.gatekeeperName}`;
+      searchBrand = personalSearchBranding(b.gatekeeperName, b.resourceUrl);
+      key = `gk:${b.gatekeeperName}:${searchBrand?.name ?? ""}`;
       vendorKey = b.gatekeeperName.toLowerCase();
       label =
         b.gatekeeperName.charAt(0).toUpperCase() + b.gatekeeperName.slice(1);
@@ -58,7 +63,7 @@ export function uniqueBindingBadges(
     }
     if (!seen.has(key)) {
       seen.add(key);
-      badges.push({ type: b.type, label, vendorKey });
+      badges.push({ type: b.type, label, vendorKey, ...(searchBrand ? { searchBrand } : {}) });
     }
   }
   return badges;
@@ -76,10 +81,10 @@ export function BindingBadge({
     : undefined;
 
   let icon: React.ReactNode;
-  if (vendorDescription?.logo?.url) {
+  if (badge.searchBrand || vendorDescription?.logo?.url) {
     icon = (
       <img
-        src={vendorDescription.logo.url}
+        src={badge.searchBrand?.logoUrl ?? vendorDescription?.logo?.url}
         alt=""
         className="h-3 w-3 object-contain"
       />
@@ -99,7 +104,7 @@ export function BindingBadge({
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-kumo-fill px-2 py-[3px] text-[11px] font-medium leading-none tracking-[-0.1px] text-kumo-subtle">
       <span className="flex items-center text-kumo-inactive">{icon}</span>
-      {vendorDescription?.displayName ?? badge.label}
+      {badge.searchBrand?.name ?? vendorDescription?.displayName ?? badge.label}
     </span>
   );
 }
@@ -153,7 +158,7 @@ export function BlueprintCard({
           <div className="mt-auto flex flex-wrap gap-1 pt-4">
             {badges.map((b) => (
               <BindingBadge
-                key={b.vendorKey ?? b.type}
+                key={`${b.vendorKey ?? b.type}:${b.searchBrand?.name ?? ""}`}
                 badge={b}
                 vendorDescriptions={vendorDescriptions}
               />

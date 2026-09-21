@@ -153,6 +153,7 @@ export default function BlueprintsPage() {
 
 function BlueprintThumbnail({ blueprint }: { blueprint: BlueprintPublicInfo }) {
   const { t } = useTranslation("blueprints");
+  const searchBrand = uniqueBindingBadges(blueprint.metadata.bindings).find(badge => badge.searchBrand)?.searchBrand;
   return (
     <div className="relative aspect-[16/9] w-full overflow-hidden border-b border-kumo-line bg-kumo-tint">
       {blueprint.screenshotUrl ? (
@@ -162,6 +163,10 @@ function BlueprintThumbnail({ blueprint }: { blueprint: BlueprintPublicInfo }) {
           className="h-full w-full object-cover"
           loading="lazy"
         />
+      ) : searchBrand ? (
+        <div className="flex h-full items-center justify-center">
+          <img src={searchBrand.logoUrl} alt={searchBrand.name} className="h-16 w-16 rounded-xl object-contain" />
+        </div>
       ) : (
         <BlueprintPreviewPlaceholder id={blueprint.id} />
       )}
@@ -209,7 +214,7 @@ function FeaturedBlueprintCard({
             <div className="relative z-20 mt-2 flex flex-wrap gap-1">
               {badges.map((badge) => (
                 <BindingBadge
-                  key={badge.vendorKey ?? badge.type}
+                  key={`${badge.vendorKey ?? badge.type}:${badge.searchBrand?.name ?? ""}`}
                   badge={badge}
                   vendorDescriptions={vendorDescriptions}
                 />
@@ -257,7 +262,7 @@ function FeaturedBlueprintRow({
         <div className="hidden shrink-0 items-center gap-1 lg:flex">
           {badges.map((badge) => (
             <BindingBadge
-              key={badge.vendorKey ?? badge.type}
+              key={`${badge.vendorKey ?? badge.type}:${badge.searchBrand?.name ?? ""}`}
               badge={badge}
               vendorDescriptions={vendorDescriptions}
             />

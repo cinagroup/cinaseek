@@ -1,0 +1,17 @@
+{
+  "blueprintId": "integration.firecrawl-search",
+  "title": "Firecrawl Search",
+  "description": "Search the web with your personal Firecrawl account. Search only; each submitted search uses your own credits. No scraping or platform-paid fallback.",
+  "output": {
+    "id": "integration",
+    "noun": "Integration App",
+    "plural": "Integration Apps",
+    "icon": "fileText"
+  },
+  "author": {
+    "type": "user",
+    "name": "CinaSeek",
+    "id": "templates@cinaseek.ai"
+  },
+  "revision": 1
+}

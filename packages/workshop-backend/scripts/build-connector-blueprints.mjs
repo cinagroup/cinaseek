@@ -63,7 +63,20 @@ for (const entry of manifest) {
     accent: entry.accent,
     binding: entry.binding,
   };
-  const serverSource = serverTemplate.replace(marker, JSON.stringify(config, null, 2));
+  const personalSearch = entry.connector === "tavily" || entry.connector === "firecrawl";
+  let template = serverTemplate;
+  let client = clientSource;
+  if (personalSearch) {
+    [template, client] = await Promise.all([
+      readFile(join(sourceDir, "search-server.js"), "utf8"),
+      readFile(join(sourceDir, "search-client.js"), "utf8"),
+    ]);
+    // Reuse the reviewed brand assets; do not fetch third-party assets at runtime.
+    const logo = await readFile(join(packageRoot, "../workshop-frontend/src/features/connections", `${entry.connector}.svg`), "utf8");
+    config.logoUrl = `data:image/svg+xml,${encodeURIComponent(logo)}`;
+  }
+  if (template.split(marker).length !== 2) throw new Error(`${entry.name}: invalid config marker`);
+  const serverSource = template.replace(marker, JSON.stringify(config, null, 2));
   const readme = `# ${entry.title}\n\n${entry.description}\n\n` +
     `Required binding: \`${entry.binding.name}\` (${entry.binding.title}).\n\n` +
     `This archive is generated from \`connector-blueprints/\`; edit the source rather than ` +
@@ -74,7 +87,7 @@ for (const entry of manifest) {
   // archive bytes on every build. Assign a stable non-zero id before the first mutation.
   doc.clientID = Number.parseInt(hash(Buffer.from(entry.blueprintId)).slice(0, 8), 16) || 1;
   const files = doc.getMap();
-  for (const [name, content] of [["server.js", serverSource], ["client.js", clientSource], ["README.md", readme]]) {
+  for (const [name, content] of [["server.js", serverSource], ["client.js", client], ["README.md", readme]]) {
     const text = new Y.Text();
     text.insert(0, content);
     files.set(name, text);
@@ -94,6 +107,7 @@ for (const entry of manifest) {
         type: "gatekeeper",
         gatekeeperName: entry.binding.gatekeeperName,
         typeUrlPattern: entry.binding.typeUrlPattern,
+        ...(entry.binding.resourceUrl ? { resourceUrl: entry.binding.resourceUrl } : {}),
       },
     },
   };
