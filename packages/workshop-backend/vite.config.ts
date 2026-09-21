@@ -77,6 +77,7 @@ export default {
        */
       test: {
         ...vitestTask([
+          'tsc -p tsconfig.search-budget-tests.json',
           { command: 'vitest run', idleSeconds: 120 },
           'vitest run --config vitest.integration.config.ts',
         ]),

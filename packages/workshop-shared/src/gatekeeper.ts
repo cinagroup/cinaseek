@@ -441,7 +441,33 @@ export type ResourceConfiguratorFrame = GatekeeperUiFrame;
 export type GatekeeperConnectOptions = {
   scopes?: "auth" | "full";
   resourceUrlPatterns?: string[];
+  /** Owner-bound search budget, supplied only to the supported personal MCP connection flow. */
+  searchBudget?: Fetcher<GatekeeperSearchBudget>;
 };
+
+/** Personal-search quota buckets recognized by the Workshop. */
+export type GatekeeperSearchProvider = "tavily" | "firecrawl";
+
+/** One bounded permission to start a provider request. */
+export type GatekeeperSearchReservation = {
+  /** UTC epoch milliseconds after which dispatch is forbidden. */
+  expiresAt: number;
+};
+
+/** A connection-bound capability for the owner's personal-search usage budget. */
+export interface GatekeeperSearchBudget extends WorkerEntrypoint {
+  /**
+   * Reserves one call and concurrency slot in the provider's owner-wide bucket. requestId is
+   * `${Date.now()}:${crypto.randomUUID()}`, minted by the trusted connector, never by a Gadget.
+   * Repeating an active reservation is idempotent; finalized or expired ids cannot execute again.
+   */
+  reserve(provider: GatekeeperSearchProvider, requestId: string): Promise<GatekeeperSearchReservation>;
+  /**
+   * Idempotently ends this connection's reservation. Only a proven not-dispatched request refunds
+   * its count. Sent, uncertain and expired calls retain their count. Foreign ids are rejected.
+   */
+  settle(requestId: string, outcome: "not-dispatched" | "sent-or-unknown"): Promise<void>;
+}
 
 export interface GatekeeperVendor extends WorkerEntrypoint {
   /** Get display info for the service, suitable for display to a user. */

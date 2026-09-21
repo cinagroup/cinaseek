@@ -127,6 +127,7 @@ export { AdminSettings };
 
 // Re-export entrypoint types from user.ts.
 export { UserDurableObject, GatekeeperConnectCallbackImpl };
+export { GatekeeperSearchBudgetImpl } from "./user";
 
 // Re-export the model-sharded shared credential pool.
 export { WorkersAiCredentialPool };
