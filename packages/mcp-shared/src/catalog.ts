@@ -10,6 +10,7 @@ import { isValidToolName, type McpTool } from "./client.js";
 import { fetchTools, type ConnectionAccount, type ConnectionEnv } from "./connection.js";
 import { looksLikePortal, toolBelongsToServer } from "./portal.js";
 import { scopeAllows, type ToolScope } from "./scope.js";
+import { searchPresetForEndpoint } from "./search-presets.js";
 import type { McpLog } from "./log.js";
 import {
   catalogRevision,
@@ -78,7 +79,10 @@ export type ScopedCatalog = {
  * of names and a server scope is a name prefix.
  */
 export async function scopedCatalog(request: CatalogRequest): Promise<ScopedCatalog> {
-  const cached = request.store.get<CachedCatalog>("catalog");
+  // Never reuse an unrestricted catalog persisted before the search policy was installed. Bump
+  // this policy version when its schema changes; generic MCP bindings retain their existing cache.
+  const cacheKey = searchPresetForEndpoint(request.endpoint) ? "catalog.search-v1" : "catalog";
+  const cached = request.store.get<CachedCatalog>(cacheKey);
   let tools = cached?.tools;
   let truncated = cached?.truncated ?? false;
 
@@ -101,7 +105,7 @@ export async function scopedCatalog(request: CatalogRequest): Promise<ScopedCata
       tools = fetched.tools;
       truncated = fetched.truncated;
       try {
-        request.store.put<CachedCatalog>("catalog", {
+        request.store.put<CachedCatalog>(cacheKey, {
           tools, revision, fetchedAt: Date.now(), truncated,
         });
       } catch (err) {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { McpAuthRequiredError } from "../src/client.js";
+import { storedSearchBudget } from "./search-budget-fixture.js";
 import {
   McpAccountBase, resolveConnectTarget, type AccountEnv, type ConnectedServer,
 } from "../src/account.js";
@@ -10,6 +11,7 @@ function fakeContext() {
   return {
     id: { toString: () => "account-id" },
     storage: {
+      async deleteAll() { values.clear(); },
       async deleteAlarm() {},
       async setAlarm() {},
       kv: {
@@ -116,6 +118,12 @@ class OAuthFlowAccount extends McpAccountBase<AccountEnv> {
   }
 }
 
+class PublicHandshakeAccount extends OAuthFlowAccount {
+  protected override async probe(): Promise<never> {
+    return { serverInfo: { name: "Public handshake" } } as never;
+  }
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 const server = (endpoint: string): ConnectedServer => ({
@@ -126,7 +134,62 @@ const server = (endpoint: string): ConnectedServer => ({
   auth: "oauth",
 });
 
+describe("disconnect during remote revocation", () => {
+  it.each([200, 503])("closes local access before the provider answers HTTP %s", async status => {
+    const context = fakeContext();
+    const endpoint = "https://mcp.tavily.com/mcp";
+    context.storage.kv.put("server", server(endpoint));
+    context.storage.kv.put("tokens", {
+      access_token: "test-access", refresh_token: "test-refresh", token_type: "Bearer",
+      expiresAt: Date.now() + 3_600_000,
+    });
+    context.storage.kv.put("oauthDiscovery", {
+      authorizationServerMetadata: { revocation_endpoint: "https://auth.example/revoke" },
+    });
+    context.storage.kv.put("oauthClient", { client_id: "test-client" });
+    const response = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<void>();
+    vi.stubGlobal("fetch", () => { started.resolve(); return response.promise; });
+    const account = new PublicHandshakeAccount(context as never, {});
+    const captured = await account.getConnection(endpoint);
+    const revocation = account.revoke();
+    await started.promise;
+    expect(context.storage.kv.get("tokens")).toBeUndefined();
+    await expect(account.getConnection(endpoint)).rejects.toThrow(/not connected/);
+    await expect(account.assertConnectionCurrent(endpoint, captured.generation)).rejects.toThrow(/changed/);
+    response.resolve(new Response(null, { status }));
+    await revocation;
+    expect(context.storage.kv.get("server")).toBeUndefined();
+    expect(context.storage.kv.get("tokens")).toBeUndefined();
+  });
+
+  it("also clears an account without a remote revocation endpoint", async () => {
+    const context = fakeContext();
+    context.storage.kv.put("server", server("https://mcp.tavily.com/mcp"));
+    context.storage.kv.put("tokens", { access_token: "test-access" });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    await new PublicHandshakeAccount(context as never, {}).revoke();
+    expect(context.storage.kv.get("tokens")).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe("connect initiation nonce", () => {
+  it("persists the same owner budget across reconnect and removes it on revoke", async () => {
+    const context = fakeContext();
+    const account = new InterleavingAccount(context as never, {});
+    const budget = storedSearchBudget();
+    await account.setCallback({} as never, "b".repeat(64), budget);
+    const connected = { ...server("https://old.example/mcp"), auth: "none" as const };
+    context.storage.kv.put("server", connected);
+    expect((await account.getConnection(connected.endpoint)).searchBudget).toBe(budget);
+    await account.prepareReconnect("c".repeat(64));
+    expect(context.storage.kv.get("searchBudget")).toBe(budget);
+    await account.revoke();
+    expect(context.storage.kv.get("searchBudget")).toBeUndefined();
+  });
+
   it("is claimed before probing can let another completion request interleave", async () => {
     const nonce = "a".repeat(64);
     const account = new InterleavingAccount(fakeContext() as never, {});
@@ -414,14 +477,18 @@ describe("connect initiation nonce", () => {
     expect(context.storage.kv.get<ConnectedServer>("server")?.auth).toBe("oauth");
   });
 
-  it("completes OAuth after a new account instance resumes the redirect", async () => {
+  it.each([
+    { endpoint: "https://mcp.example/mcp", Account: OAuthFlowAccount },
+    { endpoint: "https://mcp.tavily.com/mcp", Account: PublicHandshakeAccount },
+    { endpoint: "https://mcp.firecrawl.dev/v2/mcp-oauth", Account: PublicHandshakeAccount },
+  ])("completes OAuth across account instances, including public handshakes: $endpoint", async ({ endpoint, Account }) => {
     const context = fakeContext();
     const complete = vi.fn(async () => undefined);
     vi.stubGlobal("fetch", async (input: string) => {
       const url = String(input);
       if (url.includes("oauth-protected-resource")) {
         return Response.json({
-          resource: "https://mcp.example/mcp",
+          resource: endpoint,
           authorization_servers: ["https://auth.example"],
         });
       }
@@ -455,19 +522,38 @@ describe("connect initiation nonce", () => {
     });
 
     const nonce = "9".repeat(64);
-    const account = new OAuthFlowAccount(context as never, {});
+    const account = new Account(context as never, {});
     await account.setCallback({ complete } as never, nonce);
-    const outcome = await account.beginConnect(nonce, server("https://mcp.example/mcp"));
+    const outcome = await account.beginConnect(nonce, server(endpoint));
     expect(outcome.kind).toBe("redirect");
+    expect(complete).not.toHaveBeenCalled();
+    expect(context.storage.kv.get<ConnectedServer>("server")?.auth).toBe("oauth");
     const state = new URL((outcome as { url: string }).url).searchParams.get("state")!;
     const oauthNonce = state.slice(state.indexOf(":") + 1);
 
-    const resumed = new OAuthFlowAccount(context as never, {});
+    const resumed = new Account(context as never, {});
     expect(await resumed.acceptAuthCode("authorization-code", oauthNonce)).toBe(true);
     expect(context.storage.kv.get<{ access_token: string }>("tokens")?.access_token)
       .toBe("access-token");
     expect(complete).toHaveBeenCalledOnce();
     expect(await resumed.acceptAuthCode("authorization-code", oauthNonce)).toBe(false);
+  });
+
+  it.each(["none", "token"] as const)("refuses a stored %s search account", async auth => {
+    const context = fakeContext();
+    const endpoint = "https://mcp.tavily.com/mcp";
+    context.storage.kv.put("server", { ...server(endpoint), auth });
+    const account = new PublicHandshakeAccount(context as never, {});
+    await expect(account.getConnection(endpoint)).rejects.toThrow(/requires personal OAuth/);
+  });
+
+  it("refuses a platform-token search connection before probing", async () => {
+    const account = new PublicHandshakeAccount(fakeContext() as never, {});
+    const nonce = "f".repeat(64);
+    await account.prepareReconnect(nonce);
+    await expect(account.beginConnect(nonce, {
+      ...server("https://mcp.tavily.com/mcp"), auth: "token",
+    })).rejects.toThrow(/not a deployment token/);
   });
 });
 

@@ -2,6 +2,9 @@ import { RpcStub } from "capnweb";
 import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, WorkersAiModelAccessInfo, WorkersAiConnectionInfo, WorkersAiSpeechModelOption, WorkersAiSpeechRequest, WorkersAiSpeechSettings, WorkersAiSpeechSettingsUpdate, SpeechInputTranscription, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, SPEECH_INPUT_ERROR_CODES, createAuthError, createSpeechInputError, getSpeechInputErrorCode } from '@gadgets/workshop-shared/api';
 import { Gatekeeper, GatekeeperUser, GatekeeperUserVerifier, GatekeeperVendor, AccountDescription, VendorDescription, GatekeeperConnectCallback, SupportedResource, ResourceConfiguratorFrame, AppUiContext, GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import { shouldAutoProvisionAccount, ambientGatekeeperMode } from "./provisioning-policy.js";
+import type { GatekeeperSearchBudget, GatekeeperSearchProvider, GatekeeperSearchReservation }
+  from "@gadgets/workshop-shared/gatekeeper";
+import { reserveSearchBudget, settleSearchBudget } from "./search-budget.js";
 import { CloudflareGatekeeperUser } from "@gadgets/workshop-shared/cloudflare-gatekeeper";
 import type {
   WorkersAiCredentials,
@@ -1746,11 +1749,29 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
     let callback = this.ctx.exports.GatekeeperConnectCallbackImpl({props});
 
-    let {url} = await vendor.connectAccount(callback, {resourceUrlPatterns});
+    const searchBudget = vendorId === "mcp"
+      ? this.ctx.exports.GatekeeperSearchBudgetImpl({ props }) : undefined;
+    let {url} = await vendor.connectAccount(callback, {resourceUrlPatterns, searchBudget});
     logger.info("account connect started", {
       event: "account.connect.started", vendorId, accountId,
     });
     return {url};
+  }
+
+  /** Reserves personal search across this user's connections, never across users. */
+  async reserveSearchCall(accountId: number, provider: GatekeeperSearchProvider, requestId: string):
+      Promise<GatekeeperSearchReservation> {
+    const record = this.storage.connectedAccounts.get(accountId);
+    if (!record || record.vendorId !== "mcp" || !areCredentialsValid(record)) {
+      throw new Error("The personal search connection is unavailable. Reconnect or add it again.");
+    }
+    return reserveSearchBudget(this.ctx.storage.kv, accountId, provider, requestId);
+  }
+
+  /** Allows cleanup of an existing lease even after its connected account was removed. */
+  async settleSearchCall(accountId: number, requestId: string,
+    outcome: "not-dispatched" | "sent-or-unknown"): Promise<void> {
+    settleSearchBudget(this.ctx.storage.kv, accountId, requestId, outcome);
   }
 
   // Iterate every connected-account record, skipping any that fails to load. A record can fail to
@@ -2332,6 +2353,28 @@ type GatekeeperConnectCallbackProps = {
   userId: string;
   accountId: number;
   vendorId: string;
+}
+
+/** Narrow persistent budget capability; its owner and connection cannot be chosen by the caller. */
+export class GatekeeperSearchBudgetImpl
+    extends WorkerEntrypoint<Cloudflare.Env, GatekeeperConnectCallbackProps>
+    implements GatekeeperSearchBudget {
+  #user() {
+    if (this.ctx.props.vendorId !== "mcp") throw new Error("Search budget is not available for this connector.");
+    return this.ctx.exports.UserDurableObject.get(
+      this.ctx.exports.UserDurableObject.idFromString(this.ctx.props.userId));
+  }
+
+  /** Reserves against the fixed owner's provider bucket. */
+  async reserve(provider: GatekeeperSearchProvider, requestId: string): Promise<GatekeeperSearchReservation> {
+    using reservation = await this.#user().reserveSearchCall(this.ctx.props.accountId, provider, requestId);
+    return { expiresAt: reservation.expiresAt };
+  }
+
+  /** Settles only a reservation created by this connection capability. */
+  settle(requestId: string, outcome: "not-dispatched" | "sent-or-unknown"): Promise<void> {
+    return this.#user().settleSearchCall(this.ctx.props.accountId, requestId, outcome);
+  }
 }
 
 export class GatekeeperConnectCallbackImpl

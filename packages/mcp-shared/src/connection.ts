@@ -18,6 +18,8 @@ import {
   from "./client.js";
 import { fetchOptions, type InsecureEnv } from "./fetch.js";
 import { MAX_TOOLS_PER_SERVER } from "./tools.js";
+import { searchPresetForEndpoint } from "./search-presets.js";
+import type { GatekeeperSearchBudget } from "@gadgets/workshop-shared/gatekeeper";
 
 /** The environment this module reads. Each Worker's own `Env` satisfies it structurally. */
 export type ConnectionEnv = InsecureEnv & {
@@ -47,6 +49,8 @@ export type McpConnection = {
    * work started before a reconnect cannot overwrite the new connection's tokens or session.
    */
   generation: number;
+  /** Owner-bound budget capability; absent on legacy or non-search accounts. */
+  searchBudget?: Fetcher<GatekeeperSearchBudget>;
 };
 
 /**
@@ -91,6 +95,7 @@ export async function withClient<T>(
   fn: (client: McpClient) => Promise<T>,
   options: WithClientOptions = {},
 ): Promise<T> {
+  const searchPreset = searchPresetForEndpoint(endpoint);
   // Read once for the whole operation. The account refreshes a token a minute before expiry, so one
   // valid here stays valid for the handful of requests a single `withClient` makes.
   let connection: McpConnection;
@@ -100,6 +105,10 @@ export async function withClient<T>(
     throw notDispatched(err);
   }
   const { authorization, sessionId, generation } = connection;
+  if (searchPreset && !authorization) {
+    throw new McpCallNotDispatchedError("Personal search requires OAuth. Please reconnect the account.");
+  }
+  const budget = connection.searchBudget;
   const client = new McpClient(
     endpoint, async method => {
       if (method === "tools/call") {
@@ -109,6 +118,13 @@ export async function withClient<T>(
     }, sessionId, {
       ...fetchOptions(env),
       deadline: options.deadline,
+    }, budget && {
+      async reserve(provider, requestId) {
+        // Copy the value and release the RPC result rather than retaining the budget Worker.
+        using reservation = await budget.reserve(provider, requestId);
+        return { expiresAt: reservation.expiresAt };
+      },
+      async settle(requestId, outcome) { await budget.settle(requestId, outcome); },
     });
   let persistedSessionId = sessionId;
 
@@ -160,7 +176,7 @@ export async function withClient<T>(
       return await fn(client);
     } catch (err) {
       if (!(err instanceof McpSessionExpiredError)) throw err;
-      if (options.retryOnExpiry !== false) {
+      if (!searchPreset && options.retryOnExpiry !== false) {
         client.sessionId = null;
         try {
           await initialize();

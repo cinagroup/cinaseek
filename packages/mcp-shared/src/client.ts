@@ -21,6 +21,10 @@ import {
   type FetchOptions,
 } from "./fetch.js";
 import { redactSecrets, safeServerText } from "./util.js";
+import {
+  prepareSearchArguments, requireSearchToolParameters, searchPresetForEndpoint, searchToolForEndpoint,
+} from "./search-presets.js";
+import type { GatekeeperSearchBudget } from "@gadgets/workshop-shared/gatekeeper";
 import type {
   CallToolResult,
   ContentBlock,
@@ -250,6 +254,7 @@ function extractResponse(bodyText: string, id: number | string): JsonRpcResponse
 async function readSseResponse(
   response: Response,
   id: number | string,
+  maxBytes: number = MAX_RESPONSE_BYTES,
 ): Promise<{ parsed: JsonRpcResponse; bytes: number }> {
   if (!response.body) {
     throw new McpProtocolError("MCP server's event stream contained no response to the request.");
@@ -290,10 +295,10 @@ async function readSseResponse(
           "MCP server's event stream contained no response to the request.");
       }
       total += value.byteLength;
-      if (total > MAX_RESPONSE_BYTES) {
+      if (total > maxBytes) {
         await reader.cancel().catch(() => undefined);
         throw new McpProtocolError(
-          `MCP server's event stream exceeded ${MAX_RESPONSE_BYTES} bytes.`);
+          `MCP server's event stream exceeded ${maxBytes} bytes.`);
       }
       buffered += decoder.decode(value, { stream: true });
       const parsed = consume();
@@ -381,6 +386,7 @@ export class McpClient {
   #fetchOptions: FetchOptions;
   #requestPrefix = crypto.randomUUID();
   #requestId = 0;
+  #searchBudget?: Pick<GatekeeperSearchBudget, "reserve" | "settle">;
 
   /** Transport session id, assigned by the server during `initialize`. Persist and pass it back. */
   sessionId: string | null;
@@ -390,13 +396,21 @@ export class McpClient {
     getAuthorization: AuthorizationProvider,
     sessionId?: string | null,
     fetchOptions: FetchOptions = {},
+    searchBudget?: Pick<GatekeeperSearchBudget, "reserve" | "settle">,
   ) {
     this.#endpoint = endpoint;
+    this.#searchBudget = searchBudget;
     this.#getAuthorization = getAuthorization;
     this.sessionId = sessionId ?? null;
     this.#fetchOptions = fetchOptions.timeoutMs !== undefined && fetchOptions.deadline === undefined
       ? { ...fetchOptions, deadline: Date.now() + fetchOptions.timeoutMs }
       : fetchOptions;
+    if (searchPresetForEndpoint(endpoint)) {
+      this.#fetchOptions = {
+        ...this.#fetchOptions,
+        deadline: Math.min(this.#fetchOptions.deadline ?? Infinity, Date.now() + 30_000),
+      };
+    }
   }
 
   // The credential most recently sent, kept only so it can be recognised if it comes back. See
@@ -416,7 +430,7 @@ export class McpClient {
     return headers;
   }
 
-  async #post(body: unknown): Promise<Response> {
+  async #post(body: unknown, dispatch?: { expiresAt: number; started(): void }): Promise<Response> {
     let headers: Headers;
     try {
       const method = typeof body === "object" && body !== null && "method" in body
@@ -433,7 +447,11 @@ export class McpClient {
         method: "POST",
         headers,
         body: JSON.stringify(body),
-      }, this.#fetchOptions);
+      }, dispatch ? {
+        ...this.#fetchOptions,
+        deadline: Math.min(this.#fetchOptions.deadline ?? Infinity, dispatch.expiresAt),
+        followRedirects: false,
+      } : this.#fetchOptions, dispatch?.started);
     } catch (err) {
       if (err instanceof FetchNotStartedError) {
         throw new McpCallNotDispatchedError(err.message, err);
@@ -466,12 +484,13 @@ export class McpClient {
   async #callMeasured<T>(
     method: string,
     params?: unknown,
+    dispatch?: { expiresAt: number; started(): void },
   ): Promise<{ result: T; responseBytes: number }> {
     // A transport session is persisted on the account and can be used by several short-lived client
     // instances concurrently. Prefixing IDs per instance prevents two active requests from both
     // being JSON-RPC id 1 and confusing the server's SSE response routing.
     const id = `${this.#requestPrefix}:${++this.#requestId}`;
-    const response = await this.#post({ jsonrpc: "2.0", id, method, params });
+    const response = await this.#post({ jsonrpc: "2.0", id, method, params }, dispatch);
 
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
@@ -483,10 +502,12 @@ export class McpClient {
     if (sessionId) this.sessionId = sessionId;
 
     const contentType = (response.headers.get("Content-Type") ?? "").toLowerCase();
+    const maxBytes = method === "tools/call" && searchPresetForEndpoint(this.#endpoint)
+      ? 256 * 1024 : MAX_RESPONSE_BYTES;
     let parsed: JsonRpcResponse;
     let responseBytes: number;
     if (contentType.includes("text/event-stream")) {
-      const measured = await readSseResponse(response, id);
+      const measured = await readSseResponse(response, id, maxBytes);
       parsed = measured.parsed;
       responseBytes = measured.bytes;
     } else {
@@ -494,7 +515,7 @@ export class McpClient {
       // before it can be parsed. The catalog limits above bound what is kept, not what arrives.
       let bodyText: string;
       try {
-        bodyText = await readTextCapped(response);
+        bodyText = await readTextCapped(response, maxBytes);
       } catch (err) {
         throw new McpProtocolError(
           `MCP server's response to "${method}" was too large to read: ` +
@@ -645,8 +666,10 @@ export class McpClient {
       const scanCount = Math.min(pageTools.length, remainingTools);
       scannedTools += scanCount;
       for (let index = 0; index < scanCount; index++) {
-        const tool = pageTools[index];
-        if (!isValidToolName(tool?.name)) continue;
+        const wireTool = pageTools[index];
+        if (!isValidToolName(wireTool?.name)) continue;
+        const tool = searchToolForEndpoint(this.#endpoint, wireTool);
+        if (!tool) continue;
         if (include && !include(tool)) continue;
         // A cap was reached with tools still arriving, so the catalog is known to be incomplete.
         // Reported rather than inferred from `tools.length`, since the byte budget can stop the
@@ -681,6 +704,56 @@ export class McpClient {
 
   /** Invokes one tool. A tool-level failure arrives as `isError`, not as a thrown error. */
   async callTool(name: string, args: Record<string, unknown>): Promise<McpToolCallResult> {
-    return this.#call<McpToolCallResult>("tools/call", { name, arguments: args });
+    let boundedArgs: Record<string, unknown>;
+    try {
+      boundedArgs = prepareSearchArguments(this.#endpoint, name, args);
+      if (searchPresetForEndpoint(this.#endpoint)) {
+        requireSearchToolParameters(await this.findTool(name), boundedArgs);
+      }
+    } catch (err) {
+      // Let the account wrapper invalidate rejected credentials / stale transport sessions. A
+      // failed live-catalog check has not dispatched the paid call, but hiding these typed errors
+      // would leave every subsequent request stuck on the same expired session.
+      if (err instanceof McpAuthRequiredError || err instanceof McpSessionExpiredError) throw err;
+      throw new McpCallNotDispatchedError(
+        err instanceof Error ? err.message : "Search request refused.", err);
+    }
+    const params = { name, arguments: boundedArgs };
+    const preset = searchPresetForEndpoint(this.#endpoint);
+    if (!preset) return this.#call<McpToolCallResult>("tools/call", params);
+    const budget = this.#searchBudget;
+    if (!budget) throw new McpCallNotDispatchedError(
+      "This search connection has no user budget. Remove it and add the account again; OAuth reconnect alone is insufficient.");
+    const requestId = `${Date.now()}:${crypto.randomUUID()}`;
+    let expiresAt: number;
+    try {
+      ({ expiresAt } = await budget.reserve(preset.id, requestId));
+    } catch (err) {
+      throw new McpCallNotDispatchedError(
+        err instanceof Error ? err.message : "Search budget unavailable.", err);
+    }
+    let sent = false;
+    let outcome: { result: McpToolCallResult } | { error: unknown };
+    try {
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+        throw new McpCallNotDispatchedError("Search reservation expired before dispatch.");
+      }
+      const { result } = await this.#callMeasured<McpToolCallResult>("tools/call", params, {
+        expiresAt, started: () => { sent = true; },
+      });
+      outcome = { result };
+    } catch (error) {
+      outcome = { error };
+    }
+    try {
+      await budget.settle(requestId, sent ? "sent-or-unknown" : "not-dispatched");
+    } catch {
+      // Settlement uncertainty overrides even a successful response: never invite a paid retry.
+      // The durable lease eventually releases concurrency while retaining the count.
+      if (sent) throw new McpProtocolError("Search settlement failed after dispatch. Do not automatically repeat the search.");
+      throw new McpCallNotDispatchedError("Search settlement unavailable; no search was sent.");
+    }
+    if ("error" in outcome) throw outcome.error;
+    return outcome.result;
   }
 }

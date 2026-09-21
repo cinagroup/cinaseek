@@ -3,6 +3,23 @@
 // is a deployment setting, has no equivalent page.
 
 import { escapeHtml, PAGE_STYLE } from "@gadgets/mcp-shared/html";
+import { SEARCH_PRESETS } from "@gadgets/mcp-shared/search-presets";
+
+/** Resolves a preset on the server; posted URLs cannot replace a preset's OAuth endpoint. */
+export function connectEndpoint(form: FormData): string {
+  if (form.has("preset")) {
+    const preset = SEARCH_PRESETS.find(item => item.id === form.get("preset"));
+    if (!preset || form.getAll("preset").length !== 1 || form.has("url")) {
+      throw new Error("Choose a supported personal search connection.");
+    }
+    return preset.endpoint;
+  }
+  const endpoint = form.get("url");
+  if (typeof endpoint !== "string" || form.getAll("url").length !== 1) {
+    throw new Error("Enter one MCP server endpoint.");
+  }
+  return endpoint;
+}
 
 // Form controls, on top of the palette and page frame every connect page shares.
 const FORM_STYLE = `
@@ -33,6 +50,18 @@ export function connectFormHtml(path: string, error?: string): string {
   <p class="sub">We will discover the server's tools and, if it requires authorization, take you
   through its sign-in.</p>
   ${error ? `<p class="err">${escapeHtml(error)}</p>` : ""}
+  <section aria-label="Personal search accounts">
+    <h2>Search with your own account</h2>
+    <p class="hint">Sign in on the provider's website. Searches use the credits of the personal
+    or team account you authorize, never a fallback CinaSeek key. Confirm the billing account in
+    the provider's dashboard. Provider OAuth may authorize broader capabilities, but CinaSeek exposes
+    only search; page scraping and research are not enabled.</p>
+    ${SEARCH_PRESETS.map(preset => `<form method="POST" action="${escapeHtml(path)}">
+      <input type="hidden" name="preset" value="${preset.id}">
+      <button type="submit">Connect ${preset.name} account</button>
+    </form>`).join("\n")}
+  </section>
+  <h2>Custom MCP server</h2>
   <form method="POST" action="${escapeHtml(path)}">
     <label for="url">Server URL</label>
     <input id="url" type="url" name="url" placeholder="https://example.com/mcp" required autofocus>
