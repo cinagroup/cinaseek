@@ -76,6 +76,42 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// The remote Tavily server uses a nullable anyOf for time_range (unlike its public
+// stdio server). Accept only one typed branch plus an unconstrained null branch;
+// callers still cannot send null. Do not guess at references or general unions.
+function nonNullableSearchProperty(value: unknown): Record<string, unknown> | undefined {
+  if (!isObject(value)) return undefined;
+  if (value.anyOf !== undefined) {
+    if (!Array.isArray(value.anyOf) || value.anyOf.length !== 2
+        || Object.keys(value).some(key => ![
+          "anyOf", "title", "description", "default", "examples", "$comment", "deprecated",
+        ].includes(key))) return undefined;
+    const nullIndex = value.anyOf.findIndex(branch =>
+      isObject(branch) && branch.type === "null" && Object.keys(branch).length === 1);
+    if (nullIndex === -1) return undefined;
+    value = value.anyOf[1 - nullIndex];
+    if (!isObject(value)) return undefined;
+  }
+  if (typeof value.type !== "string" || value.type === "null"
+      || ["$ref", "anyOf", "oneOf", "allOf", "not", "if", "then", "else"]
+        .some(key => Object.hasOwn(value, key))) return undefined;
+  return value;
+}
+
+function supportsSearchField(upstream: Record<string, unknown>, field: SearchField): boolean {
+  const types = field.type === "integer" ? ["integer", "number"] : [field.type];
+  const upstreamEnum = upstream.enum;
+  if (!types.includes(String(upstream.type))) return false;
+  // const is an enum of one, not an annotation. Never discard a conflicting const
+  // (or malformed enum) and advertise values the provider does not accept.
+  if (Object.hasOwn(upstream, "const")
+      && (!field.enum || field.enum.some(value => value !== upstream.const))) return false;
+  if (Object.hasOwn(upstream, "enum")
+      && (!field.enum || !Array.isArray(upstreamEnum)
+        || field.enum.some(value => !upstreamEnum.includes(value)))) return false;
+  return true;
+}
+
 /** Narrows discoverable schemas, refusing incompatible upstream contracts instead of guessing. */
 export function searchToolForEndpoint(
   endpoint: string, tool: McpWireTool,
@@ -86,27 +122,24 @@ export function searchToolForEndpoint(
   const schema = tool.inputSchema;
   const properties = schema?.properties;
   const limit = preset.id === "tavily" ? "max_results" : "limit";
-  const queryProperty = properties?.query;
-  const limitProperty = properties?.[limit];
-  const depthProperty = properties?.search_depth;
+  const queryProperty = nonNullableSearchProperty(properties?.query);
+  const limitProperty = nonNullableSearchProperty(properties?.[limit]);
+  const depthProperty = nonNullableSearchProperty(properties?.search_depth);
   if (schema?.type !== "object" || !properties
       || !isObject(queryProperty) || queryProperty.type !== "string"
       || !isObject(limitProperty) || !["number", "integer"].includes(String(limitProperty.type))
       || (preset.id === "tavily" &&
-        (!isObject(depthProperty) || !Array.isArray(depthProperty.enum)
-          || !depthProperty.enum.includes("basic")))) {
+        (!depthProperty || !(Array.isArray(depthProperty.enum)
+          ? depthProperty.enum.includes("basic") : depthProperty.const === "basic")))) {
     throw new Error(`${preset.name} search schema changed; reconnect after compatibility is reviewed.`);
   }
   const allowed = fields(preset);
   for (const [key, field] of Object.entries(allowed)) {
     if (!Object.hasOwn(properties, key)) continue;
-    const upstream = properties[key];
-    const upstreamEnum = isObject(upstream) ? upstream.enum : undefined;
-    const types = field.type === "integer" ? ["integer", "number"] : [field.type];
-    if (!isObject(upstream) || !types.includes(String(upstream.type))
-        || (field.enum && Array.isArray(upstreamEnum)
-          && field.enum.some(value => !upstreamEnum.includes(value)))) {
-      throw new Error(`${preset.name} search schema changed; reconnect after compatibility is reviewed.`);
+    const upstream = nonNullableSearchProperty(properties[key]);
+    if (!upstream || !supportsSearchField(upstream, field)) {
+      // key is from our static allowlist; never echo upstream schema/credentials.
+      throw new Error(`${preset.name} search schema changed for ${key}; reconnect after compatibility is reviewed.`);
     }
   }
   if (schema.required?.some(key => !Object.hasOwn(allowed, key))) {

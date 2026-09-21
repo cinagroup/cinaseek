@@ -44,6 +44,24 @@ does so through a named hook (`staticToken`, `mintAccount`), not a private copy.
 
 Nothing outside `tools.ts` reads a tool's `annotations`.
 
+### Personal search schema compatibility
+
+`search-presets.ts` exposes only the fixed, bounded search subset for the official Tavily and
+Firecrawl personal-account endpoints. The remote Tavily `tools/list` schema differs from its
+public stdio implementation: `time_range` is a nullable `anyOf` and `topic` is `const: "general"`.
+The compatibility layer accepts a single typed branch plus a plain null branch, while keeping
+the caller-facing schema non-null and checking `const` as well as `enum`. It does not infer
+references, nested unions, `oneOf`, or arbitrary compositions. Schema errors identify only
+our allowlisted field, never raw upstream schema contents.
+
+The reduced remote fixture in `__tests__/tavily-remote-search-fixture.ts` records the public
+metadata contract observed on 2026-09-21 (no search call). It is regression evidence, not an
+authenticated production search acceptance. Product connections still require personal OAuth;
+the documented public keyless metadata mode used for diagnosis is not a credential fallback.
+The search catalog cache uses `catalog.search-v2` so an older normalized contract is not reused.
+Basic-only depth, ten-result cap, user budget reservation, approval classification, and the
+no-retry rule for possibly billed calls are unchanged.
+
 ## Trust tiers
 
 A tier governs how far a server's own claims about its tools are believed. MCP's own guidance is
