@@ -81,7 +81,7 @@ export type ScopedCatalog = {
 export async function scopedCatalog(request: CatalogRequest): Promise<ScopedCatalog> {
   // Never reuse an unrestricted catalog persisted before the search policy was installed. Bump
   // this policy version when its schema changes; generic MCP bindings retain their existing cache.
-  const cacheKey = searchPresetForEndpoint(request.endpoint) ? "catalog.search-v1" : "catalog";
+  const cacheKey = searchPresetForEndpoint(request.endpoint) ? "catalog.search-v2" : "catalog";
   const cached = request.store.get<CachedCatalog>(cacheKey);
   let tools = cached?.tools;
   let truncated = cached?.truncated ?? false;

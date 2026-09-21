@@ -115,8 +115,8 @@ describe("bounded grants and parameters", () => {
 });
 
 describe("catalog and dispatch enforcement", () => {
-  it("ignores an unrestricted catalog persisted before search presets", async () => {
-    const values = new Map<string, unknown>([["catalog", {
+  it.each(["catalog", "catalog.search-v1"])("ignores pre-policy and pre-compatibility cached tools at %s", async cacheKey => {
+    const values = new Map<string, unknown>([[cacheKey, {
       fetchedAt: Date.now(), revision: "old", tools: [tool, { ...tool, name: "tavily_crawl" }],
     }]]);
     const store: CatalogStore = {
@@ -136,7 +136,7 @@ describe("catalog and dispatch enforcement", () => {
     expect(fetch).toHaveBeenCalledOnce();
     await scopedCatalog(request);
     expect(fetch).toHaveBeenCalledOnce();
-    expect(values.has("catalog.search-v1")).toBe(true);
+    expect(values.has("catalog.search-v2")).toBe(true);
   });
 
   it("narrows the advertised schema without changing trust annotations", () => {
