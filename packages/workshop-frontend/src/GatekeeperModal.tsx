@@ -36,6 +36,8 @@ import { reportIssue } from './errorReporting'
 import { useSiteName } from './ServerConfigContext'
 import { AccountsSubscriberAdapter } from './accountsSubscriber'
 import { useDialogSelectPortalContainer } from './useDialogSelectPortalContainer'
+import { personalSearchConnectUrl, personalSearchShortcut, withPersonalSearchShortcuts } from './features/connections/personalSearch'
+import { personalSearchProviderForUrl, type PersonalSearchProvider } from '@gadgets/workshop-shared/search-providers'
 
 export interface GatekeeperModalProps {
   open: boolean
@@ -102,6 +104,7 @@ type ConnectionType = {
   resourceUrlPattern?: string
   // Whether this resource type is independently grantable.
   grantable?: boolean
+  personalSearch?: PersonalSearchProvider
 }
 
 type VendorOption = {
@@ -144,10 +147,13 @@ function platformConnectionTypes(siteName: string): ConnectionType[] {
   ]
 }
 
-function connectionForResource(vendor: VendorOption, resource: SupportedResource): ConnectionType {
+function connectionForResource(vendor: VendorOption, resource: SupportedResource, mcpResource?: SupportedResource): ConnectionType {
+  const personalSearch = personalSearchShortcut(vendor.id)
+  // Shortcuts are presentation-only: RPCs and grants must still use the installed MCP resource.
+  const backendResource = personalSearch && mcpResource ? mcpResource : resource
   return {
     id: `resource:${vendor.id}:${resource.urlPattern}`,
-    vendorId: vendor.id,
+    vendorId: personalSearch ? 'mcp' : vendor.id,
     // Group by stable vendor ID, not displayName, so two distinct vendors that
     // happen to share a display name don't get merged into the same group.
     groupKey: `vendor:${vendor.id}`,
@@ -159,8 +165,9 @@ function connectionForResource(vendor: VendorOption, resource: SupportedResource
     iconUrl: resource.icon?.url,
     logoUrl: vendor.description.logo?.url,
     accent: vendor.description.color,
-    resourceUrlPattern: resource.urlPattern,
-    grantable: Boolean(resource.grantable),
+    resourceUrlPattern: backendResource.urlPattern,
+    grantable: Boolean(backendResource.grantable),
+    personalSearch,
   }
 }
 
@@ -173,6 +180,8 @@ function requiredResourceUrlPatterns(connection: ConnectionType): string[] {
 
 function accountSupportsConnection(account: AccountOption, connection: ConnectionType): boolean {
   return account.vendorId === connection.vendorId &&
+    (!connection.personalSearch ||
+      personalSearchProviderForUrl(account.description.uniqueName)?.id === connection.personalSearch.id) &&
     (!connection.resourceUrlPattern ||
       connection.resourceUrlPattern === 'https://*' ||
       account.supportedResources.some(resource => resource.urlPattern === connection.resourceUrlPattern))
@@ -245,11 +254,17 @@ export default function GatekeeperModal({
   }, [])
 
   const siteName = useSiteName()
-  const allConnections = useMemo(() => [
-    ...platformConnectionTypes(siteName),
-    ...vendors.flatMap(vendor => vendor.supportedResources
-      .map(resource => connectionForResource(vendor, resource))),
-  ], [siteName, vendors])
+  const allConnections = useMemo(() => {
+    const mcpResource = vendors.find(vendor => vendor.id === 'mcp')?.supportedResources
+      .find(resource => resource.urlPattern === 'https://*')
+    return [
+      ...platformConnectionTypes(siteName),
+      ...withPersonalSearchShortcuts(vendors)
+        .toSorted((a, b) => a.description.displayName.localeCompare(b.description.displayName))
+        .flatMap(vendor => vendor.supportedResources
+          .map(resource => connectionForResource(vendor, resource, mcpResource))),
+    ]
+  }, [siteName, vendors])
 
   const selectedConnection = useMemo(
     () => allConnections.find(connection => connection.id === selectedConnectionId) ?? null,
@@ -266,7 +281,7 @@ export default function GatekeeperModal({
   // message without a resolved pattern, or the resource list having shifted since the request).
   useEffect(() => {
     if (!open || !initialVendorId || selectedConnectionId !== null) return
-    const vendorConnections = allConnections.filter(c => c.vendorId === initialVendorId)
+    const vendorConnections = allConnections.filter(c => c.vendorId === initialVendorId && !c.personalSearch)
     if (vendorConnections.length === 0) return  // vendors may not be loaded yet
 
     let match: ConnectionType | undefined
@@ -501,10 +516,12 @@ export default function GatekeeperModal({
   // configurator's initialValuesFromResourceUrl hook, or a URLPattern-group fallback). Excludes the
   // whole-instance catch-all, which has no per-resource inputs.
   const prefilledResourceUrl = useMemo(() => {
+    const provider = selectedConnection?.personalSearch
+    if (provider) return `${provider.endpoint}#tool=${provider.tool}`
     const pattern = selectedConnection?.resourceUrlPattern
     if (!pattern || pattern === 'https://*' || !initialResourceUrl) return null
     return matchesResourceUrlPattern(pattern, initialResourceUrl) ? initialResourceUrl : null
-  }, [selectedConnection?.resourceUrlPattern, initialResourceUrl])
+  }, [selectedConnection?.personalSearch, selectedConnection?.resourceUrlPattern, initialResourceUrl])
 
   // Grantable resources the chosen connection needs that the selected account hasn't granted yet.
   // Until these are granted, the resource configurator can't load and the binding can't be created
@@ -583,11 +600,11 @@ export default function GatekeeperModal({
     else setSelectedAccountId(null)
   }
 
-  const handleConnectAccount = async (vendorId: string, resourceUrlPatterns?: string[]) => {
+  const handleConnectAccount = async (vendorId: string, resourceUrlPatterns?: string[], provider?: PersonalSearchProvider) => {
     setConnectingVendor(vendorId)
     try {
       const result = await authenticatedApi.connectAccount(vendorId, resourceUrlPatterns)
-      window.open(result.url, '_blank', 'noopener,noreferrer')
+      window.open(provider ? personalSearchConnectUrl(result.url, provider) : result.url, '_blank', 'noopener,noreferrer')
       toasts.add({ title: 'Complete the account connection in the new tab.', variant: 'success' })
     } catch (error) {
       console.error('Failed to initiate connection:', error)
@@ -831,7 +848,7 @@ export default function GatekeeperModal({
                       if (!selectedConnection.vendorId) return
                       const required = requiredResourceUrlPatterns(selectedConnection)
                       // No grantable requirement -> request authorization for everything
-                      handleConnectAccount(selectedConnection.vendorId, required.length ? required : undefined)
+                      handleConnectAccount(selectedConnection.vendorId, required.length ? required : undefined, selectedConnection.personalSearch)
                     }}
                     onReconnect={handleReconnectAccount}
                     onGrantAccess={handleGrantResourceAccess}
