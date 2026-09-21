@@ -14,6 +14,7 @@ import {
 } from "./client.js";
 import type { WithClientOptions } from "./connection.js";
 import { isWholeEndpoint, type ToolScope } from "./scope.js";
+import { prepareSearchArguments } from "./search-presets.js";
 import { toolQueryTerms, MAX_QUERY_CHARS, MAX_SEARCH_RESULTS } from "./tool-search.js";
 import {
   codeSpan,
@@ -184,12 +185,13 @@ export class McpSessionBase extends RpcTarget {
 
   async callTool(name: string, args?: Record<string, unknown>): Promise<McpCallResult> {
     requireToolName("callTool", name);
-    const toolArgs = args ?? {};
+    let toolArgs = args ?? {};
     if (typeof toolArgs !== "object" || Array.isArray(toolArgs)) {
       throw new Error("callTool() arguments must be an object.");
     }
 
     const host = this.#host;
+    toolArgs = prepareSearchArguments(host.endpoint, name, toolArgs);
     const entry = await host.findTool(name);
     if (!entry) throw new Error(this.#noSuchToolMessage(name));
 

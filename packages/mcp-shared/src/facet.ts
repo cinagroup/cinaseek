@@ -31,6 +31,7 @@ import { matchesToolQuery, toolQueryTerms, MAX_SEARCH_RESULTS } from "./tool-sea
 import { McpSessionBase, type McpSessionHost, type StoredAction } from "./session.js";
 import { installToolMethods } from "./session-methods.js";
 import { observerRefusalMessage } from "./sharing-policy.js";
+import { restrictSearchScope } from "./search-presets.js";
 import {
   actionKindFor,
   classifyTool,
@@ -103,7 +104,7 @@ export abstract class McpFacetBase<
 
   /** The tool scope this facet is authorized to expose. */
   get scope(): ToolScope {
-    return this.ctx.props.scope;
+    return restrictSearchScope(this.endpoint, this.ctx.props.scope);
   }
 
   /** Canonical resource URL for this facet's endpoint and scope. */

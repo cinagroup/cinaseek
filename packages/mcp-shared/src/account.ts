@@ -13,7 +13,7 @@
 // Every nonce is single-use, time-bounded, and compared in constant time; see `connect-nonce.ts`.
 
 import { DurableObject } from "cloudflare:workers";
-import type { GatekeeperConnectCallback, GatekeeperUser }
+import type { GatekeeperConnectCallback, GatekeeperUser, GatekeeperSearchBudget }
   from "@gadgets/workshop-shared/gatekeeper";
 import {
   auth,
@@ -44,6 +44,7 @@ import { fetchOptions, isAllowedUrl, sdkFetch, type FetchOptions } from "./fetch
 import type { McpLog } from "./log.js";
 import { sameEndpoint } from "./scope.js";
 import { hostOf } from "./util.js";
+import { searchPresetForEndpoint } from "./search-presets.js";
 
 /**
  * How a connected endpoint proves who we are. Discovered for a user-supplied endpoint (the probe in
@@ -231,10 +232,12 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
 
   async setCallback(
     callback: Fetcher<GatekeeperConnectCallback>, initiationNonce: string,
+    searchBudget?: Fetcher<GatekeeperSearchBudget>,
   ): Promise<void> {
     // Only arm the abandonment alarm for a first connect; a reconnect already has a server to keep.
     if (!this.hasConnectedServer()) await this.ctx.storage.setAlarm(Date.now() + CONNECT_TIMEOUT_MS);
     this.ctx.storage.kv.put("callback", callback);
+    if (searchBudget) this.ctx.storage.kv.put("searchBudget", searchBudget);
     this.ctx.storage.kv.put<StoredNonce>("nonce", {
       value: initiationNonce,
       expiresAt: Date.now() + INITIATION_NONCE_LIFETIME_MS,
@@ -299,6 +302,10 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
   ): Promise<ConnectOutcome> {
     const existing = this.server();
     const server = resolveConnectTarget(existing, target);
+    const searchPreset = server && searchPresetForEndpoint(server.endpoint);
+    if (searchPreset && server?.auth === "token") {
+      throw new Error("Personal search connections require OAuth, not a deployment token.");
+    }
     if (!server || !this.claimSelection(initiationNonce)) return { kind: "invalid" };
 
     // Every claimed attempt advances the generation before its first await, invalidating old probe,
@@ -350,6 +357,12 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
       const info = await this.probe(server, null, generation);
       if (generation !== this.connectionGeneration()) {
         throw new Error("This connection attempt was replaced by a newer one.");
+      }
+      if (searchPreset) {
+        // Public initialization does not prove account authorization. Discover OAuth explicitly.
+        const oauthServer: ConnectedServer = { ...server, auth: "oauth" };
+        this.ctx.storage.kv.put("server", oauthServer);
+        return await this.beginOAuth(oauthServer, null, generation);
       }
       // A `"token"` endpoint is probed *with* its preissued bearer (see `probe`), so completing the
       // handshake says nothing about whether it is public; recording `"none"` here would drop that
@@ -677,6 +690,7 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
       authorization,
       sessionId: this.ctx.storage.kv.get<string>("mcpSessionId") ?? null,
       generation,
+      searchBudget: this.ctx.storage.kv.get<Fetcher<GatekeeperSearchBudget>>("searchBudget"),
     };
   }
 
@@ -693,6 +707,9 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
   // expiry, or null for a public server. Every path that awaits rechecks the generation before it
   // can return or mutate state.
   async #getAuthorization(server: ConnectedServer, generation: number): Promise<string | null> {
+    if (searchPresetForEndpoint(server.endpoint) && server.auth !== "oauth") {
+      throw new Error("This search connection requires personal OAuth. Please reconnect the account.");
+    }
     if (server.auth === "none") return null;
     if (server.auth === "token") {
       // Null covers both "never configured" and "configured for some other endpoint now". The
@@ -876,6 +893,13 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
     const tokens = this.ctx.storage.kv.get<OAuthTokens>("tokens");
     const discovery = this.ctx.storage.kv.get<OAuthDiscoveryState>("oauthDiscovery");
     const client = this.ctx.storage.kv.get<StoredOAuthClientInformation>("oauthClient");
+    // Close local authority before external revocation can yield to another request. Clearing the
+    // server also invalidates a refresh or OAuth exchange already in flight. Remote revocation is
+    // best effort; its failure must never keep local credentials usable.
+    this.advanceConnectionGeneration();
+    this.ctx.storage.kv.delete("server");
+    await this.ctx.storage.deleteAll();
+    await this.ctx.storage.deleteAlarm();
     if (tokens && discovery && client) {
       // Best effort: a server that does not implement RFC 7009 must not block the disconnect.
       try {
@@ -886,10 +910,9 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
         }
       } catch (err) {
         this.log().warn("failed to revoke MCP tokens",
-          { event: "oauth.token.revoke.failed", error: err });
+          { event: "oauth.token.revoke.failed",
+            error: safeOAuthError(err, [tokens.access_token, tokens.refresh_token], client) });
       }
     }
-    await this.ctx.storage.deleteAlarm();
-    await this.ctx.storage.deleteAll();
   }
 }

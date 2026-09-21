@@ -27,6 +27,27 @@ function propsFor(node: unknown, component: string): Record<string, unknown> {
 
 const ui = { getEndpoint: async () => "https://mcp.acme.com/mcp" } as never;
 
+describe("personal search grants", () => {
+  it("has no all-tools mode and refuses an empty selection", async () => {
+    const spec = (await import("../src/configurator/search-configurator-ui.js")).default;
+    const values = spec.initialValuesFromResourceUrl({ resourceUrl: "https://mcp.tavily.com/mcp" } as never);
+    expect(values).toEqual({ mode: "choose", tools: null });
+    expect(spec.isReady({ values } as never)).toBe(false);
+    const rendered = spec.render({ values, setValues: vi.fn(), ui: { listToolOptions: vi.fn() } } as never);
+    expect(JSON.stringify(rendered)).not.toContain("RadioCards");
+    expect(JSON.stringify(rendered)).toContain("No platform-paid fallback");
+  });
+
+  it("never serializes a forged all-tools mode as an unrestricted grant", async () => {
+    const spec = (await import("../src/configurator/search-configurator-ui.js")).default;
+    const searchUi = { getEndpoint: async () => "https://mcp.tavily.com/mcp" };
+    await expect(spec.resourceUrl({ values: { mode: "all", tools: null }, ui: searchUi } as never))
+      .resolves.toBe("https://mcp.tavily.com/mcp#tool=");
+    await expect(spec.resourceUrl({ values: { mode: "all", tools: "tavily_search" }, ui: searchUi } as never))
+      .resolves.toBe("https://mcp.tavily.com/mcp#tool=tavily_search");
+  });
+});
+
 describe("a grant whose tool list is empty", () => {
   const url = "https://mcp.acme.com/mcp#tool=&tool=";
 

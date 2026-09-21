@@ -62,13 +62,15 @@ import {
   mcpGatekeeperUserContext,
   type McpGatekeeperUserProps,
 } from "@gadgets/mcp-shared/user";
-import { connectFormHtml } from "./connect-form.js";
+import { connectEndpoint, connectFormHtml } from "./connect-form.js";
+import { restrictSearchScope, searchPresetForEndpoint } from "@gadgets/mcp-shared/search-presets";
 import { serverIdFromEndpoint } from "./server-id.js";
 import { mcpResourceFor, mcpResources } from "./resources.js";
 import type { ConfiguratorUIOption } from "@gadgets/configurator-ui";
 import { MCP_BASE_TYPES } from "@gadgets/mcp-shared/base-types";
 import MCP_LOGO_SVG from "./mcp-logo.svg";
 import MCP_SERVER_CONFIGURATOR_HTML from "./generated/server-configurator-ui.txt";
+import MCP_SEARCH_CONFIGURATOR_HTML from "./generated/search-configurator-ui.txt";
 import type { McpServerConfiguratorRpc } from "./configurator/server-configurator-types";
 
 const VENDOR_ID = "mcp";
@@ -115,8 +117,15 @@ export default {
           return htmlResponse(connectFormHtml(path));
         }
         const form = await request.formData();
+        let endpoint: string;
+        try {
+          endpoint = connectEndpoint(form);
+        } catch (err) {
+          return htmlResponse(connectFormHtml(path,
+            err instanceof Error ? err.message : "Invalid connection selection."), 400);
+        }
         return continueConnect(
-          account, initiationNonce, String(form.get("url") ?? ""), env, path);
+          account, initiationNonce, endpoint, env, path);
       },
     });
   },
@@ -138,12 +147,19 @@ async function continueConnect(
     if (!validated.ok) {
       return htmlResponse(connectFormHtml(formPath, validated.reason), 400);
     }
+    let preset;
+    try {
+      preset = searchPresetForEndpoint(validated.url);
+    } catch (err) {
+      return htmlResponse(connectFormHtml(formPath,
+        err instanceof Error ? err.message : "Invalid search endpoint."), 400);
+    }
     // `serverName` is a placeholder until the handshake reports the server's own name, and `auth` is
-    // a guess that `beginConnect` corrects to `"none"` if the endpoint turns out to be public.
+    // a guess that `beginConnect` corrects to `"none"` for public endpoints other than OAuth presets.
     target = {
-      endpoint: validated.url,
-      serverId: serverIdFromEndpoint(validated.url),
-      serverName: hostOf(validated.url),
+      endpoint: preset?.endpoint ?? validated.url,
+      serverId: preset?.id ?? serverIdFromEndpoint(validated.url),
+      serverName: preset?.name ?? hostOf(validated.url),
       provenance: "user",
       auth: "oauth",
     };
@@ -183,11 +199,12 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
 
   async connectAccount(
     callback: Fetcher<GatekeeperConnectCallback>,
-    _options?: GatekeeperConnectOptions,
+    options?: GatekeeperConnectOptions,
   ): Promise<{ url: string }> {
     const accountId = this.ctx.exports.McpAccount.newUniqueId();
     const initiationNonce = generateNonce();
-    await this.ctx.exports.McpAccount.get(accountId).setCallback(callback, initiationNonce);
+    await this.ctx.exports.McpAccount.get(accountId).setCallback(
+      callback, initiationNonce, options?.scopes === "auth" ? undefined : options?.searchBudget);
     return { url: `${getBaseUrl(this.env)}/${accountId.toString()}/${initiationNonce}` };
   }
 
@@ -276,7 +293,7 @@ export class GatekeeperUserImpl
     // The fragment records how much of the endpoint this binding may call; see `scope.ts`. A
     // per-upstream-server scope belongs to the MCP Server Portals connector, and this gatekeeper
     // treats an endpoint as a single server, so it is refused rather than silently ignored.
-    const scope = parseToolScope(requested);
+    const scope = restrictSearchScope(server.endpoint, parseToolScope(requested));
     if (scope.serverId !== undefined) {
       throw new Error(
         `"${url}" scopes the grant to one server behind a gateway, which this connector does not ` +
@@ -314,8 +331,10 @@ export class GatekeeperUserImpl
   }
 
   async startResourceConfigurator(_resourceUrlPattern: string): Promise<ResourceConfiguratorFrame> {
+    const server = await this.#account().getServer();
     return {
-      iframeHtml: MCP_SERVER_CONFIGURATOR_HTML,
+      iframeHtml: searchPresetForEndpoint(server.endpoint)
+        ? MCP_SEARCH_CONFIGURATOR_HTML : MCP_SERVER_CONFIGURATOR_HTML,
       ui: new RpcStub(new McpServerConfiguratorUI(this.env, this.#account())),
     };
   }
@@ -447,7 +466,8 @@ export class McpGatekeeperImpl
   async describe(): Promise<ResourceDescription> {
     const tools = await this.tools();
     const reads = tools.filter(entry => entry.mode === "read").length;
-    const { scope, serverName } = this.ctx.props;
+    const scope = this.scope;
+    const { serverName } = this.ctx.props;
 
     const counts = `${reads} read-only, ${tools.length - reads} requiring approval`;
     const plural = tools.length === 1 ? "" : "s";

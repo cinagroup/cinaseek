@@ -25,6 +25,8 @@ export type FetchOptions = {
   timeoutMs?: number;
   /** Absolute deadline shared by every request in a multi-page or retried operation. */
   deadline?: number;
+  /** False for metered requests that must not replay their body on redirects. */
+  followRedirects?: boolean;
 };
 
 /** The one environment variable this package reads. Each Worker's own `Env` satisfies it structurally. */
@@ -141,6 +143,7 @@ export function isAllowedUrl(url: string, options: FetchOptions = {}): boolean {
  */
 export async function guardedFetch(
   url: string, init: RequestInit, options: FetchOptions = {},
+  onDispatch?: () => void,
 ): Promise<Response> {
   if (!isAllowedUrl(url, options)) {
     throw new FetchNotStartedError(`Refusing to contact ${hostForMessage(url)}.`);
@@ -162,10 +165,11 @@ export async function guardedFetch(
   }
 
   for (let hop = 0; ; hop++) {
+    onDispatch?.();
     const response = await fetch(current, {
       ...init, method, body, headers, redirect: "manual", signal,
     });
-    if (!REDIRECT_STATUSES.has(response.status)) return response;
+    if (options.followRedirects === false || !REDIRECT_STATUSES.has(response.status)) return response;
 
     const location = response.headers.get("Location");
     if (!location || hop >= MAX_REDIRECTS) return response;
