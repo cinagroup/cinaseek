@@ -332,7 +332,8 @@ export class CloudflareAlertMetricsClient {
           controller.signal.throwIfAborted();
           const response = await fetchImpl(url, {
             ...init,
-            redirect: "error",
+            // workerd accepts only follow/manual. Never forward this token to a redirect target.
+            redirect: "manual",
             // Keep the deployed no-fetch-signal compatibility path (1224c50f). The local
             // controller cancels body reads; the race bounds waiting for response headers.
             headers: {
@@ -345,6 +346,12 @@ export class CloudflareAlertMetricsClient {
           if (controller.signal.aborted) {
             void response.body?.cancel().catch(() => {});
             controller.signal.throwIfAborted();
+          }
+          if (response.status >= 300 && response.status < 400) {
+            await response.body?.cancel();
+            throw new CloudflareAlertMetricsError(
+              response.status, "Cloudflare metrics API redirects are not allowed.",
+            );
           }
           if (attempt === 0 && [500, 502, 503, 504].includes(response.status) &&
               !response.headers.has("Retry-After")) {

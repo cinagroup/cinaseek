@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,6 +21,22 @@ import {
 } from "./deploy-cloudflare.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
+
+test("standalone deployment references existing backend generator entrypoints", () => {
+  const source = readFileSync(join(ROOT, "scripts", "deploy-cloudflare.mjs"), "utf8");
+  // Read the paths used by the deployment itself: testing a second hard-coded path would miss a
+  // generator rename that updates the package build but leaves standalone deployment behind.
+  const entrypoints = [...source.matchAll(
+      /join\(\s*backendDir,\s*"scripts",\s*"([^"]+)"\s*\)/g,
+  )].map((match) => match[1]);
+  assert.equal(entrypoints.filter((name) => name.startsWith("build-format-blueprints.")).length, 1);
+  for (const entrypoint of entrypoints) {
+    assert.ok(
+        existsSync(join(ROOT, "packages", "workshop-backend", "scripts", entrypoint)),
+        `standalone deployment references a missing backend generator: ${entrypoint}`,
+    );
+  }
+});
 
 const accessChallenge = () => new Response(null, {
   status: 302,

@@ -1210,7 +1210,7 @@ async function main() {
   run(process.execPath, [join(backendDir, "scripts", "validate-connector-blueprints.mjs")], {
     cwd: backendDir,
   });
-  run(process.execPath, [join(backendDir, "scripts", "build-format-blueprints.mjs")], {
+  run(process.execPath, [join(backendDir, "scripts", "build-format-blueprints.ts")], {
     cwd: backendDir,
   });
 

@@ -23,7 +23,7 @@ describe("metrics transport resilience", () => {
     const pages: number[] = [];
     let discardedBodyCancelled = false;
     const client = new CloudflareAlertMetricsClient(CONFIG, async (url, init) => {
-      assert.equal(init?.redirect, "error");
+      assert.equal(init?.redirect, "manual");
       assert.equal(init?.signal, undefined);
       const requestedPage = Number(new URL(String(url)).searchParams.get("page"));
       pages.push(requestedPage);
@@ -75,6 +75,45 @@ describe("metrics transport resilience", () => {
       calls++; return failure(503, { "Retry-After": "120" });
     });
     await assert.rejects(client.queryAiGatewayCost(FROM, TO), { status: 503 });
+    assert.equal(calls, 1);
+  });
+
+  for (const status of [300, 301, 302, 303, 304, 307, 308, 399]) {
+    it(`rejects HTTP ${status} without following, reading or retrying it`, async () => {
+      let calls = 0;
+      let cancelled = false;
+      const client = new CloudflareAlertMetricsClient(CONFIG, async (_url, init) => {
+        calls++;
+        assert.equal(init?.redirect, "manual");
+        return new Response(status === 304 ? null : new ReadableStream({
+          cancel() { cancelled = true; },
+        }), { status, headers: { Location: `https://redirect.invalid/${CONFIG.apiToken}` } });
+      });
+      await assert.rejects(client.queryAiGatewayCost(FROM, TO), (error: unknown) => {
+        assert.ok(error instanceof CloudflareAlertMetricsError);
+        assert.equal(error.status, status);
+        assert.equal(error.message, "Cloudflare metrics API redirects are not allowed.");
+        assert.deepEqual(error.codes, []);
+        return true;
+      });
+      assert.equal(calls, 1);
+      assert.equal(cancelled, status !== 304);
+    });
+  }
+
+  it("bounds stalled redirect-body cancellation by the existing deadline", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let calls = 0;
+    const client = new CloudflareAlertMetricsClient(CONFIG, async () => {
+      calls++;
+      return new Response(new ReadableStream({ cancel() { return new Promise(() => {}); } }), {
+        status: 302, headers: { Location: "https://redirect.invalid/" },
+      });
+    });
+    const rejected = assert.rejects(client.queryAiGatewayCost(FROM, TO), { status: 504, failureKind: "timeout" });
+    await setImmediate();
+    t.mock.timers.tick(30_000);
+    await rejected;
     assert.equal(calls, 1);
   });
 
