@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { connectEndpoint, connectFormHtml } from "../src/connect-form.js";
+import { connectEndpoint, connectFormHtml, searchShortcutEndpoint } from "../src/connect-form.js";
 
 describe("personal search connect form", () => {
+  it("resolves branded shortcuts without accepting arbitrary endpoint overrides", () => {
+    const base = 'https://cinaseek.example/gatekeeper/mcp/account/nonce';
+    expect(searchShortcutEndpoint(new URL(base))).toBeUndefined();
+    expect(searchShortcutEndpoint(new URL(`${base}?preset=tavily`))).toBe('https://mcp.tavily.com/mcp');
+    expect(searchShortcutEndpoint(new URL(`${base}?preset=firecrawl`))).toBe('https://mcp.firecrawl.dev/v2/mcp-oauth');
+    for (const query of ['preset=unknown', 'preset=tavily&preset=firecrawl',
+      'preset=tavily&url=https://attacker.example', 'preset=']) {
+      expect(() => searchShortcutEndpoint(new URL(`${base}?${query}`))).toThrow();
+    }
+  });
   it("maps a preset to its server-owned OAuth endpoint", () => {
     const form = new FormData();
     form.set("preset", "firecrawl");

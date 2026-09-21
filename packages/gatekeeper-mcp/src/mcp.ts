@@ -62,7 +62,7 @@ import {
   mcpGatekeeperUserContext,
   type McpGatekeeperUserProps,
 } from "@gadgets/mcp-shared/user";
-import { connectEndpoint, connectFormHtml } from "./connect-form.js";
+import { connectEndpoint, connectFormHtml, searchShortcutEndpoint } from "./connect-form.js";
 import { restrictSearchScope, searchPresetForEndpoint } from "@gadgets/mcp-shared/search-presets";
 import { serverIdFromEndpoint } from "./server-id.js";
 import { mcpResourceFor, mcpResources } from "./resources.js";
@@ -114,6 +114,13 @@ export default {
           if (!(await account.isAwaitingSelection(initiationNonce))) {
             return htmlResponse(INVALID_LINK_HTML, 400);
           }
+          let endpoint: string | undefined;
+          try {
+            endpoint = searchShortcutEndpoint(new URL(request.url));
+          } catch {
+            return htmlResponse(INVALID_LINK_HTML, 400);
+          }
+          if (endpoint) return continueConnect(account, initiationNonce, endpoint, env, path);
           return htmlResponse(connectFormHtml(path));
         }
         const form = await request.formData();

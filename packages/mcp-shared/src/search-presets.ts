@@ -1,14 +1,9 @@
 import type { McpTool, McpWireTool } from "./client.js";
 import type { ToolScope } from "./scope.js";
+import { PERSONAL_SEARCH_PROVIDERS } from "@gadgets/workshop-shared/search-providers";
 
 /** Official personal-account search connections. No deployment credential fallback. */
-export const SEARCH_PRESETS = [
-  { id: "tavily", name: "Tavily", endpoint: "https://mcp.tavily.com/mcp", tool: "tavily_search" },
-  {
-    id: "firecrawl", name: "Firecrawl", endpoint: "https://mcp.firecrawl.dev/v2/mcp-oauth",
-    tool: "firecrawl_search",
-  },
-] as const;
+export const SEARCH_PRESETS = PERSONAL_SEARCH_PROVIDERS;
 
 /** One supported personal OAuth search provider. */
 export type SearchPreset = typeof SEARCH_PRESETS[number];
@@ -65,7 +60,8 @@ function fields(preset: SearchPreset): Record<string, SearchField> {
     include_domains: domainSchema,
     exclude_domains: domainSchema,
     time_range: { type: "string", enum: ["day", "week", "month", "year"] },
-    topic: { type: "string", enum: ["general", "news", "finance"] },
+    // The official MCP schema supports general only, unlike the broader REST API.
+    topic: { type: "string", enum: ["general"] },
   } : {
     query: querySchema,
     limit: limitSchema,
